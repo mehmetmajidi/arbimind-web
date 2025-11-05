@@ -40,6 +40,12 @@ export default function Home() {
                <nav style={{ marginBottom: 24 }}>
                     {isAuthenticated ? (
                          <>
+                              <Link href="/market" style={{ marginRight: 16, color: "#0070f3" }}>
+                                   Market Data
+                              </Link>
+                              <Link href="/trading" style={{ marginRight: 16, color: "#0070f3" }}>
+                                   Trading
+                              </Link>
                               <Link href="/settings" style={{ marginRight: 16, color: "#0070f3" }}>
                                    Settings
                               </Link>
