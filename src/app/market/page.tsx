@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
+import { Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, ComposedChart, Area } from "recharts";
 
 interface ExchangeAccount {
      id: number;
@@ -37,6 +37,17 @@ interface OHLCVCandle {
      v: number; // volume
 }
 
+interface PredictionData {
+     predicted_price: number;
+     current_price: number;
+     horizon: string;
+     confidence: number;
+     uncertainty: number;
+     price_change_percent: number;
+     upper_bound: number;
+     lower_bound: number;
+}
+
 export default function MarketPage() {
      const [accounts, setAccounts] = useState<ExchangeAccount[]>([]);
      const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null);
@@ -53,6 +64,19 @@ export default function MarketPage() {
      const [refreshInterval, setRefreshInterval] = useState(5); // seconds
      const [useWebSocket, setUseWebSocket] = useState(false);
      const [wsConnection, setWsConnection] = useState<WebSocket | null>(null);
+
+     // Prediction state
+     const [predictions, setPredictions] = useState<Record<string, PredictionData | null>>({});
+     const [predictionsLoading, setPredictionsLoading] = useState(false);
+     const [showPredictions, setShowPredictions] = useState(true);
+     const [selectedHorizons, setSelectedHorizons] = useState<string[]>(["10m", "30m", "1h"]);
+     const [accuracyStats, setAccuracyStats] = useState<{
+          total_predictions: number;
+          avg_error_percent: number;
+          accuracy_within_confidence: number;
+          avg_confidence: number;
+     } | null>(null);
+     const [showAccuracyHistory, setShowAccuracyHistory] = useState(false);
 
      // Fetch user's exchange accounts
      useEffect(() => {
@@ -245,6 +269,39 @@ export default function MarketPage() {
           }
      }, [selectedAccountId, selectedSymbol, timeframe]);
 
+     // Fetch predictions
+     const fetchPredictions = useCallback(async () => {
+          if (!selectedAccountId || !selectedSymbol || selectedHorizons.length === 0) {
+               setPredictions({});
+               return;
+          }
+
+          setPredictionsLoading(true);
+          try {
+               const token = localStorage.getItem("auth_token") || "";
+               if (!token) return;
+
+               const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+               const encodedSymbol = encodeURIComponent(selectedSymbol);
+               const horizonsParam = selectedHorizons.join(",");
+
+               const response = await fetch(`${apiUrl}/predictions/${encodedSymbol}?horizons=${horizonsParam}&exchange_account_id=${selectedAccountId}`, {
+                    headers: { Authorization: `Bearer ${token}` },
+               });
+
+               if (response.ok) {
+                    const data = await response.json();
+                    setPredictions(data.predictions || {});
+               } else {
+                    console.error("Failed to fetch predictions:", response.status);
+               }
+          } catch (error) {
+               console.error("Error fetching predictions:", error);
+          } finally {
+               setPredictionsLoading(false);
+          }
+     }, [selectedAccountId, selectedSymbol, selectedHorizons]);
+
      // Fetch data when symbol or timeframe changes
      useEffect(() => {
           if (selectedAccountId && selectedSymbol) {
@@ -252,6 +309,39 @@ export default function MarketPage() {
                fetchOHLCV();
           }
      }, [selectedAccountId, selectedSymbol, timeframe, fetchPrice, fetchOHLCV]);
+
+     // Fetch predictions when symbol or horizons change
+     useEffect(() => {
+          if (selectedAccountId && selectedSymbol && showPredictions) {
+               fetchPredictions();
+          }
+     }, [selectedAccountId, selectedSymbol, selectedHorizons, showPredictions, fetchPredictions]);
+
+     // Fetch accuracy stats
+     const fetchAccuracyStats = useCallback(async () => {
+          try {
+               const token = localStorage.getItem("auth_token") || "";
+               if (!token) return;
+
+               const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+               const response = await fetch(`${apiUrl}/predictions/accuracy/stats?symbol=${selectedSymbol || ""}&days=30`, {
+                    headers: { Authorization: `Bearer ${token}` },
+               });
+
+               if (response.ok) {
+                    const data = await response.json();
+                    setAccuracyStats(data);
+               }
+          } catch (error) {
+               console.error("Error fetching accuracy stats:", error);
+          }
+     }, [selectedSymbol]);
+
+     useEffect(() => {
+          if (selectedSymbol) {
+               fetchAccuracyStats();
+          }
+     }, [selectedSymbol, fetchAccuracyStats]);
 
      // WebSocket connection for real-time updates
      useEffect(() => {
@@ -320,7 +410,7 @@ export default function MarketPage() {
                     ws.close();
                }
           };
-     }, [useWebSocket, autoRefresh, selectedAccountId, selectedSymbol, refreshInterval]);
+     }, [useWebSocket, autoRefresh, selectedAccountId, selectedSymbol, refreshInterval, wsConnection]);
 
      // Auto-refresh price (fallback when WebSocket is disabled)
      useEffect(() => {
@@ -487,6 +577,264 @@ export default function MarketPage() {
                     </div>
                </div>
 
+               {/* Prediction Panel */}
+               {selectedSymbol && showPredictions && (
+                    <div style={{ marginBottom: "24px" }}>
+                         <h2>Price Predictions</h2>
+                         {predictionsLoading ? (
+                              <p>Loading predictions...</p>
+                         ) : Object.keys(predictions).length > 0 ? (
+                              <div
+                                   style={{
+                                        display: "grid",
+                                        gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+                                        gap: "16px",
+                                        padding: "16px",
+                                        backgroundColor: "#fff",
+                                        border: "1px solid #eaeaea",
+                                        borderRadius: "8px",
+                                   }}
+                              >
+                                   {Object.entries(predictions).map(([horizon, pred]) => {
+                                        if (!pred) return null;
+
+                                        const colors: Record<string, string> = {
+                                             "10m": "#f59e0b",
+                                             "20m": "#8b5cf6",
+                                             "30m": "#ec4899",
+                                             "1h": "#06b6d4",
+                                             "4h": "#10b981",
+                                             "24h": "#6366f1",
+                                        };
+
+                                        const color = colors[horizon] || "#888";
+                                        const changePercent = pred.price_change_percent * 100;
+                                        const changeColor = changePercent >= 0 ? "green" : "red";
+
+                                        return (
+                                             <div
+                                                  key={horizon}
+                                                  style={{
+                                                       padding: "12px",
+                                                       border: `2px solid ${color}`,
+                                                       borderRadius: "8px",
+                                                       backgroundColor: "#fafafa",
+                                                  }}
+                                             >
+                                                  <div style={{ fontSize: "14px", fontWeight: "bold", color: "#666", marginBottom: "8px" }}>{horizon.toUpperCase()}</div>
+                                                  <div style={{ fontSize: "20px", fontWeight: "bold", color: color, marginBottom: "4px" }}>
+                                                       ${pred.predicted_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 8 })}
+                                                  </div>
+                                                  <div style={{ fontSize: "12px", color: changeColor, marginBottom: "4px" }}>
+                                                       {changePercent >= 0 ? "+" : ""}
+                                                       {changePercent.toFixed(2)}%
+                                                  </div>
+                                                  <div style={{ fontSize: "11px", color: "#666" }}>Confidence: {(pred.confidence * 100).toFixed(1)}%</div>
+                                                  <div style={{ fontSize: "11px", color: "#666", marginTop: "4px" }}>
+                                                       Range: ${pred.lower_bound.toFixed(2)} - ${pred.upper_bound.toFixed(2)}
+                                                  </div>
+                                                  {/* Quick Trade buttons */}
+                                                  {changePercent > 0.5 && (
+                                                       <button
+                                                            onClick={async () => {
+                                                                 if (!selectedAccountId || !selectedSymbol) return;
+                                                                 if (!confirm(`Buy ${selectedSymbol} based on ${horizon} prediction?`)) return;
+
+                                                                 try {
+                                                                      const token = localStorage.getItem("auth_token");
+                                                                      if (!token) return;
+
+                                                                      const apiUrl =
+                                                                           typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+                                                                      // Get current price for quantity calculation (simplified - use 1% of available balance)
+                                                                      const response = await fetch(`${apiUrl}/trading/orders/place`, {
+                                                                           method: "POST",
+                                                                           headers: {
+                                                                                Authorization: `Bearer ${token}`,
+                                                                                "Content-Type": "application/json",
+                                                                           },
+                                                                           body: JSON.stringify({
+                                                                                exchange_account_id: selectedAccountId,
+                                                                                symbol: selectedSymbol,
+                                                                                side: "buy",
+                                                                                order_type: "market",
+                                                                                quantity: 0.001, // Small test amount
+                                                                           }),
+                                                                      });
+
+                                                                      if (response.ok) {
+                                                                           alert("Order placed successfully!");
+                                                                      } else {
+                                                                           const errorData = await response.json().catch(() => ({}));
+                                                                           alert(`Failed to place order: ${errorData.detail || "Unknown error"}`);
+                                                                      }
+                                                                 } catch (error) {
+                                                                      console.error("Error placing order:", error);
+                                                                      alert("Network error. Please try again.");
+                                                                 }
+                                                            }}
+                                                            style={{
+                                                                 marginTop: "8px",
+                                                                 padding: "6px 12px",
+                                                                 backgroundColor: "#22c55e",
+                                                                 color: "white",
+                                                                 border: "none",
+                                                                 borderRadius: "4px",
+                                                                 cursor: "pointer",
+                                                                 fontSize: "12px",
+                                                                 fontWeight: "bold",
+                                                                 width: "100%",
+                                                            }}
+                                                       >
+                                                            Quick Buy
+                                                       </button>
+                                                  )}
+                                                  {changePercent < -0.5 && (
+                                                       <button
+                                                            onClick={async () => {
+                                                                 if (!selectedAccountId || !selectedSymbol) return;
+                                                                 if (!confirm(`Sell ${selectedSymbol} based on ${horizon} prediction?`)) return;
+
+                                                                 try {
+                                                                      const token = localStorage.getItem("auth_token");
+                                                                      if (!token) return;
+
+                                                                      const apiUrl =
+                                                                           typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+                                                                      const response = await fetch(`${apiUrl}/trading/orders/place`, {
+                                                                           method: "POST",
+                                                                           headers: {
+                                                                                Authorization: `Bearer ${token}`,
+                                                                                "Content-Type": "application/json",
+                                                                           },
+                                                                           body: JSON.stringify({
+                                                                                exchange_account_id: selectedAccountId,
+                                                                                symbol: selectedSymbol,
+                                                                                side: "sell",
+                                                                                order_type: "market",
+                                                                                quantity: 0.001, // Small test amount
+                                                                           }),
+                                                                      });
+
+                                                                      if (response.ok) {
+                                                                           alert("Order placed successfully!");
+                                                                      } else {
+                                                                           const errorData = await response.json().catch(() => ({}));
+                                                                           alert(`Failed to place order: ${errorData.detail || "Unknown error"}`);
+                                                                      }
+                                                                 } catch (error) {
+                                                                      console.error("Error placing order:", error);
+                                                                      alert("Network error. Please try again.");
+                                                                 }
+                                                            }}
+                                                            style={{
+                                                                 marginTop: "8px",
+                                                                 padding: "6px 12px",
+                                                                 backgroundColor: "#ef4444",
+                                                                 color: "white",
+                                                                 border: "none",
+                                                                 borderRadius: "4px",
+                                                                 cursor: "pointer",
+                                                                 fontSize: "12px",
+                                                                 fontWeight: "bold",
+                                                                 width: "100%",
+                                                            }}
+                                                       >
+                                                            Quick Sell
+                                                       </button>
+                                                  )}
+                                             </div>
+                                        );
+                                   })}
+                              </div>
+                         ) : (
+                              <p style={{ color: "#666" }}>No predictions available</p>
+                         )}
+
+                         {/* Horizon selector */}
+                         <div style={{ marginTop: "16px", padding: "12px", backgroundColor: "#f5f5f5", borderRadius: "8px" }}>
+                              <div style={{ fontSize: "14px", fontWeight: "bold", marginBottom: "8px" }}>Select Horizons:</div>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                                   {["10m", "20m", "30m", "1h", "4h", "24h"].map((h) => (
+                                        <label key={h} style={{ display: "flex", alignItems: "center", gap: "4px", cursor: "pointer" }}>
+                                             <input
+                                                  type="checkbox"
+                                                  checked={selectedHorizons.includes(h)}
+                                                  onChange={(e) => {
+                                                       if (e.target.checked) {
+                                                            setSelectedHorizons([...selectedHorizons, h]);
+                                                       } else {
+                                                            setSelectedHorizons(selectedHorizons.filter((hor) => hor !== h));
+                                                       }
+                                                  }}
+                                             />
+                                             <span>{h}</span>
+                                        </label>
+                                   ))}
+                              </div>
+                         </div>
+
+                         {/* Accuracy Stats */}
+                         {accuracyStats && accuracyStats.total_predictions > 0 && (
+                              <div style={{ marginTop: "16px", padding: "16px", backgroundColor: "#fff", border: "1px solid #eaeaea", borderRadius: "8px" }}>
+                                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                                        <h3 style={{ margin: 0, fontSize: "16px" }}>Prediction Accuracy (Last 30 Days)</h3>
+                                        <button
+                                             onClick={() => setShowAccuracyHistory(!showAccuracyHistory)}
+                                             style={{
+                                                  padding: "6px 12px",
+                                                  backgroundColor: showAccuracyHistory ? "#0070f3" : "#f5f5f5",
+                                                  color: showAccuracyHistory ? "white" : "#333",
+                                                  border: "none",
+                                                  borderRadius: "4px",
+                                                  cursor: "pointer",
+                                                  fontSize: "12px",
+                                             }}
+                                        >
+                                             {showAccuracyHistory ? "Hide" : "Show"} History
+                                        </button>
+                                   </div>
+                                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "12px" }}>
+                                        <div>
+                                             <div style={{ fontSize: "12px", color: "#666" }}>Total Predictions</div>
+                                             <div style={{ fontSize: "20px", fontWeight: "bold" }}>{accuracyStats.total_predictions}</div>
+                                        </div>
+                                        <div>
+                                             <div style={{ fontSize: "12px", color: "#666" }}>Avg Error</div>
+                                             <div
+                                                  style={{
+                                                       fontSize: "20px",
+                                                       fontWeight: "bold",
+                                                       color: accuracyStats.avg_error_percent < 5 ? "green" : accuracyStats.avg_error_percent < 10 ? "orange" : "red",
+                                                  }}
+                                             >
+                                                  {accuracyStats.avg_error_percent.toFixed(2)}%
+                                             </div>
+                                        </div>
+                                        <div>
+                                             <div style={{ fontSize: "12px", color: "#666" }}>Within Confidence</div>
+                                             <div
+                                                  style={{
+                                                       fontSize: "20px",
+                                                       fontWeight: "bold",
+                                                       color: accuracyStats.accuracy_within_confidence > 70 ? "green" : accuracyStats.accuracy_within_confidence > 50 ? "orange" : "red",
+                                                  }}
+                                             >
+                                                  {accuracyStats.accuracy_within_confidence.toFixed(1)}%
+                                             </div>
+                                        </div>
+                                        <div>
+                                             <div style={{ fontSize: "12px", color: "#666" }}>Avg Confidence</div>
+                                             <div style={{ fontSize: "20px", fontWeight: "bold" }}>{(accuracyStats.avg_confidence * 100).toFixed(1)}%</div>
+                                        </div>
+                                   </div>
+                              </div>
+                         )}
+                    </div>
+               )}
+
                {/* Price Display */}
                {selectedSymbol && (
                     <div style={{ marginBottom: "24px" }}>
@@ -545,7 +893,15 @@ export default function MarketPage() {
                {/* OHLCV Chart */}
                {selectedSymbol && (
                     <div>
-                         <h2>Price Chart ({timeframe})</h2>
+                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                              <h2 style={{ margin: 0 }}>Price Chart ({timeframe})</h2>
+                              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                                   <label style={{ display: "flex", alignItems: "center", gap: "4px", cursor: "pointer" }}>
+                                        <input type="checkbox" checked={showPredictions} onChange={(e) => setShowPredictions(e.target.checked)} />
+                                        Show Predictions
+                                   </label>
+                              </div>
+                         </div>
                          {ohlcvLoading ? (
                               <p>Loading chart data...</p>
                          ) : ohlcvData.length > 0 ? (
@@ -553,19 +909,34 @@ export default function MarketPage() {
                                    {/* Chart Visualization */}
                                    <div style={{ marginBottom: "24px", backgroundColor: "#fff", padding: "16px", borderRadius: "8px", border: "1px solid #eaeaea" }}>
                                         <ResponsiveContainer width="100%" height={400}>
-                                             <LineChart
+                                             <ComposedChart
                                                   data={ohlcvData
                                                        .slice()
                                                        .reverse()
-                                                       .map((candle) => ({
-                                                            time: new Date(candle.t).toLocaleTimeString(),
-                                                            timestamp: candle.t,
-                                                            open: candle.o,
-                                                            high: candle.h,
-                                                            low: candle.l,
-                                                            close: candle.c,
-                                                            volume: candle.v,
-                                                       }))}
+                                                       .map((candle) => {
+                                                            const dataPoint: Record<string, string | number> = {
+                                                                 time: new Date(candle.t).toLocaleTimeString(),
+                                                                 timestamp: candle.t,
+                                                                 open: candle.o,
+                                                                 high: candle.h,
+                                                                 low: candle.l,
+                                                                 close: candle.c,
+                                                                 volume: candle.v,
+                                                            };
+
+                                                            // Add prediction data for confidence intervals
+                                                            if (showPredictions && Object.keys(predictions).length > 0) {
+                                                                 Object.entries(predictions).forEach(([horizon, pred]) => {
+                                                                      if (pred && pred.predicted_price) {
+                                                                           dataPoint[`pred_${horizon}`] = pred.predicted_price;
+                                                                           dataPoint[`pred_${horizon}_upper`] = pred.upper_bound;
+                                                                           dataPoint[`pred_${horizon}_lower`] = pred.lower_bound;
+                                                                      }
+                                                                 });
+                                                            }
+
+                                                            return dataPoint;
+                                                       })}
                                                   margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
                                              >
                                                   <CartesianGrid strokeDasharray="3 3" />
@@ -574,7 +945,7 @@ export default function MarketPage() {
                                                   <Tooltip
                                                        formatter={(value: number, name: string) => [
                                                             `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 8 })}`,
-                                                            name.charAt(0).toUpperCase() + name.slice(1),
+                                                            name.charAt(0).toUpperCase() + name.slice(1).replace("_", " "),
                                                        ]}
                                                        labelFormatter={(label) => `Time: ${label}`}
                                                   />
@@ -582,7 +953,102 @@ export default function MarketPage() {
                                                   <Line type="monotone" dataKey="close" stroke="#0070f3" strokeWidth={2} name="Close" dot={false} activeDot={{ r: 6 }} />
                                                   <Line type="monotone" dataKey="high" stroke="#22c55e" strokeWidth={1} name="High" dot={false} strokeDasharray="2 2" />
                                                   <Line type="monotone" dataKey="low" stroke="#ef4444" strokeWidth={1} name="Low" dot={false} strokeDasharray="2 2" />
-                                             </LineChart>
+
+                                                  {/* Confidence intervals (shaded areas) */}
+                                                  {showPredictions &&
+                                                       Object.entries(predictions).map(([horizon, pred]) => {
+                                                            if (!pred || !pred.predicted_price) return null;
+
+                                                            const colors: Record<string, string> = {
+                                                                 "10m": "#f59e0b", // orange
+                                                                 "20m": "#8b5cf6", // purple
+                                                                 "30m": "#ec4899", // pink
+                                                                 "1h": "#06b6d4", // cyan
+                                                                 "4h": "#10b981", // green
+                                                                 "24h": "#6366f1", // indigo
+                                                            };
+
+                                                            const color = colors[horizon] || "#888";
+                                                            const opacity = 0.2; // 20% opacity for confidence areas
+
+                                                            return (
+                                                                 <Area
+                                                                      key={`area_${horizon}`}
+                                                                      type="monotone"
+                                                                      dataKey={`pred_${horizon}_upper`}
+                                                                      stroke="none"
+                                                                      fill={color}
+                                                                      fillOpacity={opacity}
+                                                                      name={`${horizon} Upper`}
+                                                                      hide
+                                                                 />
+                                                            );
+                                                       })}
+                                                  {showPredictions &&
+                                                       Object.entries(predictions).map(([horizon, pred]) => {
+                                                            if (!pred || !pred.predicted_price) return null;
+
+                                                            const colors: Record<string, string> = {
+                                                                 "10m": "#f59e0b",
+                                                                 "20m": "#8b5cf6",
+                                                                 "30m": "#ec4899",
+                                                                 "1h": "#06b6d4",
+                                                                 "4h": "#10b981",
+                                                                 "24h": "#6366f1",
+                                                            };
+
+                                                            const color = colors[horizon] || "#888";
+
+                                                            return (
+                                                                 <Area
+                                                                      key={`area_lower_${horizon}`}
+                                                                      type="monotone"
+                                                                      dataKey={`pred_${horizon}_lower`}
+                                                                      stroke="none"
+                                                                      fill={color}
+                                                                      fillOpacity={0.1}
+                                                                      name={`${horizon} Lower`}
+                                                                      hide
+                                                                      stackId={`stack_${horizon}`}
+                                                                 />
+                                                            );
+                                                       })}
+
+                                                  {/* Prediction lines */}
+                                                  {showPredictions &&
+                                                       Object.entries(predictions).map(([horizon, pred]) => {
+                                                            if (!pred || !pred.predicted_price) return null;
+
+                                                            const colors: Record<string, string> = {
+                                                                 "10m": "#f59e0b", // orange
+                                                                 "20m": "#8b5cf6", // purple
+                                                                 "30m": "#ec4899", // pink
+                                                                 "1h": "#06b6d4", // cyan
+                                                                 "4h": "#10b981", // green
+                                                                 "24h": "#6366f1", // indigo
+                                                            };
+
+                                                            const color = colors[horizon] || "#888";
+
+                                                            // Determine entry/exit signal
+                                                            const isBuySignal = pred.price_change_percent > 0.005; // >0.5% increase
+                                                            const isSellSignal = pred.price_change_percent < -0.005; // >0.5% decrease
+
+                                                            return (
+                                                                 <ReferenceLine
+                                                                      key={`pred_${horizon}`}
+                                                                      y={pred.predicted_price}
+                                                                      stroke={color}
+                                                                      strokeWidth={2}
+                                                                      strokeDasharray={isBuySignal || isSellSignal ? "3 3" : "5 5"}
+                                                                      label={{
+                                                                           value: `${horizon}: $${pred.predicted_price.toFixed(2)}${isBuySignal ? " 🟢 BUY" : isSellSignal ? " 🔴 SELL" : ""}`,
+                                                                           position: "right",
+                                                                      }}
+                                                                 />
+                                                            );
+                                                       })}
+                                             </ComposedChart>
                                         </ResponsiveContainer>
                                    </div>
 

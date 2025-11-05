@@ -46,6 +46,9 @@ export default function Home() {
                               <Link href="/trading" style={{ marginRight: 16, color: "#0070f3" }}>
                                    Trading
                               </Link>
+                              <Link href="/bots" style={{ marginRight: 16, color: "#0070f3" }}>
+                                   Bots
+                              </Link>
                               <Link href="/settings" style={{ marginRight: 16, color: "#0070f3" }}>
                                    Settings
                               </Link>
