@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 
 // Helper function to mask sensitive data (show first 4 and last 4 chars)
+// Currently unused but kept for potential future use
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function maskSensitiveData(value: string): string {
      if (!value || value.length <= 8) {
           return "••••••••";
@@ -22,14 +24,30 @@ export default function SettingsPage() {
           passphrase: "",
           isTestnet: false,
      });
+     const [requiresPassphrase, setRequiresPassphrase] = useState(false);
      const [creating, setCreating] = useState(false);
      const [testingAccountId, setTestingAccountId] = useState<number | null>(null);
      const [testResults, setTestResults] = useState<Record<number, { status: "success" | "error"; message: string }>>({});
      const [errors, setErrors] = useState<Record<string, string>>({});
+     const [jsonFileError, setJsonFileError] = useState<string | null>(null);
 
      // Fetch supported exchanges via REST API
-     const [exchangesData, setExchangesData] = useState<any>(null);
-     const [accountsData, setAccountsData] = useState<any>(null);
+     interface ExchangeData {
+          exchanges?: Array<{ id: string; name: string; requires_passphrase?: boolean; ccxt_id?: string | null }>;
+     }
+     interface AccountData {
+          exchangeAccounts?: Array<{
+               id: number;
+               exchangeName?: string;
+               exchange_name?: string;
+               api_key_preview?: string;
+               isActive?: boolean;
+               isTestnet?: boolean;
+               lastVerifiedAt?: string;
+          }>;
+     }
+     const [exchangesData, setExchangesData] = useState<ExchangeData | null>(null);
+     const [accountsData, setAccountsData] = useState<AccountData | null>(null);
      const [loading, setLoading] = useState(true);
 
      useEffect(() => {
@@ -195,279 +213,625 @@ export default function SettingsPage() {
      };
 
      return (
-          <div style={{ padding: "24px", maxWidth: "1200px", margin: "0 auto" }}>
-               <h1>Exchange API Keys</h1>
+          <div style={{ padding: "24px", maxWidth: "1200px", margin: "0 auto", color: "#ededed" }}>
+               <h1 style={{ color: "#FFAE00", marginBottom: "24px" }}>Exchange API Keys</h1>
 
                <div style={{ marginBottom: "24px" }}>
                     <button
-                         onClick={() => setShowAddForm(!showAddForm)}
+                         onClick={() => setShowAddForm(true)}
                          style={{
                               padding: "12px 24px",
-                              backgroundColor: "#0070f3",
-                              color: "white",
+                              backgroundColor: "#FFAE00",
+                              color: "#1a1a1a",
                               border: "none",
-                              borderRadius: "4px",
+                              borderRadius: "8px",
                               cursor: "pointer",
+                              fontWeight: "600",
+                              fontSize: "14px",
+                              transition: "all 0.2s ease",
+                         }}
+                         onMouseEnter={(e) => {
+                              e.currentTarget.style.backgroundColor = "#ffb84d";
+                         }}
+                         onMouseLeave={(e) => {
+                              e.currentTarget.style.backgroundColor = "#FFAE00";
                          }}
                     >
-                         {showAddForm ? "Cancel" : "+ Add Exchange Account"}
+                         + Add Exchange Account
                     </button>
                </div>
 
                {showAddForm && (
-                    <form
-                         onSubmit={handleSubmit}
-                         style={{
-                              padding: "24px",
-                              border: "1px solid #eaeaea",
-                              borderRadius: "8px",
-                              marginBottom: "24px",
-                         }}
-                    >
-                         <h2>Add Exchange Account</h2>
-
-                         <div style={{ marginBottom: "16px" }}>
-                              <label>
-                                   Exchange:
-                                   <select
-                                        value={formData.exchangeName}
-                                        onChange={(e) => setFormData({ ...formData, exchangeName: e.target.value })}
-                                        required
-                                        style={{
-                                             width: "100%",
-                                             padding: "8px",
-                                             marginTop: "4px",
-                                             borderRadius: "4px",
-                                             border: "1px solid #ddd",
-                                        }}
-                                   >
-                                        <option value="">Select Exchange</option>
-                                        {exchangesData?.exchanges && exchangesData.exchanges.length > 0 ? (
-                                             exchangesData.exchanges.map((ex: { id: string; name: string }) => (
-                                                  <option key={ex.id} value={ex.id}>
-                                                       {ex.name}
-                                                  </option>
-                                             ))
-                                        ) : (
-                                             <option value="" disabled>
-                                                  Loading exchanges...
-                                             </option>
-                                        )}
-                                   </select>
-                              </label>
-                         </div>
-
-                         <div style={{ marginBottom: "16px" }}>
-                              <label>
-                                   API Key:
-                                   <input
-                                        type="text"
-                                        value={formData.apiKey}
-                                        onChange={(e) => setFormData({ ...formData, apiKey: e.target.value })}
-                                        required
-                                        style={{
-                                             width: "100%",
-                                             padding: "8px",
-                                             marginTop: "4px",
-                                             borderRadius: "4px",
-                                             border: "1px solid #ddd",
-                                        }}
-                                   />
-                              </label>
-                         </div>
-
-                         <div style={{ marginBottom: "16px" }}>
-                              <label>
-                                   API Secret:
-                                   <input
-                                        type="password"
-                                        value={formData.apiSecret}
-                                        onChange={(e) => setFormData({ ...formData, apiSecret: e.target.value })}
-                                        required
-                                        style={{
-                                             width: "100%",
-                                             padding: "8px",
-                                             marginTop: "4px",
-                                             borderRadius: "4px",
-                                             border: "1px solid #ddd",
-                                        }}
-                                   />
-                              </label>
-                         </div>
-
-                         <div style={{ marginBottom: "16px" }}>
-                              <label>
-                                   Passphrase (optional):
-                                   <input
-                                        type="password"
-                                        value={formData.passphrase}
-                                        onChange={(e) => setFormData({ ...formData, passphrase: e.target.value })}
-                                        style={{
-                                             width: "100%",
-                                             padding: "8px",
-                                             marginTop: "4px",
-                                             borderRadius: "4px",
-                                             border: "1px solid #ddd",
-                                        }}
-                                   />
-                              </label>
-                         </div>
-
-                         <div style={{ marginBottom: "16px" }}>
-                              <label>
-                                   <input type="checkbox" checked={formData.isTestnet} onChange={(e) => setFormData({ ...formData, isTestnet: e.target.checked })} style={{ marginRight: "8px" }} />
-                                   Use Testnet
-                              </label>
-                         </div>
-
-                         {errors.submit && (
-                              <div
-                                   style={{
-                                        padding: "12px",
-                                        backgroundColor: "#fee",
-                                        border: "1px solid #fcc",
-                                        borderRadius: "4px",
-                                        marginBottom: "16px",
-                                        color: "#c00",
-                                   }}
-                              >
-                                   {errors.submit}
-                              </div>
-                         )}
-
-                         <button
-                              type="submit"
-                              disabled={creating}
+                    <>
+                         {/* Modal Overlay */}
+                         <div
                               style={{
-                                   padding: "12px 24px",
-                                   backgroundColor: "#0070f3",
-                                   color: "white",
-                                   border: "none",
-                                   borderRadius: "4px",
-                                   cursor: creating ? "not-allowed" : "pointer",
+                                   position: "fixed",
+                                   top: 0,
+                                   left: 0,
+                                   right: 0,
+                                   bottom: 0,
+                                   backgroundColor: "rgba(0, 0, 0, 0.3)",
+                                   zIndex: 1000,
+                                   display: "flex",
+                                   alignItems: "center",
+                                   justifyContent: "center",
+                              }}
+                              onClick={() => {
+                                   setShowAddForm(false);
+                                   setFormData({
+                                        exchangeName: "",
+                                        apiKey: "",
+                                        apiSecret: "",
+                                        passphrase: "",
+                                        isTestnet: false,
+                                   });
+                                   setErrors({});
                               }}
                          >
-                              {creating ? "Adding..." : "Add Account"}
-                         </button>
-                    </form>
+                              {/* Modal Content */}
+                              <form
+                                   onSubmit={handleSubmit}
+                                   onClick={(e) => e.stopPropagation()}
+                                   style={{
+                                        backgroundColor: "#2a2a2a",
+                                        padding: "32px",
+                                        borderRadius: "12px",
+                                        border: "1px solid rgba(255, 174, 0, 0.3)",
+                                        maxWidth: "600px",
+                                        width: "90%",
+                                        maxHeight: "90vh",
+                                        overflowY: "auto",
+                                        boxShadow: "0 8px 32px rgba(0, 0, 0, 0.5)",
+                                   }}
+                              >
+                                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
+                                        <h2 style={{ color: "#FFAE00", margin: 0, fontSize: "24px", fontWeight: "bold" }}>Add Exchange Account</h2>
+                                        <button
+                                             type="button"
+                                             onClick={() => {
+                                                  setShowAddForm(false);
+                                                  setFormData({
+                                                       exchangeName: "",
+                                                       apiKey: "",
+                                                       apiSecret: "",
+                                                       passphrase: "",
+                                                       isTestnet: false,
+                                                  });
+                                                  setErrors({});
+                                                  setJsonFileError(null);
+                                             }}
+                                             style={{
+                                                  background: "none",
+                                                  border: "none",
+                                                  color: "#888",
+                                                  fontSize: "24px",
+                                                  cursor: "pointer",
+                                                  padding: "0",
+                                                  width: "32px",
+                                                  height: "32px",
+                                                  display: "flex",
+                                                  alignItems: "center",
+                                                  justifyContent: "center",
+                                                  borderRadius: "4px",
+                                             }}
+                                             onMouseEnter={(e) => {
+                                                  e.currentTarget.style.color = "#ff4444";
+                                                  e.currentTarget.style.backgroundColor = "rgba(255, 68, 68, 0.1)";
+                                             }}
+                                             onMouseLeave={(e) => {
+                                                  e.currentTarget.style.color = "#888";
+                                                  e.currentTarget.style.backgroundColor = "transparent";
+                                             }}
+                                        >
+                                             ×
+                                        </button>
+                                   </div>
+
+                                   {/* JSON File Upload for Coinbase Advanced Trade */}
+                                   {formData.exchangeName?.toLowerCase().includes("coinbase") && (
+                                        <div style={{ marginBottom: "20px", padding: "16px", backgroundColor: "#1a1a1a", borderRadius: "8px", border: "1px solid rgba(255, 174, 0, 0.2)" }}>
+                                             <label style={{ display: "block", marginBottom: "8px", color: "#FFAE00", fontWeight: "600", fontSize: "14px" }}>Upload JSON File (Optional):</label>
+                                             <input
+                                                  type="file"
+                                                  accept=".json"
+                                                  onChange={(e) => {
+                                                       const file = e.target.files?.[0];
+                                                       if (!file) return;
+
+                                                       setJsonFileError(null);
+                                                       const reader = new FileReader();
+                                                       reader.onload = (event) => {
+                                                            try {
+                                                                 const jsonContent = JSON.parse(event.target?.result as string);
+
+                                                                 // Extract API key name and private key from JSON
+                                                                 // Coinbase Advanced Trade JSON format can vary, try common field names
+                                                                 const apiKeyName = jsonContent.apiKeyName || jsonContent.api_key_name || jsonContent.name || jsonContent.apiKey || jsonContent.api_key;
+
+                                                                 const privateKey =
+                                                                      jsonContent.privateKey || jsonContent.private_key || jsonContent.secret || jsonContent.apiSecret || jsonContent.api_secret;
+
+                                                                 if (apiKeyName && privateKey) {
+                                                                      setFormData({
+                                                                           ...formData,
+                                                                           apiKey: apiKeyName,
+                                                                           apiSecret: privateKey,
+                                                                      });
+                                                                      setErrors({});
+                                                                 } else {
+                                                                      setJsonFileError("JSON file must contain 'apiKeyName' (or 'api_key_name') and 'privateKey' (or 'private_key') fields.");
+                                                                 }
+                                                            } catch (error) {
+                                                                 setJsonFileError(`Failed to parse JSON file: ${error instanceof Error ? error.message : "Invalid JSON format"}`);
+                                                            }
+                                                       };
+                                                       reader.onerror = () => {
+                                                            setJsonFileError("Failed to read file");
+                                                       };
+                                                       reader.readAsText(file);
+                                                  }}
+                                                  style={{
+                                                       width: "100%",
+                                                       padding: "8px",
+                                                       borderRadius: "8px",
+                                                       border: "2px solid rgba(255, 174, 0, 0.3)",
+                                                       backgroundColor: "#2a2a2a",
+                                                       color: "#ededed",
+                                                       fontSize: "14px",
+                                                       cursor: "pointer",
+                                                  }}
+                                             />
+                                             {jsonFileError && (
+                                                  <div
+                                                       style={{
+                                                            marginTop: "8px",
+                                                            padding: "12px",
+                                                            backgroundColor: "rgba(255, 68, 68, 0.15)",
+                                                            border: "2px solid rgba(255, 68, 68, 0.5)",
+                                                            borderRadius: "8px",
+                                                            color: "#ff4444",
+                                                            fontSize: "13px",
+                                                       }}
+                                                  >
+                                                       {jsonFileError}
+                                                  </div>
+                                             )}
+                                             <div style={{ fontSize: "12px", color: "#888", marginTop: "8px" }}>
+                                                  <strong style={{ color: "#FFAE00" }}>Coinbase Advanced Trade:</strong> Upload a JSON file with your API credentials. Expected format:{" "}
+                                                  <code style={{ color: "#FFAE00", fontSize: "11px" }}>{`{"apiKeyName": "...", "privateKey": "..."}`}</code>
+                                             </div>
+                                        </div>
+                                   )}
+
+                                   <div style={{ marginBottom: "20px" }}>
+                                        <label style={{ display: "block", marginBottom: "8px", color: "#FFAE00", fontWeight: "600", fontSize: "14px" }}>Exchange:</label>
+                                        <select
+                                             value={formData.exchangeName}
+                                             onChange={(e) => {
+                                                  const selectedExchange = exchangesData?.exchanges?.find(
+                                                       (ex: { id: string; requires_passphrase?: boolean; ccxt_id?: string | null }) => ex.id === e.target.value
+                                                  );
+                                                  setErrors({});
+                                                  setRequiresPassphrase(selectedExchange?.requires_passphrase || false);
+                                                  setFormData({ ...formData, exchangeName: e.target.value, passphrase: "" });
+                                             }}
+                                             required
+                                             style={{
+                                                  width: "100%",
+                                                  padding: "12px",
+                                                  marginTop: "4px",
+                                                  borderRadius: "8px",
+                                                  border: "2px solid rgba(255, 174, 0, 0.3)",
+                                                  backgroundColor: "#1a1a1a",
+                                                  color: "#ededed",
+                                                  fontSize: "14px",
+                                                  cursor: "pointer",
+                                                  outline: "none",
+                                             }}
+                                             onFocus={(e) => (e.target.style.borderColor = "#FFAE00")}
+                                             onBlur={(e) => (e.target.style.borderColor = "rgba(255, 174, 0, 0.3)")}
+                                        >
+                                             <option value="" style={{ backgroundColor: "#1a1a1a", color: "#888" }}>
+                                                  Select Exchange
+                                             </option>
+                                             {exchangesData?.exchanges && exchangesData.exchanges.length > 0 ? (
+                                                  exchangesData.exchanges.map((ex: { id: string; name: string; requires_passphrase?: boolean; ccxt_id?: string | null }) => {
+                                                       return (
+                                                            <option key={ex.id} value={ex.id} style={{ backgroundColor: "#1a1a1a", color: "#ededed" }}>
+                                                                 {ex.name}
+                                                            </option>
+                                                       );
+                                                  })
+                                             ) : (
+                                                  <option value="" disabled style={{ backgroundColor: "#1a1a1a", color: "#888" }}>
+                                                       Loading exchanges...
+                                                  </option>
+                                             )}
+                                        </select>
+                                        {errors.exchangeName && (
+                                             <div
+                                                  style={{
+                                                       marginTop: "8px",
+                                                       padding: "12px",
+                                                       backgroundColor: "rgba(255, 68, 68, 0.15)",
+                                                       border: "2px solid rgba(255, 68, 68, 0.5)",
+                                                       borderRadius: "8px",
+                                                       color: "#ff4444",
+                                                       fontSize: "14px",
+                                                  }}
+                                             >
+                                                  {errors.exchangeName}
+                                             </div>
+                                        )}
+                                   </div>
+
+                                   <div style={{ marginBottom: "20px" }}>
+                                        <label style={{ display: "block", marginBottom: "8px", color: "#FFAE00", fontWeight: "600", fontSize: "14px" }}>API Key:</label>
+                                        <input
+                                             type="text"
+                                             value={formData.apiKey}
+                                             onChange={(e) => setFormData({ ...formData, apiKey: e.target.value })}
+                                             required
+                                             placeholder={
+                                                  formData.exchangeName?.toLowerCase().includes("coinbase") ? "organizations/.../apiKeys/... (Full API Key name from Coinbase)" : "Enter your API Key"
+                                             }
+                                             style={{
+                                                  width: "100%",
+                                                  padding: "12px",
+                                                  marginTop: "4px",
+                                                  borderRadius: "8px",
+                                                  border: "2px solid rgba(255, 174, 0, 0.3)",
+                                                  backgroundColor: "#1a1a1a",
+                                                  color: "#ededed",
+                                                  fontSize: "14px",
+                                                  outline: "none",
+                                             }}
+                                             onFocus={(e) => (e.target.style.borderColor = "#FFAE00")}
+                                             onBlur={(e) => (e.target.style.borderColor = "rgba(255, 174, 0, 0.3)")}
+                                        />
+                                        {formData.exchangeName?.toLowerCase().includes("coinbase") && (
+                                             <div style={{ fontSize: "12px", color: "#888", marginTop: "8px" }}>
+                                                  <strong style={{ color: "#FFAE00" }}>Coinbase Advanced Trade:</strong> Enter the full API Key name (e.g., organizations/.../apiKeys/...)
+                                             </div>
+                                        )}
+                                   </div>
+
+                                   <div style={{ marginBottom: "20px" }}>
+                                        <label style={{ display: "block", marginBottom: "8px", color: "#FFAE00", fontWeight: "600", fontSize: "14px" }}>API Secret:</label>
+                                        <input
+                                             type="password"
+                                             value={formData.apiSecret}
+                                             onChange={(e) => setFormData({ ...formData, apiSecret: e.target.value })}
+                                             required
+                                             placeholder={
+                                                  formData.exchangeName?.toLowerCase().includes("coinbase") ? "-----BEGIN EC PRIVATE KEY-----... (Paste your private key)" : "Enter your API Secret"
+                                             }
+                                             style={{
+                                                  width: "100%",
+                                                  padding: "12px",
+                                                  marginTop: "4px",
+                                                  borderRadius: "8px",
+                                                  border: "2px solid rgba(255, 174, 0, 0.3)",
+                                                  backgroundColor: "#1a1a1a",
+                                                  color: "#ededed",
+                                                  fontSize: "14px",
+                                                  outline: "none",
+                                             }}
+                                             onFocus={(e) => (e.target.style.borderColor = "#FFAE00")}
+                                             onBlur={(e) => (e.target.style.borderColor = "rgba(255, 174, 0, 0.3)")}
+                                        />
+                                        {formData.exchangeName?.toLowerCase().includes("coinbase") && (
+                                             <div style={{ fontSize: "12px", color: "#888", marginTop: "8px" }}>
+                                                  <strong style={{ color: "#FFAE00" }}>Coinbase Advanced Trade:</strong> Paste your EC Private Key (starts with -----BEGIN EC PRIVATE KEY-----)
+                                             </div>
+                                        )}
+                                   </div>
+
+                                   <div style={{ marginBottom: "20px" }}>
+                                        <label style={{ display: "block", marginBottom: "8px", color: "#FFAE00", fontWeight: "600", fontSize: "14px" }}>
+                                             Passphrase {requiresPassphrase ? "(required)" : "(optional)"}:
+                                        </label>
+                                        <input
+                                             type="password"
+                                             value={formData.passphrase}
+                                             onChange={(e) => setFormData({ ...formData, passphrase: e.target.value })}
+                                             required={requiresPassphrase}
+                                             placeholder={
+                                                  requiresPassphrase
+                                                       ? "Coinbase requires a passphrase. Enter the passphrase you created when generating your API key."
+                                                       : "Some exchanges require a passphrase (e.g., Coinbase)"
+                                             }
+                                             style={{
+                                                  width: "100%",
+                                                  padding: "12px",
+                                                  marginTop: "4px",
+                                                  borderRadius: "8px",
+                                                  border: requiresPassphrase && !formData.passphrase ? "2px solid #ff4444" : "2px solid rgba(255, 174, 0, 0.3)",
+                                                  backgroundColor: "#1a1a1a",
+                                                  color: "#ededed",
+                                                  fontSize: "14px",
+                                                  outline: "none",
+                                             }}
+                                             onFocus={(e) => (e.target.style.borderColor = "#FFAE00")}
+                                             onBlur={(e) => {
+                                                  if (requiresPassphrase && !formData.passphrase) {
+                                                       e.target.style.borderColor = "#ff4444";
+                                                  } else {
+                                                       e.target.style.borderColor = "rgba(255, 174, 0, 0.3)";
+                                                  }
+                                             }}
+                                        />
+                                        {requiresPassphrase && (
+                                             <div style={{ fontSize: "12px", color: "#888", marginTop: "8px" }}>
+                                                  <strong style={{ color: "#FFAE00" }}>توضیح:</strong> Passphrase یک رمز عبور اضافی است که هنگام ساخت API Key در Coinbase تعریف می‌کنید. این رمز باید
+                                                  حداقل 8 کاراکتر باشد.
+                                             </div>
+                                        )}
+                                   </div>
+
+                                   <div style={{ marginBottom: "20px" }}>
+                                        <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", color: "#ededed", fontSize: "14px" }}>
+                                             <input
+                                                  type="checkbox"
+                                                  checked={formData.isTestnet}
+                                                  onChange={(e) => setFormData({ ...formData, isTestnet: e.target.checked })}
+                                                  style={{
+                                                       width: "18px",
+                                                       height: "18px",
+                                                       cursor: "pointer",
+                                                       accentColor: "#FFAE00",
+                                                  }}
+                                             />
+                                             <span>Use Testnet</span>
+                                        </label>
+                                   </div>
+
+                                   {errors.submit && (
+                                        <div
+                                             style={{
+                                                  padding: "16px",
+                                                  backgroundColor: "rgba(255, 68, 68, 0.15)",
+                                                  border: "2px solid rgba(255, 68, 68, 0.5)",
+                                                  borderRadius: "8px",
+                                                  marginBottom: "20px",
+                                                  color: "#ff4444",
+                                                  fontSize: "14px",
+                                             }}
+                                        >
+                                             {errors.submit}
+                                        </div>
+                                   )}
+
+                                   <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end", marginTop: "24px" }}>
+                                        <button
+                                             type="button"
+                                             onClick={() => {
+                                                  setShowAddForm(false);
+                                                  setFormData({
+                                                       exchangeName: "",
+                                                       apiKey: "",
+                                                       apiSecret: "",
+                                                       passphrase: "",
+                                                       isTestnet: false,
+                                                  });
+                                                  setErrors({});
+                                             }}
+                                             style={{
+                                                  padding: "12px 24px",
+                                                  backgroundColor: "#2a2a2a",
+                                                  color: "#ededed",
+                                                  border: "2px solid rgba(255, 174, 0, 0.3)",
+                                                  borderRadius: "8px",
+                                                  cursor: "pointer",
+                                                  fontWeight: "600",
+                                                  fontSize: "14px",
+                                                  transition: "all 0.2s ease",
+                                             }}
+                                             onMouseEnter={(e) => {
+                                                  e.currentTarget.style.backgroundColor = "#1a1a1a";
+                                                  e.currentTarget.style.borderColor = "#FFAE00";
+                                             }}
+                                             onMouseLeave={(e) => {
+                                                  e.currentTarget.style.backgroundColor = "#2a2a2a";
+                                                  e.currentTarget.style.borderColor = "rgba(255, 174, 0, 0.3)";
+                                             }}
+                                        >
+                                             Cancel
+                                        </button>
+                                        <button
+                                             type="submit"
+                                             disabled={creating}
+                                             style={{
+                                                  padding: "12px 24px",
+                                                  backgroundColor: creating ? "#666" : "#FFAE00",
+                                                  color: "#1a1a1a",
+                                                  border: "none",
+                                                  borderRadius: "8px",
+                                                  cursor: creating ? "not-allowed" : "pointer",
+                                                  fontWeight: "600",
+                                                  fontSize: "14px",
+                                                  transition: "all 0.2s ease",
+                                             }}
+                                             onMouseEnter={(e) => {
+                                                  if (!creating) {
+                                                       e.currentTarget.style.backgroundColor = "#ffb84d";
+                                                  }
+                                             }}
+                                             onMouseLeave={(e) => {
+                                                  if (!creating) {
+                                                       e.currentTarget.style.backgroundColor = "#FFAE00";
+                                                  }
+                                             }}
+                                        >
+                                             {creating ? "Adding..." : "Add Account"}
+                                        </button>
+                                   </div>
+                              </form>
+                         </div>
+                    </>
                )}
 
                <div>
-                    <h2>Your Exchange Accounts</h2>
+                    <h2 style={{ color: "#FFAE00", marginBottom: "20px", fontSize: "24px", fontWeight: "bold" }}>Your Exchange Accounts</h2>
 
                     {loading ? (
-                         <p>Loading...</p>
-                    ) : accountsData?.exchangeAccounts?.length > 0 ? (
-                         <table
-                              style={{
-                                   width: "100%",
-                                   borderCollapse: "collapse",
-                                   marginTop: "16px",
-                              }}
-                         >
-                              <thead>
-                                   <tr style={{ borderBottom: "2px solid #eaeaea" }}>
-                                        <th style={{ padding: "12px", textAlign: "left" }}>Exchange</th>
-                                        <th style={{ padding: "12px", textAlign: "left" }}>API Key</th>
-                                        <th style={{ padding: "12px", textAlign: "left" }}>Status</th>
-                                        <th style={{ padding: "12px", textAlign: "left" }}>Type</th>
-                                        <th style={{ padding: "12px", textAlign: "left" }}>Last Verified</th>
-                                        <th style={{ padding: "12px", textAlign: "left" }}>Actions</th>
-                                   </tr>
-                              </thead>
-                              <tbody>
-                                   {accountsData.exchangeAccounts.map((account: any) => {
-                                        const testResult = testResults[account.id];
-                                        const isTesting = testingAccountId === account.id;
+                         <div style={{ padding: "24px", textAlign: "center", color: "#888" }}>
+                              <p>Loading...</p>
+                         </div>
+                    ) : (accountsData?.exchangeAccounts?.length ?? 0) > 0 ? (
+                         <div style={{ backgroundColor: "#2a2a2a", borderRadius: "12px", border: "1px solid rgba(255, 174, 0, 0.2)", overflow: "hidden" }}>
+                              <table
+                                   style={{
+                                        width: "100%",
+                                        borderCollapse: "collapse",
+                                   }}
+                              >
+                                   <thead>
+                                        <tr style={{ borderBottom: "2px solid rgba(255, 174, 0, 0.2)", backgroundColor: "#1a1a1a" }}>
+                                             <th style={{ padding: "16px", textAlign: "left", color: "#FFAE00", fontWeight: "600", fontSize: "14px" }}>Exchange</th>
+                                             <th style={{ padding: "16px", textAlign: "left", color: "#FFAE00", fontWeight: "600", fontSize: "14px" }}>API Key</th>
+                                             <th style={{ padding: "16px", textAlign: "left", color: "#FFAE00", fontWeight: "600", fontSize: "14px" }}>Status</th>
+                                             <th style={{ padding: "16px", textAlign: "left", color: "#FFAE00", fontWeight: "600", fontSize: "14px" }}>Type</th>
+                                             <th style={{ padding: "16px", textAlign: "left", color: "#FFAE00", fontWeight: "600", fontSize: "14px" }}>Last Verified</th>
+                                             <th style={{ padding: "16px", textAlign: "left", color: "#FFAE00", fontWeight: "600", fontSize: "14px" }}>Actions</th>
+                                        </tr>
+                                   </thead>
+                                   <tbody>
+                                        {accountsData?.exchangeAccounts?.map(
+                                             (account: {
+                                                  id: number;
+                                                  exchangeName?: string;
+                                                  exchange_name?: string;
+                                                  api_key_preview?: string;
+                                                  isActive?: boolean;
+                                                  isTestnet?: boolean;
+                                                  lastVerifiedAt?: string;
+                                             }) => {
+                                                  const testResult = testResults[account.id];
+                                                  const isTesting = testingAccountId === account.id;
 
-                                        return (
-                                             <tr key={account.id} style={{ borderBottom: "1px solid #eaeaea" }}>
-                                                  <td style={{ padding: "12px" }}>{(account.exchangeName || account.exchange_name || "Unknown").toUpperCase()}</td>
-                                                  <td style={{ padding: "12px", fontFamily: "monospace", fontSize: "12px" }}>{account.api_key_preview || "••••••••"}</td>
-                                                  <td style={{ padding: "12px" }}>
-                                                       {account.isActive ? <span style={{ color: "green", fontWeight: "bold" }}>Active</span> : <span style={{ color: "gray" }}>Inactive</span>}
-                                                  </td>
-                                                  <td style={{ padding: "12px" }}>{account.isTestnet ? "Testnet" : "Live"}</td>
-                                                  <td style={{ padding: "12px" }}>{account.lastVerifiedAt ? new Date(account.lastVerifiedAt).toLocaleString() : "Never"}</td>
-                                                  <td style={{ padding: "12px" }}>
-                                                       <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                                                            <button
-                                                                 style={{
-                                                                      padding: "6px 12px",
-                                                                      backgroundColor: isTesting ? "#ccc" : "#28a745",
-                                                                      color: "white",
-                                                                      border: "none",
-                                                                      borderRadius: "4px",
-                                                                      cursor: isTesting ? "not-allowed" : "pointer",
-                                                                      fontSize: "12px",
-                                                                      minWidth: "100px",
-                                                                 }}
-                                                                 onClick={() => handleTestConnection(account.id)}
-                                                                 disabled={isTesting}
-                                                            >
-                                                                 {isTesting ? "Testing..." : "Test Connection"}
-                                                            </button>
-
-                                                            {testResult && (
-                                                                 <div
-                                                                      style={{
-                                                                           padding: "6px",
-                                                                           fontSize: "11px",
-                                                                           borderRadius: "4px",
-                                                                           backgroundColor: testResult.status === "success" ? "#d4edda" : "#f8d7da",
-                                                                           color: testResult.status === "success" ? "#155724" : "#721c24",
-                                                                           border: `1px solid ${testResult.status === "success" ? "#c3e6cb" : "#f5c6cb"}`,
-                                                                      }}
-                                                                 >
-                                                                      {testResult.message}
-                                                                 </div>
-                                                            )}
-
-                                                            <button
-                                                                 style={{
-                                                                      padding: "6px 12px",
-                                                                      backgroundColor: "#ff4444",
-                                                                      color: "white",
-                                                                      border: "none",
-                                                                      borderRadius: "4px",
-                                                                      cursor: "pointer",
-                                                                      fontSize: "12px",
-                                                                 }}
-                                                                 onClick={async () => {
-                                                                      if (confirm("Are you sure you want to delete this account?")) {
-                                                                           try {
-                                                                                const token = localStorage.getItem("auth_token") || "";
-                                                                                const apiUrl =
-                                                                                     typeof window !== "undefined"
-                                                                                          ? "http://localhost:8000"
-                                                                                          : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-                                                                                const response = await fetch(`${apiUrl}/exchange/accounts/${account.id}`, {
-                                                                                     method: "DELETE",
-                                                                                     headers: token ? { Authorization: `Bearer ${token}` } : {},
-                                                                                });
-                                                                                if (response.ok) {
-                                                                                     await refetch();
-                                                                                } else {
-                                                                                     alert("Failed to delete account");
+                                                  return (
+                                                       <tr key={account.id} style={{ borderBottom: "1px solid rgba(255, 174, 0, 0.1)" }}>
+                                                            <td style={{ padding: "16px", color: "#ededed" }}>{(account.exchangeName || account.exchange_name || "Unknown").toUpperCase()}</td>
+                                                            <td style={{ padding: "16px", fontFamily: "monospace", fontSize: "12px", color: "#888" }}>{account.api_key_preview || "••••••••"}</td>
+                                                            <td style={{ padding: "16px" }}>
+                                                                 {account.isActive ? (
+                                                                      <span style={{ color: "#22c55e", fontWeight: "bold" }}>Active</span>
+                                                                 ) : (
+                                                                      <span style={{ color: "#888" }}>Inactive</span>
+                                                                 )}
+                                                            </td>
+                                                            <td style={{ padding: "16px", color: "#ededed" }}>{account.isTestnet ? "Testnet" : "Live"}</td>
+                                                            <td style={{ padding: "16px", color: "#888", fontSize: "13px" }}>
+                                                                 {account.lastVerifiedAt ? new Date(account.lastVerifiedAt).toLocaleString() : "Never"}
+                                                            </td>
+                                                            <td style={{ padding: "16px" }}>
+                                                                 <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                                                                      <button
+                                                                           style={{
+                                                                                padding: "8px 16px",
+                                                                                backgroundColor: isTesting ? "#666" : "#22c55e",
+                                                                                color: "white",
+                                                                                border: "none",
+                                                                                borderRadius: "8px",
+                                                                                cursor: isTesting ? "not-allowed" : "pointer",
+                                                                                fontSize: "13px",
+                                                                                fontWeight: "600",
+                                                                                minWidth: "120px",
+                                                                                transition: "all 0.2s ease",
+                                                                           }}
+                                                                           onClick={() => handleTestConnection(account.id)}
+                                                                           disabled={isTesting}
+                                                                           onMouseEnter={(e) => {
+                                                                                if (!isTesting) {
+                                                                                     e.currentTarget.style.backgroundColor = "#16a34a";
                                                                                 }
-                                                                           } catch (error) {
-                                                                                console.error("Error:", error);
-                                                                                alert("Network error. Please try again.");
-                                                                           }
-                                                                      }
-                                                                 }}
-                                                            >
-                                                                 Delete
-                                                            </button>
-                                                       </div>
-                                                  </td>
-                                             </tr>
-                                        );
-                                   })}
-                              </tbody>
-                         </table>
+                                                                           }}
+                                                                           onMouseLeave={(e) => {
+                                                                                if (!isTesting) {
+                                                                                     e.currentTarget.style.backgroundColor = "#22c55e";
+                                                                                }
+                                                                           }}
+                                                                      >
+                                                                           {isTesting ? "Testing..." : "Test Connection"}
+                                                                      </button>
+
+                                                                      {testResult && (
+                                                                           <div
+                                                                                style={{
+                                                                                     padding: "8px",
+                                                                                     fontSize: "12px",
+                                                                                     borderRadius: "8px",
+                                                                                     backgroundColor: testResult.status === "success" ? "rgba(34, 197, 94, 0.15)" : "rgba(255, 68, 68, 0.15)",
+                                                                                     color: testResult.status === "success" ? "#22c55e" : "#ff4444",
+                                                                                     border: `2px solid ${testResult.status === "success" ? "rgba(34, 197, 94, 0.3)" : "rgba(255, 68, 68, 0.3)"}`,
+                                                                                }}
+                                                                           >
+                                                                                {testResult.message}
+                                                                           </div>
+                                                                      )}
+
+                                                                      <button
+                                                                           style={{
+                                                                                padding: "8px 16px",
+                                                                                backgroundColor: "#ef4444",
+                                                                                color: "white",
+                                                                                border: "none",
+                                                                                borderRadius: "8px",
+                                                                                cursor: "pointer",
+                                                                                fontSize: "13px",
+                                                                                fontWeight: "600",
+                                                                                transition: "all 0.2s ease",
+                                                                           }}
+                                                                           onClick={async () => {
+                                                                                if (confirm("Are you sure you want to delete this account?")) {
+                                                                                     try {
+                                                                                          const token = localStorage.getItem("auth_token") || "";
+                                                                                          const apiUrl =
+                                                                                               typeof window !== "undefined"
+                                                                                                    ? "http://localhost:8000"
+                                                                                                    : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+                                                                                          const response = await fetch(`${apiUrl}/exchange/accounts/${account.id}`, {
+                                                                                               method: "DELETE",
+                                                                                               headers: token ? { Authorization: `Bearer ${token}` } : {},
+                                                                                          });
+                                                                                          if (response.ok) {
+                                                                                               await refetch();
+                                                                                          } else {
+                                                                                               // Get error message from API
+                                                                                               const errorData = await response.json().catch(() => ({}));
+                                                                                               const errorMessage = errorData.detail || "Failed to delete account";
+                                                                                               alert(errorMessage);
+                                                                                          }
+                                                                                     } catch (error) {
+                                                                                          console.error("Error:", error);
+                                                                                          alert("Network error. Please try again.");
+                                                                                     }
+                                                                                }
+                                                                           }}
+                                                                           onMouseEnter={(e) => {
+                                                                                e.currentTarget.style.backgroundColor = "#dc2626";
+                                                                           }}
+                                                                           onMouseLeave={(e) => {
+                                                                                e.currentTarget.style.backgroundColor = "#ef4444";
+                                                                           }}
+                                                                      >
+                                                                           Delete
+                                                                      </button>
+                                                                 </div>
+                                                            </td>
+                                                       </tr>
+                                                  );
+                                             }
+                                        )}
+                                   </tbody>
+                              </table>
+                         </div>
                     ) : (
-                         <p style={{ marginTop: "16px", color: "#666" }}>No exchange accounts added yet. Add one to get started.</p>
+                         <div style={{ padding: "24px", textAlign: "center", color: "#888", backgroundColor: "#2a2a2a", borderRadius: "12px", border: "1px solid rgba(255, 174, 0, 0.2)" }}>
+                              <p>No exchange accounts added yet. Add one to get started.</p>
+                         </div>
                     )}
                </div>
           </div>

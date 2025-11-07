@@ -2,12 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, ComposedChart, Area } from "recharts";
-
-interface ExchangeAccount {
-     id: number;
-     exchange_name: string;
-     is_active: boolean;
-}
+import { useExchange } from "@/contexts/ExchangeContext";
 
 interface Market {
      symbol: string;
@@ -49,8 +44,7 @@ interface PredictionData {
 }
 
 export default function MarketPage() {
-     const [accounts, setAccounts] = useState<ExchangeAccount[]>([]);
-     const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null);
+     const { selectedAccountId, setSelectedAccountId, accounts } = useExchange();
      const [markets, setMarkets] = useState<Market[]>([]);
      const [selectedSymbol, setSelectedSymbol] = useState<string>("");
      const [timeframe, setTimeframe] = useState<string>("1h");
@@ -78,57 +72,10 @@ export default function MarketPage() {
      } | null>(null);
      const [showAccuracyHistory, setShowAccuracyHistory] = useState(false);
 
-     // Fetch user's exchange accounts
+     // Initialize loading state
      useEffect(() => {
-          const fetchAccounts = async () => {
-               try {
-                    const token = localStorage.getItem("auth_token") || "";
-                    if (!token) {
-                         setError("Please login to view market data");
-                         setLoading(false);
-                         return;
-                    }
-
-                    const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-                    console.log("Fetching accounts from:", `${apiUrl}/exchange/accounts`);
-                    const response = await fetch(`${apiUrl}/exchange/accounts`, {
-                         headers: { Authorization: `Bearer ${token}` },
-                    });
-
-                    console.log("Accounts response status:", response.status);
-
-                    if (response.ok) {
-                         const data = await response.json();
-                         console.log("Accounts data received:", data);
-
-                         // Response is a list of ExchangeAccountResponse
-                         const accountsList = Array.isArray(data) ? data : [];
-                         const activeAccounts = accountsList.filter((acc: ExchangeAccount) => acc.is_active);
-                         setAccounts(activeAccounts);
-                         setError(null);
-
-                         // Auto-select first account if available
-                         if (activeAccounts.length > 0 && selectedAccountId === null) {
-                              setSelectedAccountId(activeAccounts[0].id);
-                         }
-                    } else if (response.status === 401) {
-                         setError("Please login to view market data. Token expired or invalid.");
-                         localStorage.removeItem("auth_token");
-                    } else {
-                         const errorData = await response.json().catch(() => ({}));
-                         setError(errorData.detail || `Failed to load exchange accounts (${response.status})`);
-                    }
-               } catch (error) {
-                    console.error("Error fetching accounts:", error);
-                    setError(`Failed to load exchange accounts: ${error instanceof Error ? error.message : "Unknown error"}`);
-               } finally {
-                    setLoading(false);
-               }
-          };
-
-          fetchAccounts();
-     }, [selectedAccountId]);
+          setLoading(false);
+     }, []);
 
      // Fetch markets when account changes
      useEffect(() => {
@@ -213,8 +160,14 @@ export default function MarketPage() {
                     setError(null);
                } else {
                     const errorData = await response.json().catch(() => ({}));
-                    const errorMsg = errorData.detail || `Failed to fetch price (${response.status})`;
-                    setError(errorMsg);
+                    let errorMsg = errorData.detail || `Failed to fetch price (${response.status})`;
+                    if (response.status === 404) {
+                         errorMsg = `Symbol ${selectedSymbol} not found or account ${selectedAccountId} not available. Please check your exchange account settings.`;
+                    }
+                    // Don't show error for 404 if it's expected (e.g., symbol not available on exchange)
+                    if (response.status !== 404) {
+                         setError(errorMsg);
+                    }
                     console.error("Error fetching price:", errorMsg);
                }
           } catch (error) {
@@ -257,8 +210,14 @@ export default function MarketPage() {
                     setError(null);
                } else {
                     const errorData = await response.json().catch(() => ({}));
-                    const errorMsg = errorData.detail || `Failed to fetch OHLCV data (${response.status})`;
-                    setError(errorMsg);
+                    let errorMsg = errorData.detail || `Failed to fetch OHLCV data (${response.status})`;
+                    if (response.status === 404) {
+                         errorMsg = `OHLCV data not available for ${selectedSymbol}. The symbol may not be supported by this exchange.`;
+                    }
+                    // Don't show error for 404 if it's expected
+                    if (response.status !== 404) {
+                         setError(errorMsg);
+                    }
                     console.error("Error fetching OHLCV:", errorMsg);
                }
           } catch (error) {
@@ -283,17 +242,42 @@ export default function MarketPage() {
 
                const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
                const encodedSymbol = encodeURIComponent(selectedSymbol);
-               const horizonsParam = selectedHorizons.join(",");
+               // Filter to only supported horizons
+               const supportedHorizons = ["10m", "20m", "30m", "1h", "4h", "24h"];
+               const validHorizons = selectedHorizons.filter((h) => supportedHorizons.includes(h));
+               const horizonsParam = validHorizons.length > 0 ? validHorizons.join(",") : "10m,30m,1h";
 
-               const response = await fetch(`${apiUrl}/predictions/${encodedSymbol}?horizons=${horizonsParam}&exchange_account_id=${selectedAccountId}`, {
+               const response = await fetch(`${apiUrl}/predictions/symbol/${encodedSymbol}?horizons=${horizonsParam}&exchange_account_id=${selectedAccountId}`, {
                     headers: { Authorization: `Bearer ${token}` },
                });
 
                if (response.ok) {
                     const data = await response.json();
-                    setPredictions(data.predictions || {});
+                    const predictionsData = data.predictions || {};
+
+                    // Filter out None values
+                    const validPredictions: Record<string, PredictionData> = {};
+                    for (const [horizon, pred] of Object.entries(predictionsData)) {
+                         if (pred !== null && pred !== undefined) {
+                              validPredictions[horizon] = pred as PredictionData;
+                         }
+                    }
+
+                    setPredictions(validPredictions);
+
+                    if (Object.keys(validPredictions).length === 0) {
+                         console.warn("No valid predictions returned from API");
+                    }
                } else {
-                    console.error("Failed to fetch predictions:", response.status);
+                    const errorData = await response.json().catch(() => ({}));
+                    const errorMsg = errorData.detail || `Failed to fetch predictions (${response.status})`;
+                    console.error("Failed to fetch predictions:", response.status, errorMsg);
+
+                    // Set error message for user visibility
+                    if (response.status === 400 || response.status === 503) {
+                         setError(`Prediction error: ${errorMsg}`);
+                    }
+                    // Don't set error state for other failures (non-critical)
                }
           } catch (error) {
                console.error("Error fetching predictions:", error);
@@ -324,7 +308,8 @@ export default function MarketPage() {
                if (!token) return;
 
                const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-               const response = await fetch(`${apiUrl}/predictions/accuracy/stats?symbol=${selectedSymbol || ""}&days=30`, {
+               const encodedSymbol = selectedSymbol ? encodeURIComponent(selectedSymbol) : "";
+               const response = await fetch(`${apiUrl}/predictions/accuracy/stats?symbol=${encodedSymbol}&days=30`, {
                     headers: { Authorization: `Bearer ${token}` },
                });
 
@@ -347,8 +332,10 @@ export default function MarketPage() {
      useEffect(() => {
           if (!useWebSocket || !autoRefresh || !selectedAccountId || !selectedSymbol) {
                // Close WebSocket if disabled
-               if (wsConnection && (wsConnection.readyState === WebSocket.OPEN || wsConnection.readyState === WebSocket.CONNECTING)) {
-                    wsConnection.close();
+               if (wsConnection) {
+                    if (wsConnection.readyState === WebSocket.OPEN || wsConnection.readyState === WebSocket.CONNECTING) {
+                         wsConnection.close();
+                    }
                     setWsConnection(null);
                }
                return;
@@ -369,48 +356,83 @@ export default function MarketPage() {
 
           console.log("Connecting to WebSocket:", wsEndpoint);
 
-          const ws = new WebSocket(wsEndpoint);
+          let ws: WebSocket | null = null;
+          let reconnectTimeout: NodeJS.Timeout | null = null;
+          let isManualClose = false;
 
-          ws.onopen = () => {
-               console.log("WebSocket connected");
-               setError(null);
-               setWsConnection(ws);
-          };
-
-          ws.onmessage = (event) => {
+          const connect = () => {
                try {
-                    const data = JSON.parse(event.data);
-                    console.log("WebSocket message received:", data);
+                    ws = new WebSocket(wsEndpoint);
 
-                    if (data.type === "price_update" && data.data) {
-                         setPriceData(data.data);
+                    ws.onopen = () => {
+                         console.log("WebSocket connected for", selectedSymbol);
                          setError(null);
-                    } else if (data.type === "error") {
-                         setError(data.message || "WebSocket error");
-                    } else if (data.type === "connected") {
-                         console.log("WebSocket connected:", data.message);
-                    }
+                         setWsConnection(ws);
+                         isManualClose = false;
+                    };
+
+                    ws.onmessage = (event) => {
+                         try {
+                              const data = JSON.parse(event.data);
+                              console.log("WebSocket message received:", data);
+
+                              if (data.type === "price_update" && data.data) {
+                                   setPriceData(data.data);
+                                   setError(null);
+                              } else if (data.type === "error") {
+                                   const errorMsg = data.message || "WebSocket error";
+                                   console.error("WebSocket error message:", errorMsg);
+                                   setError(`WebSocket error: ${errorMsg}`);
+                                   // Don't close on error, let worker retry
+                              } else if (data.type === "connected") {
+                                   console.log("WebSocket connected:", data.message);
+                                   setError(null);
+                              }
+                         } catch (error) {
+                              console.error("Error parsing WebSocket message:", error);
+                         }
+                    };
+
+                    ws.onerror = (error) => {
+                         console.error("WebSocket error event:", error);
+                         // Error details are usually in onclose
+                    };
+
+                    ws.onclose = (event) => {
+                         console.log("WebSocket disconnected:", event.code, event.reason);
+                         setWsConnection(null);
+
+                         // Auto-reconnect if not manual close and not a policy violation
+                         if (!isManualClose && event.code !== 1008) {
+                              console.log("Attempting to reconnect WebSocket in 3 seconds...");
+                              reconnectTimeout = setTimeout(() => {
+                                   if (!isManualClose) {
+                                        connect();
+                                   }
+                              }, 3000);
+                         }
+                    };
                } catch (error) {
-                    console.error("Error parsing WebSocket message:", error);
+                    console.error("Error creating WebSocket:", error);
+                    setError(`Failed to create WebSocket connection: ${error instanceof Error ? error.message : "Unknown error"}`);
                }
           };
 
-          ws.onerror = (error) => {
-               console.error("WebSocket error:", error);
-               setError("WebSocket connection error");
-          };
-
-          ws.onclose = () => {
-               console.log("WebSocket disconnected");
-               setWsConnection(null);
-          };
+          connect();
 
           return () => {
-               if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-                    ws.close();
+               isManualClose = true;
+               if (reconnectTimeout) {
+                    clearTimeout(reconnectTimeout);
                }
+               if (ws) {
+                    if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+                         ws.close();
+                    }
+               }
+               setWsConnection(null);
           };
-     }, [useWebSocket, autoRefresh, selectedAccountId, selectedSymbol, refreshInterval, wsConnection]);
+     }, [useWebSocket, autoRefresh, selectedAccountId, selectedSymbol, refreshInterval]);
 
      // Auto-refresh price (fallback when WebSocket is disabled)
      useEffect(() => {
@@ -447,21 +469,23 @@ export default function MarketPage() {
      }
 
      return (
-          <div style={{ padding: "24px", maxWidth: "1400px", margin: "0 auto" }}>
-               <h1>Market Data Dashboard</h1>
+          <div style={{ padding: "24px", maxWidth: "1600px", margin: "0 auto", color: "#ededed" }}>
+               <h1 style={{ color: "#FFAE00", marginBottom: "24px", fontSize: "32px", fontWeight: "bold" }}>Market Data Dashboard</h1>
 
                {error && (
                     <div
                          style={{
-                              padding: "12px",
-                              backgroundColor: "#fee",
-                              border: "1px solid #fcc",
-                              borderRadius: "4px",
-                              marginBottom: "16px",
-                              color: "#c00",
+                              padding: "16px",
+                              backgroundColor: "rgba(255, 68, 68, 0.15)",
+                              border: "2px solid rgba(255, 68, 68, 0.5)",
+                              borderRadius: "8px",
+                              marginBottom: "24px",
+                              color: "#ff4444",
+                              fontSize: "14px",
+                              fontWeight: "500",
                          }}
                     >
-                         {error}
+                         <strong>⚠️ Error:</strong> {error}
                     </div>
                )}
 
@@ -469,54 +493,42 @@ export default function MarketPage() {
                <div
                     style={{
                          display: "grid",
-                         gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-                         gap: "16px",
-                         marginBottom: "24px",
-                         padding: "16px",
-                         backgroundColor: "#f5f5f5",
-                         borderRadius: "8px",
+                         gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                         gap: "20px",
+                         marginBottom: "32px",
+                         padding: "24px",
+                         backgroundColor: "#2a2a2a",
+                         borderRadius: "12px",
+                         border: "1px solid rgba(255, 174, 0, 0.2)",
                     }}
                >
                     <div>
-                         <label style={{ display: "block", marginBottom: "4px", fontWeight: "bold" }}>Exchange Account:</label>
-                         <select
-                              value={selectedAccountId || ""}
-                              onChange={(e) => {
-                                   setSelectedAccountId(Number(e.target.value));
-                                   setSelectedSymbol(""); // Reset symbol when account changes
-                              }}
-                              style={{
-                                   width: "100%",
-                                   padding: "8px",
-                                   borderRadius: "4px",
-                                   border: "1px solid #ddd",
-                              }}
-                         >
-                              <option value="">Select Exchange</option>
-                              {accounts.map((acc) => (
-                                   <option key={acc.id} value={acc.id}>
-                                        {(acc.exchange_name || acc.exchange_name || "Unknown").toUpperCase()}
-                                   </option>
-                              ))}
-                         </select>
-                    </div>
-
-                    <div>
-                         <label style={{ display: "block", marginBottom: "4px", fontWeight: "bold" }}>Trading Pair:</label>
+                         <label style={{ display: "block", marginBottom: "8px", fontWeight: "600", color: "#FFAE00", fontSize: "14px" }}>Trading Pair</label>
                          <select
                               value={selectedSymbol}
                               onChange={(e) => setSelectedSymbol(e.target.value)}
                               disabled={!selectedAccountId || markets.length === 0}
                               style={{
                                    width: "100%",
-                                   padding: "8px",
-                                   borderRadius: "4px",
-                                   border: "1px solid #ddd",
+                                   padding: "12px",
+                                   borderRadius: "8px",
+                                   border: "2px solid rgba(255, 174, 0, 0.3)",
+                                   backgroundColor: !selectedAccountId || markets.length === 0 ? "#151515" : "#1a1a1a",
+                                   color: !selectedAccountId || markets.length === 0 ? "#666" : "#ededed",
+                                   fontSize: "14px",
+                                   cursor: !selectedAccountId || markets.length === 0 ? "not-allowed" : "pointer",
+                                   outline: "none",
                               }}
+                              onFocus={(e) => {
+                                   if (selectedAccountId && markets.length > 0) e.target.style.borderColor = "#FFAE00";
+                              }}
+                              onBlur={(e) => (e.target.style.borderColor = "rgba(255, 174, 0, 0.3)")}
                          >
-                              <option value="">Select Symbol</option>
+                              <option value="" style={{ backgroundColor: "#1a1a1a", color: "#888" }}>
+                                   Select Symbol
+                              </option>
                               {markets.map((market) => (
-                                   <option key={market.symbol} value={market.symbol}>
+                                   <option key={market.symbol} value={market.symbol} style={{ backgroundColor: "#1a1a1a", color: "#ededed" }}>
                                         {market.symbol}
                                    </option>
                               ))}
@@ -524,75 +536,135 @@ export default function MarketPage() {
                     </div>
 
                     <div>
-                         <label style={{ display: "block", marginBottom: "4px", fontWeight: "bold" }}>Timeframe:</label>
+                         <label style={{ display: "block", marginBottom: "8px", fontWeight: "600", color: "#FFAE00", fontSize: "14px" }}>Timeframe</label>
                          <select
                               value={timeframe}
                               onChange={(e) => setTimeframe(e.target.value)}
                               disabled={!selectedSymbol}
                               style={{
                                    width: "100%",
-                                   padding: "8px",
-                                   borderRadius: "4px",
-                                   border: "1px solid #ddd",
+                                   padding: "12px",
+                                   borderRadius: "8px",
+                                   border: "2px solid rgba(255, 174, 0, 0.3)",
+                                   backgroundColor: !selectedSymbol ? "#151515" : "#1a1a1a",
+                                   color: !selectedSymbol ? "#666" : "#ededed",
+                                   fontSize: "14px",
+                                   cursor: !selectedSymbol ? "not-allowed" : "pointer",
+                                   outline: "none",
                               }}
+                              onFocus={(e) => {
+                                   if (selectedSymbol) e.target.style.borderColor = "#FFAE00";
+                              }}
+                              onBlur={(e) => (e.target.style.borderColor = "rgba(255, 174, 0, 0.3)")}
                          >
-                              <option value="1m">1 Minute</option>
-                              <option value="5m">5 Minutes</option>
-                              <option value="15m">15 Minutes</option>
-                              <option value="1h">1 Hour</option>
-                              <option value="4h">4 Hours</option>
-                              <option value="1d">1 Day</option>
+                              <option value="1m" style={{ backgroundColor: "#1a1a1a", color: "#ededed" }}>
+                                   1 Minute
+                              </option>
+                              <option value="5m" style={{ backgroundColor: "#1a1a1a", color: "#ededed" }}>
+                                   5 Minutes
+                              </option>
+                              <option value="15m" style={{ backgroundColor: "#1a1a1a", color: "#ededed" }}>
+                                   15 Minutes
+                              </option>
+                              <option value="1h" style={{ backgroundColor: "#1a1a1a", color: "#ededed" }}>
+                                   1 Hour
+                              </option>
+                              <option value="4h" style={{ backgroundColor: "#1a1a1a", color: "#ededed" }}>
+                                   4 Hours
+                              </option>
+                              <option value="1d" style={{ backgroundColor: "#1a1a1a", color: "#ededed" }}>
+                                   1 Day
+                              </option>
                          </select>
                     </div>
 
                     <div>
-                         <label style={{ display: "block", marginBottom: "4px", fontWeight: "bold" }}>
-                              <input type="checkbox" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} style={{ marginRight: "8px" }} />
-                              Auto Refresh
-                         </label>
-                         {autoRefresh && (
-                              <>
-                                   <label style={{ display: "block", marginTop: "8px", marginBottom: "4px" }}>
-                                        <input type="checkbox" checked={useWebSocket} onChange={(e) => setUseWebSocket(e.target.checked)} style={{ marginRight: "8px" }} />
-                                        Use WebSocket (Real-time)
-                                   </label>
-                                   <select
-                                        value={refreshInterval}
-                                        onChange={(e) => setRefreshInterval(Number(e.target.value))}
+                         <label style={{ display: "block", marginBottom: "8px", fontWeight: "600", color: "#FFAE00", fontSize: "14px" }}>Refresh Settings</label>
+                         <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                              <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", color: "#ededed", fontSize: "14px" }}>
+                                   <input
+                                        type="checkbox"
+                                        checked={autoRefresh}
+                                        onChange={(e) => setAutoRefresh(e.target.checked)}
                                         style={{
-                                             width: "100%",
-                                             padding: "8px",
-                                             marginTop: "4px",
-                                             borderRadius: "4px",
-                                             border: "1px solid #ddd",
+                                             width: "18px",
+                                             height: "18px",
+                                             cursor: "pointer",
+                                             accentColor: "#FFAE00",
                                         }}
-                                   >
-                                        <option value={5}>Every 5 seconds</option>
-                                        <option value={10}>Every 10 seconds</option>
-                                        <option value={30}>Every 30 seconds</option>
-                                        <option value={60}>Every 1 minute</option>
-                                   </select>
-                              </>
-                         )}
+                                   />
+                                   <span>Auto Refresh</span>
+                              </label>
+                              {autoRefresh && (
+                                   <>
+                                        <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", color: "#ededed", fontSize: "14px" }}>
+                                             <input
+                                                  type="checkbox"
+                                                  checked={useWebSocket}
+                                                  onChange={(e) => setUseWebSocket(e.target.checked)}
+                                                  style={{
+                                                       width: "18px",
+                                                       height: "18px",
+                                                       cursor: "pointer",
+                                                       accentColor: "#FFAE00",
+                                                  }}
+                                             />
+                                             <span>Use WebSocket (Real-time)</span>
+                                        </label>
+                                        <select
+                                             value={refreshInterval}
+                                             onChange={(e) => setRefreshInterval(Number(e.target.value))}
+                                             style={{
+                                                  width: "100%",
+                                                  padding: "10px",
+                                                  borderRadius: "8px",
+                                                  border: "2px solid rgba(255, 174, 0, 0.3)",
+                                                  backgroundColor: "#1a1a1a",
+                                                  color: "#ededed",
+                                                  fontSize: "14px",
+                                                  cursor: "pointer",
+                                                  outline: "none",
+                                             }}
+                                             onFocus={(e) => (e.target.style.borderColor = "#FFAE00")}
+                                             onBlur={(e) => (e.target.style.borderColor = "rgba(255, 174, 0, 0.3)")}
+                                        >
+                                             <option value={5} style={{ backgroundColor: "#1a1a1a", color: "#ededed" }}>
+                                                  Every 5 seconds
+                                             </option>
+                                             <option value={10} style={{ backgroundColor: "#1a1a1a", color: "#ededed" }}>
+                                                  Every 10 seconds
+                                             </option>
+                                             <option value={30} style={{ backgroundColor: "#1a1a1a", color: "#ededed" }}>
+                                                  Every 30 seconds
+                                             </option>
+                                             <option value={60} style={{ backgroundColor: "#1a1a1a", color: "#ededed" }}>
+                                                  Every 1 minute
+                                             </option>
+                                        </select>
+                                   </>
+                              )}
+                         </div>
                     </div>
                </div>
 
                {/* Prediction Panel */}
                {selectedSymbol && showPredictions && (
-                    <div style={{ marginBottom: "24px" }}>
-                         <h2>Price Predictions</h2>
+                    <div style={{ marginBottom: "32px" }}>
+                         <h2 style={{ color: "#FFAE00", marginBottom: "20px", fontSize: "24px", fontWeight: "bold" }}>Price Predictions</h2>
                          {predictionsLoading ? (
-                              <p>Loading predictions...</p>
+                              <div style={{ padding: "24px", textAlign: "center", color: "#888" }}>
+                                   <p>Loading predictions...</p>
+                              </div>
                          ) : Object.keys(predictions).length > 0 ? (
                               <div
                                    style={{
                                         display: "grid",
-                                        gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-                                        gap: "16px",
-                                        padding: "16px",
-                                        backgroundColor: "#fff",
-                                        border: "1px solid #eaeaea",
-                                        borderRadius: "8px",
+                                        gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+                                        gap: "20px",
+                                        padding: "20px",
+                                        backgroundColor: "#2a2a2a",
+                                        border: "1px solid rgba(255, 174, 0, 0.2)",
+                                        borderRadius: "12px",
                                    }}
                               >
                                    {Object.entries(predictions).map(([horizon, pred]) => {
@@ -615,23 +687,29 @@ export default function MarketPage() {
                                              <div
                                                   key={horizon}
                                                   style={{
-                                                       padding: "12px",
+                                                       padding: "16px",
                                                        border: `2px solid ${color}`,
-                                                       borderRadius: "8px",
-                                                       backgroundColor: "#fafafa",
+                                                       borderRadius: "12px",
+                                                       backgroundColor: "#1a1a1a",
+                                                       boxShadow: `0 4px 12px rgba(0, 0, 0, 0.3), 0 0 8px ${color}40`,
                                                   }}
                                              >
-                                                  <div style={{ fontSize: "14px", fontWeight: "bold", color: "#666", marginBottom: "8px" }}>{horizon.toUpperCase()}</div>
-                                                  <div style={{ fontSize: "20px", fontWeight: "bold", color: color, marginBottom: "4px" }}>
+                                                  <div style={{ fontSize: "13px", fontWeight: "700", color: "#FFAE00", marginBottom: "12px", textTransform: "uppercase", letterSpacing: "1px" }}>
+                                                       {horizon}
+                                                  </div>
+                                                  <div style={{ fontSize: "24px", fontWeight: "bold", color: color, marginBottom: "8px" }}>
                                                        ${pred.predicted_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 8 })}
                                                   </div>
-                                                  <div style={{ fontSize: "12px", color: changeColor, marginBottom: "4px" }}>
-                                                       {changePercent >= 0 ? "+" : ""}
+                                                  <div style={{ fontSize: "14px", fontWeight: "600", color: changeColor === "green" ? "#22c55e" : "#ef4444", marginBottom: "8px" }}>
+                                                       {changePercent >= 0 ? "↑" : "↓"} {changePercent >= 0 ? "+" : ""}
                                                        {changePercent.toFixed(2)}%
                                                   </div>
-                                                  <div style={{ fontSize: "11px", color: "#666" }}>Confidence: {(pred.confidence * 100).toFixed(1)}%</div>
-                                                  <div style={{ fontSize: "11px", color: "#666", marginTop: "4px" }}>
-                                                       Range: ${pred.lower_bound.toFixed(2)} - ${pred.upper_bound.toFixed(2)}
+                                                  <div style={{ fontSize: "12px", color: "#888", marginBottom: "4px" }}>
+                                                       Confidence: <span style={{ color: "#FFAE00", fontWeight: "600" }}>{(pred.confidence * 100).toFixed(1)}%</span>
+                                                  </div>
+                                                  <div style={{ fontSize: "12px", color: "#888", marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(255, 174, 0, 0.1)" }}>
+                                                       Range: <span style={{ color: "#ededed" }}>${pred.lower_bound.toFixed(2)}</span> -{" "}
+                                                       <span style={{ color: "#ededed" }}>${pred.upper_bound.toFixed(2)}</span>
                                                   </div>
                                                   {/* Quick Trade buttons */}
                                                   {changePercent > 0.5 && (
@@ -750,15 +828,32 @@ export default function MarketPage() {
                                    })}
                               </div>
                          ) : (
-                              <p style={{ color: "#666" }}>No predictions available</p>
+                              <div style={{ padding: "24px", textAlign: "center", color: "#888", backgroundColor: "#2a2a2a", borderRadius: "12px", border: "1px solid rgba(255, 174, 0, 0.2)" }}>
+                                   <p>No predictions available</p>
+                              </div>
                          )}
 
                          {/* Horizon selector */}
-                         <div style={{ marginTop: "16px", padding: "12px", backgroundColor: "#f5f5f5", borderRadius: "8px" }}>
-                              <div style={{ fontSize: "14px", fontWeight: "bold", marginBottom: "8px" }}>Select Horizons:</div>
-                              <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                         <div style={{ marginTop: "20px", padding: "20px", backgroundColor: "#2a2a2a", borderRadius: "12px", border: "1px solid rgba(255, 174, 0, 0.2)" }}>
+                              <div style={{ fontSize: "15px", fontWeight: "600", marginBottom: "12px", color: "#FFAE00" }}>Select Horizons:</div>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: "12px" }}>
                                    {["10m", "20m", "30m", "1h", "4h", "24h"].map((h) => (
-                                        <label key={h} style={{ display: "flex", alignItems: "center", gap: "4px", cursor: "pointer" }}>
+                                        <label
+                                             key={h}
+                                             style={{
+                                                  display: "flex",
+                                                  alignItems: "center",
+                                                  gap: "8px",
+                                                  cursor: "pointer",
+                                                  padding: "8px 16px",
+                                                  backgroundColor: selectedHorizons.includes(h) ? "rgba(255, 174, 0, 0.15)" : "#1a1a1a",
+                                                  border: `2px solid ${selectedHorizons.includes(h) ? "#FFAE00" : "rgba(255, 174, 0, 0.2)"}`,
+                                                  borderRadius: "8px",
+                                                  color: selectedHorizons.includes(h) ? "#FFAE00" : "#888",
+                                                  fontWeight: selectedHorizons.includes(h) ? "600" : "400",
+                                                  transition: "all 0.2s ease",
+                                             }}
+                                        >
                                              <input
                                                   type="checkbox"
                                                   checked={selectedHorizons.includes(h)}
@@ -769,6 +864,12 @@ export default function MarketPage() {
                                                             setSelectedHorizons(selectedHorizons.filter((hor) => hor !== h));
                                                        }
                                                   }}
+                                                  style={{
+                                                       width: "18px",
+                                                       height: "18px",
+                                                       cursor: "pointer",
+                                                       accentColor: "#FFAE00",
+                                                  }}
                                              />
                                              <span>{h}</span>
                                         </label>
@@ -778,56 +879,68 @@ export default function MarketPage() {
 
                          {/* Accuracy Stats */}
                          {accuracyStats && accuracyStats.total_predictions > 0 && (
-                              <div style={{ marginTop: "16px", padding: "16px", backgroundColor: "#fff", border: "1px solid #eaeaea", borderRadius: "8px" }}>
-                                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                                        <h3 style={{ margin: 0, fontSize: "16px" }}>Prediction Accuracy (Last 30 Days)</h3>
+                              <div style={{ marginTop: "20px", padding: "20px", backgroundColor: "#2a2a2a", border: "1px solid rgba(255, 174, 0, 0.2)", borderRadius: "12px" }}>
+                                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                                        <h3 style={{ margin: 0, fontSize: "18px", fontWeight: "bold", color: "#FFAE00" }}>Prediction Accuracy (Last 30 Days)</h3>
                                         <button
                                              onClick={() => setShowAccuracyHistory(!showAccuracyHistory)}
                                              style={{
-                                                  padding: "6px 12px",
-                                                  backgroundColor: showAccuracyHistory ? "#0070f3" : "#f5f5f5",
-                                                  color: showAccuracyHistory ? "white" : "#333",
-                                                  border: "none",
-                                                  borderRadius: "4px",
+                                                  padding: "8px 16px",
+                                                  backgroundColor: showAccuracyHistory ? "#FFAE00" : "#1a1a1a",
+                                                  color: showAccuracyHistory ? "#1a1a1a" : "#FFAE00",
+                                                  border: `2px solid ${showAccuracyHistory ? "#FFAE00" : "rgba(255, 174, 0, 0.3)"}`,
+                                                  borderRadius: "8px",
                                                   cursor: "pointer",
-                                                  fontSize: "12px",
+                                                  fontSize: "13px",
+                                                  fontWeight: "600",
+                                                  transition: "all 0.2s ease",
+                                             }}
+                                             onMouseEnter={(e) => {
+                                                  if (!showAccuracyHistory) {
+                                                       e.currentTarget.style.backgroundColor = "rgba(255, 174, 0, 0.1)";
+                                                  }
+                                             }}
+                                             onMouseLeave={(e) => {
+                                                  if (!showAccuracyHistory) {
+                                                       e.currentTarget.style.backgroundColor = "#1a1a1a";
+                                                  }
                                              }}
                                         >
                                              {showAccuracyHistory ? "Hide" : "Show"} History
                                         </button>
                                    </div>
-                                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "12px" }}>
-                                        <div>
-                                             <div style={{ fontSize: "12px", color: "#666" }}>Total Predictions</div>
-                                             <div style={{ fontSize: "20px", fontWeight: "bold" }}>{accuracyStats.total_predictions}</div>
+                                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "16px" }}>
+                                        <div style={{ padding: "16px", backgroundColor: "#1a1a1a", borderRadius: "8px", border: "1px solid rgba(255, 174, 0, 0.1)" }}>
+                                             <div style={{ fontSize: "13px", color: "#888", marginBottom: "8px", fontWeight: "500" }}>Total Predictions</div>
+                                             <div style={{ fontSize: "24px", fontWeight: "bold", color: "#FFAE00" }}>{accuracyStats.total_predictions}</div>
                                         </div>
-                                        <div>
-                                             <div style={{ fontSize: "12px", color: "#666" }}>Avg Error</div>
+                                        <div style={{ padding: "16px", backgroundColor: "#1a1a1a", borderRadius: "8px", border: "1px solid rgba(255, 174, 0, 0.1)" }}>
+                                             <div style={{ fontSize: "13px", color: "#888", marginBottom: "8px", fontWeight: "500" }}>Avg Error</div>
                                              <div
                                                   style={{
-                                                       fontSize: "20px",
+                                                       fontSize: "24px",
                                                        fontWeight: "bold",
-                                                       color: accuracyStats.avg_error_percent < 5 ? "green" : accuracyStats.avg_error_percent < 10 ? "orange" : "red",
+                                                       color: accuracyStats.avg_error_percent < 5 ? "#22c55e" : accuracyStats.avg_error_percent < 10 ? "#f59e0b" : "#ef4444",
                                                   }}
                                              >
                                                   {accuracyStats.avg_error_percent.toFixed(2)}%
                                              </div>
                                         </div>
-                                        <div>
-                                             <div style={{ fontSize: "12px", color: "#666" }}>Within Confidence</div>
+                                        <div style={{ padding: "16px", backgroundColor: "#1a1a1a", borderRadius: "8px", border: "1px solid rgba(255, 174, 0, 0.1)" }}>
+                                             <div style={{ fontSize: "13px", color: "#888", marginBottom: "8px", fontWeight: "500" }}>Within Confidence</div>
                                              <div
                                                   style={{
-                                                       fontSize: "20px",
+                                                       fontSize: "24px",
                                                        fontWeight: "bold",
-                                                       color: accuracyStats.accuracy_within_confidence > 70 ? "green" : accuracyStats.accuracy_within_confidence > 50 ? "orange" : "red",
+                                                       color: accuracyStats.accuracy_within_confidence > 70 ? "#22c55e" : accuracyStats.accuracy_within_confidence > 50 ? "#f59e0b" : "#ef4444",
                                                   }}
                                              >
                                                   {accuracyStats.accuracy_within_confidence.toFixed(1)}%
                                              </div>
                                         </div>
-                                        <div>
-                                             <div style={{ fontSize: "12px", color: "#666" }}>Avg Confidence</div>
-                                             <div style={{ fontSize: "20px", fontWeight: "bold" }}>{(accuracyStats.avg_confidence * 100).toFixed(1)}%</div>
+                                        <div style={{ padding: "16px", backgroundColor: "#1a1a1a", borderRadius: "8px", border: "1px solid rgba(255, 174, 0, 0.1)" }}>
+                                             <div style={{ fontSize: "13px", color: "#888", marginBottom: "8px", fontWeight: "500" }}>Avg Confidence</div>
+                                             <div style={{ fontSize: "24px", fontWeight: "bold", color: "#FFAE00" }}>{(accuracyStats.avg_confidence * 100).toFixed(1)}%</div>
                                         </div>
                                    </div>
                               </div>
@@ -837,55 +950,63 @@ export default function MarketPage() {
 
                {/* Price Display */}
                {selectedSymbol && (
-                    <div style={{ marginBottom: "24px" }}>
-                         <h2>Current Price</h2>
+                    <div style={{ marginBottom: "32px" }}>
+                         <h2 style={{ color: "#FFAE00", marginBottom: "20px", fontSize: "24px", fontWeight: "bold" }}>Current Price</h2>
                          {priceLoading ? (
-                              <p>Loading price...</p>
+                              <div style={{ padding: "24px", textAlign: "center", color: "#888" }}>
+                                   <p>Loading price...</p>
+                              </div>
                          ) : priceData ? (
                               <div
                                    style={{
                                         display: "grid",
-                                        gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
-                                        gap: "16px",
-                                        padding: "16px",
-                                        backgroundColor: "#fff",
-                                        border: "1px solid #eaeaea",
-                                        borderRadius: "8px",
+                                        gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                                        gap: "20px",
+                                        padding: "24px",
+                                        backgroundColor: "#2a2a2a",
+                                        border: "1px solid rgba(255, 174, 0, 0.2)",
+                                        borderRadius: "12px",
                                    }}
                               >
-                                   <div>
-                                        <div style={{ color: "#666", fontSize: "14px" }}>Price</div>
-                                        <div style={{ fontSize: "24px", fontWeight: "bold", color: "#0070f3" }}>
+                                   <div style={{ padding: "16px", backgroundColor: "#1a1a1a", borderRadius: "8px", border: "1px solid rgba(255, 174, 0, 0.1)" }}>
+                                        <div style={{ color: "#888", fontSize: "13px", marginBottom: "8px", fontWeight: "500" }}>Price</div>
+                                        <div style={{ fontSize: "28px", fontWeight: "bold", color: "#FFAE00" }}>
                                              ${priceData.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 8 })}
                                         </div>
                                    </div>
-                                   <div>
-                                        <div style={{ color: "#666", fontSize: "14px" }}>Bid</div>
-                                        <div style={{ fontSize: "18px", fontWeight: "bold" }}>${priceData.bid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 8 })}</div>
+                                   <div style={{ padding: "16px", backgroundColor: "#1a1a1a", borderRadius: "8px", border: "1px solid rgba(255, 174, 0, 0.1)" }}>
+                                        <div style={{ color: "#888", fontSize: "13px", marginBottom: "8px", fontWeight: "500" }}>Bid</div>
+                                        <div style={{ fontSize: "20px", fontWeight: "bold", color: "#ededed" }}>
+                                             ${priceData.bid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 8 })}
+                                        </div>
                                    </div>
-                                   <div>
-                                        <div style={{ color: "#666", fontSize: "14px" }}>Ask</div>
-                                        <div style={{ fontSize: "18px", fontWeight: "bold" }}>${priceData.ask.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 8 })}</div>
+                                   <div style={{ padding: "16px", backgroundColor: "#1a1a1a", borderRadius: "8px", border: "1px solid rgba(255, 174, 0, 0.1)" }}>
+                                        <div style={{ color: "#888", fontSize: "13px", marginBottom: "8px", fontWeight: "500" }}>Ask</div>
+                                        <div style={{ fontSize: "20px", fontWeight: "bold", color: "#ededed" }}>
+                                             ${priceData.ask.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 8 })}
+                                        </div>
                                    </div>
-                                   <div>
-                                        <div style={{ color: "#666", fontSize: "14px" }}>24h High</div>
-                                        <div style={{ fontSize: "18px", fontWeight: "bold", color: "green" }}>
+                                   <div style={{ padding: "16px", backgroundColor: "#1a1a1a", borderRadius: "8px", border: "1px solid rgba(255, 174, 0, 0.1)" }}>
+                                        <div style={{ color: "#888", fontSize: "13px", marginBottom: "8px", fontWeight: "500" }}>24h High</div>
+                                        <div style={{ fontSize: "20px", fontWeight: "bold", color: "#22c55e" }}>
                                              ${priceData.high.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 8 })}
                                         </div>
                                    </div>
-                                   <div>
-                                        <div style={{ color: "#666", fontSize: "14px" }}>24h Low</div>
-                                        <div style={{ fontSize: "18px", fontWeight: "bold", color: "red" }}>
+                                   <div style={{ padding: "16px", backgroundColor: "#1a1a1a", borderRadius: "8px", border: "1px solid rgba(255, 174, 0, 0.1)" }}>
+                                        <div style={{ color: "#888", fontSize: "13px", marginBottom: "8px", fontWeight: "500" }}>24h Low</div>
+                                        <div style={{ fontSize: "20px", fontWeight: "bold", color: "#ef4444" }}>
                                              ${priceData.low.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 8 })}
                                         </div>
                                    </div>
-                                   <div>
-                                        <div style={{ color: "#666", fontSize: "14px" }}>Volume</div>
-                                        <div style={{ fontSize: "18px", fontWeight: "bold" }}>{priceData.volume.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+                                   <div style={{ padding: "16px", backgroundColor: "#1a1a1a", borderRadius: "8px", border: "1px solid rgba(255, 174, 0, 0.1)" }}>
+                                        <div style={{ color: "#888", fontSize: "13px", marginBottom: "8px", fontWeight: "500" }}>Volume</div>
+                                        <div style={{ fontSize: "20px", fontWeight: "bold", color: "#ededed" }}>{priceData.volume.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
                                    </div>
                               </div>
                          ) : (
-                              <p style={{ color: "#666" }}>No price data available</p>
+                              <div style={{ padding: "24px", textAlign: "center", color: "#888", backgroundColor: "#2a2a2a", borderRadius: "12px", border: "1px solid rgba(255, 174, 0, 0.2)" }}>
+                                   <p>No price data available</p>
+                              </div>
                          )}
                     </div>
                )}
@@ -893,21 +1014,47 @@ export default function MarketPage() {
                {/* OHLCV Chart */}
                {selectedSymbol && (
                     <div>
-                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-                              <h2 style={{ margin: 0 }}>Price Chart ({timeframe})</h2>
-                              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                                   <label style={{ display: "flex", alignItems: "center", gap: "4px", cursor: "pointer" }}>
-                                        <input type="checkbox" checked={showPredictions} onChange={(e) => setShowPredictions(e.target.checked)} />
-                                        Show Predictions
+                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+                              <h2 style={{ margin: 0, color: "#FFAE00", fontSize: "24px", fontWeight: "bold" }}>Price Chart ({timeframe})</h2>
+                              <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+                                   <label
+                                        style={{
+                                             display: "flex",
+                                             alignItems: "center",
+                                             gap: "8px",
+                                             cursor: "pointer",
+                                             padding: "8px 16px",
+                                             backgroundColor: showPredictions ? "rgba(255, 174, 0, 0.15)" : "#2a2a2a",
+                                             border: `2px solid ${showPredictions ? "#FFAE00" : "rgba(255, 174, 0, 0.2)"}`,
+                                             borderRadius: "8px",
+                                             color: showPredictions ? "#FFAE00" : "#888",
+                                             fontWeight: showPredictions ? "600" : "400",
+                                             transition: "all 0.2s ease",
+                                        }}
+                                   >
+                                        <input
+                                             type="checkbox"
+                                             checked={showPredictions}
+                                             onChange={(e) => setShowPredictions(e.target.checked)}
+                                             style={{
+                                                  width: "18px",
+                                                  height: "18px",
+                                                  cursor: "pointer",
+                                                  accentColor: "#FFAE00",
+                                             }}
+                                        />
+                                        <span>Show Predictions</span>
                                    </label>
                               </div>
                          </div>
                          {ohlcvLoading ? (
-                              <p>Loading chart data...</p>
+                              <div style={{ padding: "24px", textAlign: "center", color: "#888" }}>
+                                   <p>Loading chart data...</p>
+                              </div>
                          ) : ohlcvData.length > 0 ? (
-                              <div style={{ marginTop: "16px" }}>
+                              <div style={{ marginTop: "20px" }}>
                                    {/* Chart Visualization */}
-                                   <div style={{ marginBottom: "24px", backgroundColor: "#fff", padding: "16px", borderRadius: "8px", border: "1px solid #eaeaea" }}>
+                                   <div style={{ marginBottom: "24px", backgroundColor: "#2a2a2a", padding: "24px", borderRadius: "12px", border: "1px solid rgba(255, 174, 0, 0.2)" }}>
                                         <ResponsiveContainer width="100%" height={400}>
                                              <ComposedChart
                                                   data={ohlcvData

@@ -1,12 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-
-interface ExchangeAccount {
-     id: number;
-     exchange_name: string;
-     is_active: boolean;
-}
+import { useExchange } from "@/contexts/ExchangeContext";
 
 interface Order {
      id: number;
@@ -63,8 +58,7 @@ interface Trade {
 }
 
 export default function TradingPage() {
-     const [accounts, setAccounts] = useState<ExchangeAccount[]>([]);
-     const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null);
+     const { selectedAccountId, setSelectedAccountId, accounts } = useExchange();
      const [orders, setOrders] = useState<Order[]>([]);
      const [positions, setPositions] = useState<Position[]>([]);
      const [balance, setBalance] = useState<Balance | null>(null);
@@ -92,45 +86,9 @@ export default function TradingPage() {
      const [autoRefresh, setAutoRefresh] = useState(true);
      const [refreshInterval, setRefreshInterval] = useState(10); // seconds
 
-     // Fetch exchange accounts
+     // Initialize loading state
      useEffect(() => {
-          const fetchAccounts = async () => {
-               try {
-                    const token = localStorage.getItem("auth_token") || "";
-                    if (!token) {
-                         setError("Please login to view trading");
-                         setLoading(false);
-                         return;
-                    }
-
-                    const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-                    const response = await fetch(`${apiUrl}/exchange/accounts`, {
-                         headers: { Authorization: `Bearer ${token}` },
-                    });
-
-                    if (response.ok) {
-                         const data = await response.json();
-                         const accountsList = Array.isArray(data) ? data : [];
-                         const activeAccounts = accountsList.filter((acc: ExchangeAccount) => acc.is_active);
-                         setAccounts(activeAccounts);
-
-                         if (activeAccounts.length > 0 && !selectedAccountId) {
-                              setSelectedAccountId(activeAccounts[0].id);
-                         }
-                    } else if (response.status === 401) {
-                         setError("Please login to view trading");
-                         localStorage.removeItem("auth_token");
-                    }
-               } catch (error) {
-                    console.error("Error fetching accounts:", error);
-                    setError("Failed to load exchange accounts");
-               } finally {
-                    setLoading(false);
-               }
-          };
-
-          fetchAccounts();
+          setLoading(false);
      }, []);
 
      // Fetch orders
@@ -474,27 +432,6 @@ export default function TradingPage() {
                          borderRadius: "8px",
                     }}
                >
-                    <div>
-                         <label style={{ display: "block", marginBottom: "4px", fontWeight: "bold" }}>Exchange Account:</label>
-                         <select
-                              value={selectedAccountId || ""}
-                              onChange={(e) => setSelectedAccountId(Number(e.target.value))}
-                              style={{
-                                   width: "100%",
-                                   padding: "8px",
-                                   borderRadius: "4px",
-                                   border: "1px solid #ddd",
-                              }}
-                         >
-                              <option value="">Select Exchange</option>
-                              {accounts.map((acc) => (
-                                   <option key={acc.id} value={acc.id}>
-                                        {(acc.exchange_name || "Unknown").toUpperCase()}
-                                   </option>
-                              ))}
-                         </select>
-                    </div>
-
                     <div>
                          <label style={{ display: "block", marginBottom: "4px", fontWeight: "bold" }}>
                               <input type="checkbox" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} style={{ marginRight: "8px" }} />
