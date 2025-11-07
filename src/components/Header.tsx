@@ -87,9 +87,10 @@ export default function Header() {
                         Exchange Account
                     </label>
                     <select
-                        value={selectedAccountId || ""}
+                        value={selectedAccountId !== null ? String(selectedAccountId) : ""}
                         onChange={(e) => {
-                            setSelectedAccountId(e.target.value ? Number(e.target.value) : null);
+                            const newValue = e.target.value;
+                            setSelectedAccountId(newValue ? Number(newValue) : null);
                         }}
                         disabled={loading || accounts.length === 0}
                         style={{
@@ -122,7 +123,7 @@ export default function Header() {
                         {accounts.map((acc) => (
                             <option
                                 key={acc.id}
-                                value={acc.id}
+                                value={String(acc.id)}
                                 style={{ backgroundColor: "#1a1a1a", color: "#ededed" }}
                             >
                                 {(acc.exchange_name || "Unknown").toUpperCase()}

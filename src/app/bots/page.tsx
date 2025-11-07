@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { useExchange } from "@/contexts/ExchangeContext";
 
 interface ExchangeAccount {
      id: number;
@@ -74,7 +75,7 @@ interface BotTrade {
 }
 
 export default function BotsPage() {
-     const [accounts, setAccounts] = useState<ExchangeAccount[]>([]);
+     const { accounts } = useExchange();
      const [bots, setBots] = useState<TradingBot[]>([]);
      const [selectedBot, setSelectedBot] = useState<TradingBot | null>(null);
      const [botStatus, setBotStatus] = useState<BotStatus | null>(null);
@@ -94,6 +95,7 @@ export default function BotsPage() {
           name: "",
           exchange_account_id: "",
           capital: "",
+          capital_currency: "", // Currency for capital (USDT, TRY, etc.)
           risk_per_trade: "0.02",
           symbols: [] as string[],
           strategy_type: "prediction_based",
@@ -105,46 +107,16 @@ export default function BotsPage() {
      });
      const [availableSymbols, setAvailableSymbols] = useState<string[]>([]);
      const [symbolInput, setSymbolInput] = useState("");
+     const [availableBalances, setAvailableBalances] = useState<Record<string, { free: number; used: number; total: number }>>({});
+     const [balancesLoading, setBalancesLoading] = useState(false);
 
      // Auto-refresh
      const [autoRefresh, setAutoRefresh] = useState(true);
      const [refreshInterval, setRefreshInterval] = useState(10); // seconds
 
-     // Fetch exchange accounts
+     // Initialize loading state (accounts are now from ExchangeContext)
      useEffect(() => {
-          const fetchAccounts = async () => {
-               try {
-                    const token = localStorage.getItem("auth_token") || "";
-                    if (!token) {
-                         setError("Please login to manage bots");
-                         setLoading(false);
-                         return;
-                    }
-
-                    const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-                    const response = await fetch(`${apiUrl}/exchange/accounts`, {
-                         headers: { Authorization: `Bearer ${token}` },
-                    });
-
-                    if (response.ok) {
-                         const data = await response.json();
-                         const accountsList = Array.isArray(data) ? data : [];
-                         const activeAccounts = accountsList.filter((acc: ExchangeAccount) => acc.is_active);
-                         setAccounts(activeAccounts);
-                    } else if (response.status === 401) {
-                         setError("Please login to manage bots");
-                         localStorage.removeItem("auth_token");
-                    }
-               } catch (error) {
-                    console.error("Error fetching accounts:", error);
-                    setError("Failed to load exchange accounts");
-               } finally {
-                    setLoading(false);
-               }
-          };
-
-          fetchAccounts();
+          setLoading(false);
      }, []);
 
      // Fetch available symbols when account is selected
@@ -167,15 +139,103 @@ export default function BotsPage() {
 
                     if (response.ok) {
                          const data = await response.json();
-                         const pairs = data.pairs || [];
-                         setAvailableSymbols(pairs.map((p: { symbol: string }) => p.symbol));
+                         // API returns {exchange, count, markets: [{symbol, base, quote, active, ...}]}
+                         const markets = data.markets || [];
+                         // Extract symbols and sort them
+                         const symbols = markets
+                              .filter((m: { active?: boolean }) => m.active !== false)
+                              .map((m: { symbol: string }) => m.symbol)
+                              .sort();
+                         setAvailableSymbols(symbols);
+                         console.log(`Fetched ${symbols.length} available symbols from ${data.exchange || 'exchange'}`);
+                    } else {
+                         console.error("Failed to fetch symbols:", response.status);
+                         setAvailableSymbols([]);
                     }
                } catch (error) {
                     console.error("Error fetching symbols:", error);
+                    setAvailableSymbols([]);
                }
           };
 
           fetchSymbols();
+     }, [botForm.exchange_account_id]);
+
+     // Fetch available balances when account is selected
+     useEffect(() => {
+          const fetchBalances = async () => {
+               if (!botForm.exchange_account_id) {
+                    setAvailableBalances({});
+                    setBotForm(prev => ({ ...prev, capital_currency: "" }));
+                    return;
+               }
+
+               setBalancesLoading(true);
+               try {
+                    const token = localStorage.getItem("auth_token") || "";
+                    if (!token) return;
+
+                    const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+                    const response = await fetch(`${apiUrl}/trading/balance/${botForm.exchange_account_id}`, {
+                         headers: { Authorization: `Bearer ${token}` },
+                    });
+
+                    if (response.ok) {
+                         const data = await response.json();
+                         console.log("Balance API response:", data);
+                         
+                         // API returns {exchange, balances: {currency: {free, used, total}, ...}}
+                         const balances = data.balances || {};
+                         console.log("Parsed balances:", balances);
+                         console.log("Balance keys:", Object.keys(balances));
+                         
+                         setAvailableBalances(balances);
+                         
+                         // Auto-select first currency with balance > 0
+                         const currenciesWithBalance = Object.keys(balances).filter(
+                              (currency) => {
+                                   const balance = balances[currency];
+                                   const free = balance?.free || 0;
+                                   const total = balance?.total || 0;
+                                   return free > 0 || total > 0;
+                              }
+                         );
+                         
+                         const allCurrencies = Object.keys(balances);
+                         
+                         console.log("Currencies with balance:", currenciesWithBalance);
+                         console.log("All currencies:", allCurrencies);
+                         
+                         // Auto-select: prefer currency with balance, but if none exist, select first available currency
+                         if (!botForm.capital_currency) {
+                              if (currenciesWithBalance.length > 0) {
+                                   setBotForm(prev => ({ ...prev, capital_currency: currenciesWithBalance[0] }));
+                              } else if (allCurrencies.length > 0) {
+                                   // Fallback: select first currency even if balance is 0 (useful for paper trading)
+                                   setBotForm(prev => ({ ...prev, capital_currency: allCurrencies[0] }));
+                              }
+                         }
+                         
+                         console.log(`Fetched balances for ${Object.keys(balances).length} currencies from ${data.exchange || 'exchange'}`);
+                    } else {
+                         const errorText = await response.text().catch(() => "Unknown error");
+                         console.error("Failed to fetch balances:", response.status, errorText);
+                         setAvailableBalances({});
+                         
+                         if (response.status === 503) {
+                              console.warn("Balance service unavailable - exchange might be down or account inactive");
+                         }
+                    }
+               } catch (error) {
+                    console.error("Error fetching balances:", error);
+                    setAvailableBalances({});
+               } finally {
+                    setBalancesLoading(false);
+               }
+          };
+
+          fetchBalances();
      }, [botForm.exchange_account_id]);
 
      // Fetch bots
@@ -291,9 +351,43 @@ export default function BotsPage() {
                return;
           }
 
-          if (!botForm.name || !botForm.exchange_account_id || !botForm.capital || botForm.symbols.length === 0) {
-               setError("Please fill in all required fields");
+          if (!botForm.name || !botForm.exchange_account_id || !botForm.capital || !botForm.capital_currency || botForm.symbols.length === 0) {
+               setError("Please fill in all required fields including capital currency");
                return;
+          }
+
+          // Validate capital doesn't exceed available balance
+          // Note: Paper trading bots don't need real balance, but we still validate the amount
+          if (botForm.capital_currency) {
+               const requestedAmount = parseFloat(botForm.capital);
+               
+               if (isNaN(requestedAmount) || requestedAmount <= 0) {
+                    setError("Please enter a valid capital amount greater than 0");
+                    return;
+               }
+               
+               // Check if currency exists in available balances
+               if (!availableBalances[botForm.capital_currency]) {
+                    setError(`Currency ${botForm.capital_currency} not found in available balances. Please select a valid currency.`);
+                    return;
+               }
+               
+               const availableAmount = availableBalances[botForm.capital_currency].free;
+               
+               // Only validate balance for real trading bots (not paper trading)
+               if (!botForm.paper_trading) {
+                    // Check if balance is 0 or insufficient
+                    if (availableAmount <= 0) {
+                         setError(`Insufficient balance. Available: ${availableAmount.toFixed(8)} ${botForm.capital_currency}. Please deposit funds or select a different currency.`);
+                         return;
+                    }
+                    
+                    if (requestedAmount > availableAmount) {
+                         setError(`Insufficient balance. Available: ${availableAmount.toFixed(8)} ${botForm.capital_currency}, Requested: ${requestedAmount.toFixed(8)}`);
+                         return;
+                    }
+               }
+               // For paper trading, we allow any amount (it's simulated)
           }
 
           setCreating(true);
@@ -349,6 +443,7 @@ export default function BotsPage() {
                          name: "",
                          exchange_account_id: "",
                          capital: "",
+                         capital_currency: "",
                          risk_per_trade: "0.02",
                          symbols: [],
                          strategy_type: "prediction_based",
@@ -483,10 +578,15 @@ export default function BotsPage() {
 
      // Edit bot - load bot data into form
      const handleEditBot = (bot: TradingBot) => {
+          console.log("Editing bot:", bot);
+          console.log("Bot exchange_account_id:", bot.exchange_account_id);
+          console.log("Available accounts:", accounts);
+          
           setBotForm({
                name: bot.name,
-               exchange_account_id: String(bot.exchange_account_id || ""),
+               exchange_account_id: bot.exchange_account_id ? String(bot.exchange_account_id) : "",
                capital: String(bot.capital),
+               capital_currency: "", // Will be auto-selected when balances are fetched
                risk_per_trade: String(bot.risk_per_trade),
                symbols: bot.symbols || [],
                strategy_type: bot.strategy_type,
@@ -524,6 +624,7 @@ export default function BotsPage() {
 
                const requestBody: Record<string, string | number | string[] | boolean | null> = {
                     name: botForm.name,
+                    exchange_account_id: botForm.exchange_account_id ? parseInt(botForm.exchange_account_id) : null,
                     capital: parseFloat(botForm.capital),
                     risk_per_trade: parseFloat(botForm.risk_per_trade),
                     symbols: botForm.symbols,
@@ -553,6 +654,7 @@ export default function BotsPage() {
                          name: "",
                          exchange_account_id: "",
                          capital: "",
+                         capital_currency: "",
                          risk_per_trade: "0.02",
                          symbols: [],
                          strategy_type: "prediction_based",
@@ -789,6 +891,41 @@ export default function BotsPage() {
                                         ×
                                    </button>
                               </div>
+                              
+                              {/* Error message inside modal */}
+                              {error && (
+                                   <div
+                                        style={{
+                                             padding: "12px 16px",
+                                             backgroundColor: "rgba(239, 68, 68, 0.1)",
+                                             border: "1px solid rgba(239, 68, 68, 0.3)",
+                                             borderRadius: "12px",
+                                             marginBottom: "24px",
+                                             color: "#ef4444",
+                                             display: "flex",
+                                             alignItems: "center",
+                                             justifyContent: "space-between",
+                                             fontSize: "14px",
+                                        }}
+                                   >
+                                        <span>{error}</span>
+                                        <button
+                                             onClick={() => setError(null)}
+                                             style={{
+                                                  background: "none",
+                                                  border: "none",
+                                                  color: "#ef4444",
+                                                  cursor: "pointer",
+                                                  fontSize: "18px",
+                                                  padding: "0 8px",
+                                                  fontWeight: "bold",
+                                             }}
+                                        >
+                                             ×
+                                        </button>
+                                   </div>
+                              )}
+                              
                               <div
                                    style={{
                                         display: "grid",
@@ -855,7 +992,7 @@ export default function BotsPage() {
                                                   Select Exchange
                                              </option>
                                              {accounts.map((acc) => (
-                                                  <option key={acc.id} value={acc.id} style={{ backgroundColor: "#1a1a1a" }}>
+                                                  <option key={acc.id} value={String(acc.id)} style={{ backgroundColor: "#1a1a1a" }}>
                                                        {(acc.exchange_name || "Unknown").toUpperCase()}
                                                   </option>
                                              ))}
@@ -863,33 +1000,110 @@ export default function BotsPage() {
                                    </div>
 
                                    <div>
-                                        <label style={{ display: "block", marginBottom: "8px", fontWeight: "600", color: "#ffffff", fontSize: "14px" }}>Capital:</label>
-                                        <input
-                                             type="number"
-                                             step="any"
-                                             value={botForm.capital}
-                                             onChange={(e) => setBotForm({ ...botForm, capital: e.target.value })}
-                                             placeholder="1000"
-                                             style={{
-                                                  width: "100%",
-                                                  padding: "12px",
-                                                  borderRadius: "10px",
-                                                  border: "1px solid rgba(255, 174, 0, 0.3)",
-                                                  backgroundColor: "#1a1a1a",
-                                                  color: "#ffffff",
-                                                  fontSize: "14px",
-                                                  outline: "none",
-                                                  transition: "all 0.2s",
-                                             }}
-                                             onFocus={(e) => {
-                                                  e.currentTarget.style.borderColor = "#FFAE00";
-                                                  e.currentTarget.style.boxShadow = "0 0 0 3px rgba(255, 174, 0, 0.1)";
-                                             }}
-                                             onBlur={(e) => {
-                                                  e.currentTarget.style.borderColor = "rgba(255, 174, 0, 0.3)";
-                                                  e.currentTarget.style.boxShadow = "none";
-                                             }}
-                                        />
+                                        <label style={{ display: "block", marginBottom: "8px", fontWeight: "600", color: "#ffffff", fontSize: "14px" }}>
+                                             Capital:
+                                             {botForm.exchange_account_id && botForm.capital_currency && availableBalances[botForm.capital_currency] && (
+                                                  <span style={{ marginLeft: "8px", color: "#888", fontSize: "12px", fontWeight: "400" }}>
+                                                       (Available: {availableBalances[botForm.capital_currency].free.toFixed(8)} {botForm.capital_currency})
+                                                  </span>
+                                             )}
+                                        </label>
+                                        <div style={{ display: "flex", gap: "8px" }}>
+                                             {botForm.exchange_account_id ? (
+                                                  <>
+                                                       <select
+                                                            value={botForm.capital_currency}
+                                                            onChange={(e) => setBotForm({ ...botForm, capital_currency: e.target.value, capital: "" })}
+                                                            disabled={balancesLoading || Object.keys(availableBalances).length === 0}
+                                                            style={{
+                                                                 minWidth: "120px",
+                                                                 padding: "12px",
+                                                                 borderRadius: "10px",
+                                                                 border: "1px solid rgba(255, 174, 0, 0.3)",
+                                                                 backgroundColor: "#1a1a1a",
+                                                                 color: "#ffffff",
+                                                                 fontSize: "14px",
+                                                                 outline: "none",
+                                                                 cursor: balancesLoading || Object.keys(availableBalances).length === 0 ? "not-allowed" : "pointer",
+                                                                 transition: "all 0.2s",
+                                                                 opacity: balancesLoading || Object.keys(availableBalances).length === 0 ? 0.6 : 1,
+                                                            }}
+                                                            onFocus={(e) => {
+                                                                 if (!balancesLoading && Object.keys(availableBalances).length > 0) {
+                                                                      e.currentTarget.style.borderColor = "#FFAE00";
+                                                                      e.currentTarget.style.boxShadow = "0 0 0 3px rgba(255, 174, 0, 0.1)";
+                                                                 }
+                                                            }}
+                                                            onBlur={(e) => {
+                                                                 e.currentTarget.style.borderColor = "rgba(255, 174, 0, 0.3)";
+                                                                 e.currentTarget.style.boxShadow = "none";
+                                                            }}
+                                                       >
+                                                            <option value="" style={{ backgroundColor: "#1a1a1a", color: "#888" }}>
+                                                                 {balancesLoading ? "Loading..." : Object.keys(availableBalances).length === 0 ? "No balance" : "Select Currency"}
+                                                            </option>
+                                                            {Object.keys(availableBalances)
+                                                                 .sort()
+                                                                 .map((currency) => {
+                                                                      const balance = availableBalances[currency];
+                                                                      const free = balance?.free || 0;
+                                                                      const total = balance?.total || 0;
+                                                                      const hasBalance = free > 0 || total > 0;
+                                                                      return (
+                                                                           <option key={currency} value={currency} style={{ backgroundColor: "#1a1a1a", color: hasBalance ? "#ffffff" : "#888" }}>
+                                                                                {currency} (Free: {free.toFixed(8)})
+                                                                           </option>
+                                                                      );
+                                                                 })}
+                                                       </select>
+                                                       <input
+                                                            type="number"
+                                                            step="any"
+                                                            min="0"
+                                                            value={botForm.capital}
+                                                            onChange={(e) => setBotForm({ ...botForm, capital: e.target.value })}
+                                                            placeholder={botForm.capital_currency ? `Enter amount in ${botForm.capital_currency}` : "Enter amount"}
+                                                            disabled={!botForm.capital_currency}
+                                                            style={{
+                                                                 flex: 1,
+                                                                 padding: "12px",
+                                                                 borderRadius: "10px",
+                                                                 border: "1px solid rgba(255, 174, 0, 0.3)",
+                                                                 backgroundColor: "#1a1a1a",
+                                                                 color: "#ffffff",
+                                                                 fontSize: "14px",
+                                                                 outline: "none",
+                                                                 transition: "all 0.2s",
+                                                                 opacity: !botForm.capital_currency ? 0.6 : 1,
+                                                                 cursor: !botForm.capital_currency ? "not-allowed" : "text",
+                                                            }}
+                                                            onFocus={(e) => {
+                                                                 if (botForm.capital_currency) {
+                                                                      e.currentTarget.style.borderColor = "#FFAE00";
+                                                                      e.currentTarget.style.boxShadow = "0 0 0 3px rgba(255, 174, 0, 0.1)";
+                                                                 }
+                                                            }}
+                                                            onBlur={(e) => {
+                                                                 e.currentTarget.style.borderColor = "rgba(255, 174, 0, 0.3)";
+                                                                 e.currentTarget.style.boxShadow = "none";
+                                                            }}
+                                                       />
+                                                  </>
+                                             ) : (
+                                                  <div style={{
+                                                       flex: 1,
+                                                       padding: "12px",
+                                                       borderRadius: "10px",
+                                                       border: "1px solid rgba(255, 174, 0, 0.3)",
+                                                       backgroundColor: "#1a1a1a",
+                                                       color: "#888",
+                                                       fontSize: "14px",
+                                                       textAlign: "center",
+                                                  }}>
+                                                       Please select an exchange account first
+                                                  </div>
+                                             )}
+                                        </div>
                                    </div>
 
                                    <div>
@@ -1094,66 +1308,106 @@ export default function BotsPage() {
 
                               {/* Symbols Selection */}
                               <div style={{ marginTop: "24px", gridColumn: "1 / -1" }}>
-                                   <label style={{ display: "block", marginBottom: "12px", fontWeight: "600", color: "#ffffff", fontSize: "14px" }}>Trading Symbols:</label>
+                                   <label style={{ display: "block", marginBottom: "12px", fontWeight: "600", color: "#ffffff", fontSize: "14px" }}>
+                                        Trading Symbols:
+                                        {!botForm.exchange_account_id && (
+                                             <span style={{ marginLeft: "8px", color: "#888", fontSize: "12px", fontWeight: "400" }}>
+                                                  (Select an exchange account first)
+                                             </span>
+                                        )}
+                                        {botForm.exchange_account_id && availableSymbols.length > 0 && (
+                                             <span style={{ marginLeft: "8px", color: "#888", fontSize: "12px", fontWeight: "400" }}>
+                                                  ({availableSymbols.length} symbols available)
+                                             </span>
+                                        )}
+                                   </label>
                                    <div style={{ display: "flex", gap: "12px", marginBottom: "12px" }}>
-                                        <input
-                                             type="text"
-                                             value={symbolInput}
-                                             onChange={(e) => setSymbolInput(e.target.value)}
-                                             onKeyPress={(e) => e.key === "Enter" && handleAddSymbol()}
-                                             placeholder="BTC/USDT"
-                                             list="symbols-list"
-                                             style={{
+                                        {botForm.exchange_account_id ? (
+                                             <>
+                                                  <select
+                                                       value={symbolInput}
+                                                       onChange={(e) => setSymbolInput(e.target.value)}
+                                                       disabled={availableSymbols.length === 0}
+                                                       style={{
+                                                            flex: 1,
+                                                            padding: "12px",
+                                                            borderRadius: "10px",
+                                                            border: "1px solid rgba(255, 174, 0, 0.3)",
+                                                            backgroundColor: "#1a1a1a",
+                                                            color: "#ffffff",
+                                                            fontSize: "14px",
+                                                            outline: "none",
+                                                            transition: "all 0.2s",
+                                                            cursor: availableSymbols.length === 0 ? "not-allowed" : "pointer",
+                                                            opacity: availableSymbols.length === 0 ? 0.6 : 1,
+                                                       }}
+                                                       onFocus={(e) => {
+                                                            if (availableSymbols.length > 0) {
+                                                                 e.currentTarget.style.borderColor = "#FFAE00";
+                                                                 e.currentTarget.style.boxShadow = "0 0 0 3px rgba(255, 174, 0, 0.1)";
+                                                            }
+                                                       }}
+                                                       onBlur={(e) => {
+                                                            e.currentTarget.style.borderColor = "rgba(255, 174, 0, 0.3)";
+                                                            e.currentTarget.style.boxShadow = "none";
+                                                       }}
+                                                  >
+                                                       <option value="" style={{ backgroundColor: "#1a1a1a", color: "#888" }}>
+                                                            {availableSymbols.length === 0 ? "Loading symbols..." : "Select a symbol"}
+                                                       </option>
+                                                       {availableSymbols.map((sym) => (
+                                                            <option key={sym} value={sym} style={{ backgroundColor: "#1a1a1a", color: "#ffffff" }}>
+                                                                 {sym}
+                                                            </option>
+                                                       ))}
+                                                  </select>
+                                                  <button
+                                                       onClick={handleAddSymbol}
+                                                       disabled={!symbolInput || botForm.symbols.includes(symbolInput.toUpperCase())}
+                                                       style={{
+                                                            padding: "12px 24px",
+                                                            backgroundColor: symbolInput && !botForm.symbols.includes(symbolInput.toUpperCase()) ? "#FFAE00" : "#666",
+                                                            color: "#1a1a1a",
+                                                            border: "none",
+                                                            borderRadius: "10px",
+                                                            cursor: symbolInput && !botForm.symbols.includes(symbolInput.toUpperCase()) ? "pointer" : "not-allowed",
+                                                            fontWeight: "600",
+                                                            fontSize: "14px",
+                                                            transition: "all 0.2s",
+                                                            opacity: symbolInput && !botForm.symbols.includes(symbolInput.toUpperCase()) ? 1 : 0.6,
+                                                       }}
+                                                       onMouseEnter={(e) => {
+                                                            if (symbolInput && !botForm.symbols.includes(symbolInput.toUpperCase())) {
+                                                                 e.currentTarget.style.backgroundColor = "#ffb833";
+                                                                 e.currentTarget.style.transform = "translateY(-2px)";
+                                                                 e.currentTarget.style.boxShadow = "0 4px 12px rgba(255, 174, 0, 0.3)";
+                                                            }
+                                                       }}
+                                                       onMouseLeave={(e) => {
+                                                            if (symbolInput && !botForm.symbols.includes(symbolInput.toUpperCase())) {
+                                                                 e.currentTarget.style.backgroundColor = "#FFAE00";
+                                                                 e.currentTarget.style.transform = "translateY(0)";
+                                                                 e.currentTarget.style.boxShadow = "none";
+                                                            }
+                                                       }}
+                                                  >
+                                                       Add
+                                                  </button>
+                                             </>
+                                        ) : (
+                                             <div style={{
                                                   flex: 1,
                                                   padding: "12px",
                                                   borderRadius: "10px",
                                                   border: "1px solid rgba(255, 174, 0, 0.3)",
                                                   backgroundColor: "#1a1a1a",
-                                                  color: "#ffffff",
+                                                  color: "#888",
                                                   fontSize: "14px",
-                                                  outline: "none",
-                                                  transition: "all 0.2s",
-                                             }}
-                                             onFocus={(e) => {
-                                                  e.currentTarget.style.borderColor = "#FFAE00";
-                                                  e.currentTarget.style.boxShadow = "0 0 0 3px rgba(255, 174, 0, 0.1)";
-                                             }}
-                                             onBlur={(e) => {
-                                                  e.currentTarget.style.borderColor = "rgba(255, 174, 0, 0.3)";
-                                                  e.currentTarget.style.boxShadow = "none";
-                                             }}
-                                        />
-                                        <datalist id="symbols-list">
-                                             {availableSymbols.map((sym) => (
-                                                  <option key={sym} value={sym} />
-                                             ))}
-                                        </datalist>
-                                        <button
-                                             onClick={handleAddSymbol}
-                                             style={{
-                                                  padding: "12px 24px",
-                                                  backgroundColor: "#FFAE00",
-                                                  color: "#1a1a1a",
-                                                  border: "none",
-                                                  borderRadius: "10px",
-                                                  cursor: "pointer",
-                                                  fontWeight: "600",
-                                                  fontSize: "14px",
-                                                  transition: "all 0.2s",
-                                             }}
-                                             onMouseEnter={(e) => {
-                                                  e.currentTarget.style.backgroundColor = "#ffb833";
-                                                  e.currentTarget.style.transform = "translateY(-2px)";
-                                                  e.currentTarget.style.boxShadow = "0 4px 12px rgba(255, 174, 0, 0.3)";
-                                             }}
-                                             onMouseLeave={(e) => {
-                                                  e.currentTarget.style.backgroundColor = "#FFAE00";
-                                                  e.currentTarget.style.transform = "translateY(0)";
-                                                  e.currentTarget.style.boxShadow = "none";
-                                             }}
-                                        >
-                                             Add
-                                        </button>
+                                                  textAlign: "center",
+                                             }}>
+                                                  Please select an exchange account to view available symbols
+                                             </div>
+                                        )}
                                    </div>
                                    <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
                                         {botForm.symbols.map((symbol) => (
@@ -1243,6 +1497,7 @@ export default function BotsPage() {
                                                        name: "",
                                                        exchange_account_id: "",
                                                        capital: "",
+                                                       capital_currency: "",
                                                        risk_per_trade: "0.02",
                                                        symbols: [],
                                                        strategy_type: "prediction_based",
@@ -1341,9 +1596,50 @@ export default function BotsPage() {
                                                        {bot.status.toUpperCase()}
                                                   </span>
                                              </div>
-                                             <div style={{ fontSize: "13px", color: "#888", marginBottom: "16px", fontWeight: "500" }}>
+                                             <div style={{ fontSize: "13px", color: "#888", marginBottom: "12px", fontWeight: "500" }}>
                                                   Strategy: {bot.strategy_type.replace("_", " ").toUpperCase()}
                                              </div>
+                                             
+                                             {/* Exchange and Trading Mode */}
+                                             <div style={{ display: "flex", gap: "12px", marginBottom: "16px", flexWrap: "wrap", alignItems: "center" }}>
+                                                  {/* Exchange Name */}
+                                                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                                       <span style={{ fontSize: "12px", color: "#888" }}>Exchange:</span>
+                                                       <span style={{ 
+                                                            fontSize: "12px", 
+                                                            color: "#FFAE00", 
+                                                            fontWeight: "600",
+                                                            textTransform: "uppercase"
+                                                       }}>
+                                                            {(() => {
+                                                                 if (!bot.exchange_account_id) {
+                                                                      return "Not Set";
+                                                                 }
+                                                                 const account = accounts.find(acc => acc.id === bot.exchange_account_id);
+                                                                 return account?.exchange_name || `Account #${bot.exchange_account_id}`;
+                                                            })()}
+                                                       </span>
+                                                  </div>
+                                                  
+                                                  {/* Paper Trading Badge */}
+                                                  <div style={{ display: "flex", alignItems: "center" }}>
+                                                       <span
+                                                            style={{
+                                                                 padding: "4px 10px",
+                                                                 borderRadius: "6px",
+                                                                 backgroundColor: bot.paper_trading ? "rgba(255, 174, 0, 0.2)" : "rgba(34, 197, 94, 0.2)",
+                                                                 color: bot.paper_trading ? "#FFAE00" : "#22c55e",
+                                                                 fontSize: "11px",
+                                                                 fontWeight: "700",
+                                                                 letterSpacing: "0.5px",
+                                                                 border: `1px solid ${bot.paper_trading ? "rgba(255, 174, 0, 0.4)" : "rgba(34, 197, 94, 0.4)"}`,
+                                                            }}
+                                                       >
+                                                            {bot.paper_trading ? "DEMO" : "REAL"}
+                                                       </span>
+                                                  </div>
+                                             </div>
+                                             
                                              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "16px" }}>
                                                   <div>
                                                        <div style={{ fontSize: "12px", color: "#888", marginBottom: "4px" }}>Capital</div>
