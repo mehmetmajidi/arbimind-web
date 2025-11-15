@@ -30,7 +30,10 @@ export default function Home() {
 
      const handleLogout = () => {
           localStorage.removeItem("auth_token");
+          localStorage.removeItem("selectedAccountId");
           setIsAuthenticated(false);
+          // Dispatch event to notify ExchangeContext
+          window.dispatchEvent(new Event("authTokenRemoved"));
           window.location.href = "/";
      };
 

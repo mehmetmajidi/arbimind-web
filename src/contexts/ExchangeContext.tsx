@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react";
 
 interface ExchangeAccount {
     id: number;
@@ -25,7 +25,7 @@ export function ExchangeProvider({ children }: { children: ReactNode }) {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
-    const fetchAccounts = async () => {
+    const fetchAccounts = useCallback(async () => {
         try {
             setLoading(true);
             setError(null);
@@ -85,30 +85,35 @@ export function ExchangeProvider({ children }: { children: ReactNode }) {
             // Show all accounts regardless of active status
             setAccounts(accountsList);
 
+            // Handle empty accounts list
+            if (accountsList.length === 0) {
+                console.warn("ExchangeContext: No accounts found at all");
+                setError("No exchange accounts found. Please create an exchange account first.");
+            } else {
+                setError(null);
+            }
+
             // Auto-select first account if none selected AND no saved account in localStorage
             // Check localStorage directly to avoid race condition
             const savedAccountId = localStorage.getItem("selectedAccountId");
-            const currentSelectedId = savedAccountId ? Number(savedAccountId) : selectedAccountId;
-            
-            if (currentSelectedId === null && accountsList.length > 0) {
-                console.log("ExchangeContext: Auto-selecting first account:", accountsList[0].id);
-                setSelectedAccountId(accountsList[0].id);
-            } else if (currentSelectedId !== null && accountsList.length > 0) {
-                // Verify the saved account still exists in the list
-                const accountExists = accountsList.some((acc: ExchangeAccount) => acc.id === currentSelectedId);
-                if (!accountExists) {
-                    console.warn(`ExchangeContext: Saved account ${currentSelectedId} not found, selecting first available`);
-                    setSelectedAccountId(accountsList[0].id);
-                } else if (selectedAccountId !== currentSelectedId) {
-                    // Sync selectedAccountId with saved value
-                    setSelectedAccountId(currentSelectedId);
+            // Use functional update to get current state
+            setSelectedAccountId((currentSelectedId) => {
+                const finalSelectedId = savedAccountId ? Number(savedAccountId) : currentSelectedId;
+                
+                if (finalSelectedId === null && accountsList.length > 0) {
+                    console.log("ExchangeContext: Auto-selecting first account:", accountsList[0].id);
+                    return accountsList[0].id;
+                } else if (finalSelectedId !== null && accountsList.length > 0) {
+                    // Verify the saved account still exists in the list
+                    const accountExists = accountsList.some((acc: ExchangeAccount) => acc.id === finalSelectedId);
+                    if (!accountExists) {
+                        console.warn(`ExchangeContext: Saved account ${finalSelectedId} not found, selecting first available`);
+                        return accountsList[0].id;
+                    }
+                    return finalSelectedId;
                 }
-            } else if (accountsList.length === 0) {
-                console.warn("ExchangeContext: No accounts found at all");
-                setError("No exchange accounts found. Please create an exchange account first.");
-            }
-
-            setError(null);
+                return finalSelectedId;
+            });
         } catch (err) {
             console.error("ExchangeContext: Error fetching accounts:", err);
             setError(err instanceof Error ? err.message : "Failed to fetch exchange accounts");
@@ -116,7 +121,7 @@ export function ExchangeProvider({ children }: { children: ReactNode }) {
         } finally {
             setLoading(false);
         }
-    };
+    }, []);
 
     // Load selected account from localStorage on mount (before fetching accounts)
     useEffect(() => {
@@ -129,9 +134,97 @@ export function ExchangeProvider({ children }: { children: ReactNode }) {
         }
     }, []);
 
+    // Initial fetch on mount
     useEffect(() => {
         fetchAccounts();
-    }, []);
+    }, [fetchAccounts]);
+
+    // Listen for auth token changes and refetch accounts
+    useEffect(() => {
+        // Check if token exists, if not, set up a retry mechanism
+        const token = localStorage.getItem("auth_token");
+        if (!token && accounts.length === 0) {
+            // If no token and no accounts, set up a short polling interval to check for token
+            // This handles the case where login happens after context mounts
+            const checkInterval = setInterval(() => {
+                const currentToken = localStorage.getItem("auth_token");
+                if (currentToken) {
+                    console.log("ExchangeContext: Token detected, fetching accounts");
+                    fetchAccounts();
+                    clearInterval(checkInterval);
+                }
+            }, 500); // Check every 500ms
+
+            // Clear interval after 10 seconds to avoid infinite polling
+            const timeout = setTimeout(() => {
+                clearInterval(checkInterval);
+            }, 10000);
+
+            return () => {
+                clearInterval(checkInterval);
+                clearTimeout(timeout);
+            };
+        }
+    }, [accounts.length, fetchAccounts]);
+
+    // Listen for storage events (works across tabs/windows)
+    useEffect(() => {
+        const handleStorageChange = (e: StorageEvent) => {
+            if (e.key === "auth_token") {
+                if (e.newValue) {
+                    console.log("ExchangeContext: Auth token set, refetching accounts");
+                    fetchAccounts();
+                } else {
+                    // Token was removed (logout)
+                    console.log("ExchangeContext: Auth token removed, clearing accounts");
+                    setAccounts([]);
+                    setSelectedAccountId(null);
+                    setError(null);
+                    setLoading(false);
+                }
+            }
+        };
+
+        window.addEventListener("storage", handleStorageChange);
+        return () => window.removeEventListener("storage", handleStorageChange);
+    }, [fetchAccounts]);
+
+    // Listen for custom auth events (for same-tab login/logout)
+    useEffect(() => {
+        const handleAuthTokenSet = () => {
+            console.log("ExchangeContext: Auth token set event received, refetching accounts");
+            fetchAccounts();
+        };
+
+        const handleAuthTokenRemoved = () => {
+            console.log("ExchangeContext: Auth token removed event received, clearing accounts");
+            setAccounts([]);
+            setSelectedAccountId(null);
+            setError(null);
+            setLoading(false);
+        };
+
+        window.addEventListener("authTokenSet", handleAuthTokenSet);
+        window.addEventListener("authTokenRemoved", handleAuthTokenRemoved);
+        return () => {
+            window.removeEventListener("authTokenSet", handleAuthTokenSet);
+            window.removeEventListener("authTokenRemoved", handleAuthTokenRemoved);
+        };
+    }, [fetchAccounts]);
+
+    // Refetch on window focus (in case user logged in in another tab)
+    useEffect(() => {
+        const handleFocus = () => {
+            const token = localStorage.getItem("auth_token");
+            if (token && accounts.length === 0) {
+                console.log("ExchangeContext: Window focused with token, refetching accounts");
+                fetchAccounts();
+            }
+        };
+
+        window.addEventListener("focus", handleFocus);
+        return () => window.removeEventListener("focus", handleFocus);
+    }, [accounts.length, fetchAccounts]);
 
     // Save selected account to localStorage when it changes
     useEffect(() => {

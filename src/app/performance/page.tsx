@@ -39,6 +39,7 @@ export default function PerformancePage() {
      const [tradeResults, setTradeResults] = useState<TradeResult[]>([]);
      const [loading, setLoading] = useState(true);
      const [error, setError] = useState<string | null>(null);
+     const [exporting, setExporting] = useState<{ type: string; format: string } | null>(null);
 
      // Filters
      const [symbolFilter, setSymbolFilter] = useState<string>("");
@@ -115,9 +116,13 @@ export default function PerformancePage() {
 
      const exportTradeResults = async (format: "csv" | "json") => {
           try {
+               setExporting({ type: "trades", format });
+               setError(null);
+               
                const token = localStorage.getItem("auth_token");
                if (!token) {
                     setError("Not authenticated");
+                    setExporting(null);
                     return;
                }
 
@@ -150,14 +155,20 @@ export default function PerformancePage() {
           } catch (err) {
                console.error("Error exporting trade results:", err);
                setError(err instanceof Error ? err.message : "Failed to export trade results");
+          } finally {
+               setExporting(null);
           }
      };
 
      const exportPerformanceStats = async (format: "csv" | "json") => {
           try {
+               setExporting({ type: "stats", format });
+               setError(null);
+               
                const token = localStorage.getItem("auth_token");
                if (!token) {
                     setError("Not authenticated");
+                    setExporting(null);
                     return;
                }
 
@@ -188,6 +199,8 @@ export default function PerformancePage() {
           } catch (err) {
                console.error("Error exporting performance stats:", err);
                setError(err instanceof Error ? err.message : "Failed to export performance stats");
+          } finally {
+               setExporting(null);
           }
      };
 
@@ -408,33 +421,37 @@ export default function PerformancePage() {
                          )}
                          <button
                               onClick={() => exportTradeResults("csv")}
+                              disabled={exporting?.type === "trades"}
                               style={{
                                    padding: "8px 16px",
-                                   backgroundColor: "#0070f3",
+                                   backgroundColor: exporting?.type === "trades" && exporting?.format === "csv" ? "#6b7280" : "#0070f3",
                                    color: "white",
                                    border: "none",
                                    borderRadius: "4px",
-                                   cursor: "pointer",
+                                   cursor: exporting?.type === "trades" ? "not-allowed" : "pointer",
                                    fontSize: "14px",
                                    fontWeight: "bold",
+                                   opacity: exporting?.type === "trades" && exporting?.format === "csv" ? 0.7 : 1,
                               }}
                          >
-                              Export Trades (CSV)
+                              {exporting?.type === "trades" && exporting?.format === "csv" ? "Exporting..." : "Export Trades (CSV)"}
                          </button>
                          <button
                               onClick={() => exportTradeResults("json")}
+                              disabled={exporting?.type === "trades"}
                               style={{
                                    padding: "8px 16px",
-                                   backgroundColor: "#10b981",
+                                   backgroundColor: exporting?.type === "trades" && exporting?.format === "json" ? "#6b7280" : "#10b981",
                                    color: "white",
                                    border: "none",
                                    borderRadius: "4px",
-                                   cursor: "pointer",
+                                   cursor: exporting?.type === "trades" ? "not-allowed" : "pointer",
                                    fontSize: "14px",
                                    fontWeight: "bold",
+                                   opacity: exporting?.type === "trades" && exporting?.format === "json" ? 0.7 : 1,
                               }}
                          >
-                              Export Trades (JSON)
+                              {exporting?.type === "trades" && exporting?.format === "json" ? "Exporting..." : "Export Trades (JSON)"}
                          </button>
                     </div>
                </div>
@@ -447,33 +464,37 @@ export default function PerformancePage() {
                               <div style={{ display: "flex", gap: "8px" }}>
                                    <button
                                         onClick={() => exportPerformanceStats("csv")}
+                                        disabled={exporting?.type === "stats"}
                                         style={{
                                              padding: "6px 12px",
-                                             backgroundColor: "#0070f3",
+                                             backgroundColor: exporting?.type === "stats" && exporting?.format === "csv" ? "#6b7280" : "#0070f3",
                                              color: "white",
                                              border: "none",
                                              borderRadius: "4px",
-                                             cursor: "pointer",
+                                             cursor: exporting?.type === "stats" ? "not-allowed" : "pointer",
                                              fontSize: "13px",
                                              fontWeight: "500",
+                                             opacity: exporting?.type === "stats" && exporting?.format === "csv" ? 0.7 : 1,
                                         }}
                                    >
-                                        Export Stats (CSV)
+                                        {exporting?.type === "stats" && exporting?.format === "csv" ? "Exporting..." : "Export Stats (CSV)"}
                                    </button>
                                    <button
                                         onClick={() => exportPerformanceStats("json")}
+                                        disabled={exporting?.type === "stats"}
                                         style={{
                                              padding: "6px 12px",
-                                             backgroundColor: "#10b981",
+                                             backgroundColor: exporting?.type === "stats" && exporting?.format === "json" ? "#6b7280" : "#10b981",
                                              color: "white",
                                              border: "none",
                                              borderRadius: "4px",
-                                             cursor: "pointer",
+                                             cursor: exporting?.type === "stats" ? "not-allowed" : "pointer",
                                              fontSize: "13px",
                                              fontWeight: "500",
+                                             opacity: exporting?.type === "stats" && exporting?.format === "json" ? 0.7 : 1,
                                         }}
                                    >
-                                        Export Stats (JSON)
+                                        {exporting?.type === "stats" && exporting?.format === "json" ? "Exporting..." : "Export Stats (JSON)"}
                                    </button>
                               </div>
                          </div>
@@ -695,33 +716,37 @@ export default function PerformancePage() {
                          <div style={{ display: "flex", gap: "8px" }}>
                               <button
                                    onClick={() => exportTradeResults("csv")}
+                                   disabled={exporting?.type === "trades"}
                                    style={{
                                         padding: "6px 12px",
-                                        backgroundColor: "#0070f3",
+                                        backgroundColor: exporting?.type === "trades" && exporting?.format === "csv" ? "#6b7280" : "#0070f3",
                                         color: "white",
                                         border: "none",
                                         borderRadius: "4px",
-                                        cursor: "pointer",
+                                        cursor: exporting?.type === "trades" ? "not-allowed" : "pointer",
                                         fontSize: "13px",
                                         fontWeight: "500",
+                                        opacity: exporting?.type === "trades" && exporting?.format === "csv" ? 0.7 : 1,
                                    }}
                               >
-                                   Export (CSV)
+                                   {exporting?.type === "trades" && exporting?.format === "csv" ? "Exporting..." : "Export (CSV)"}
                               </button>
                               <button
                                    onClick={() => exportTradeResults("json")}
+                                   disabled={exporting?.type === "trades"}
                                    style={{
                                         padding: "6px 12px",
-                                        backgroundColor: "#10b981",
+                                        backgroundColor: exporting?.type === "trades" && exporting?.format === "json" ? "#6b7280" : "#10b981",
                                         color: "white",
                                         border: "none",
                                         borderRadius: "4px",
-                                        cursor: "pointer",
+                                        cursor: exporting?.type === "trades" ? "not-allowed" : "pointer",
                                         fontSize: "13px",
                                         fontWeight: "500",
+                                        opacity: exporting?.type === "trades" && exporting?.format === "json" ? 0.7 : 1,
                                    }}
                               >
-                                   Export (JSON)
+                                   {exporting?.type === "trades" && exporting?.format === "json" ? "Exporting..." : "Export (JSON)"}
                               </button>
                          </div>
                     </div>

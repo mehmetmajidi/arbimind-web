@@ -61,6 +61,9 @@ export default function LoginPage() {
                          localStorage.setItem("auth_token", data.access_token);
                          console.log("Token stored in localStorage"); // Debug
 
+                         // Dispatch custom event to notify ExchangeContext to refetch accounts
+                         window.dispatchEvent(new Event("authTokenSet"));
+
                          // Redirect to home or settings
                          setTimeout(() => {
                               router.push("/");

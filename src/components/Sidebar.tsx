@@ -10,6 +10,7 @@ const menuItems = [
      { name: "Trading", path: "/trading", icon: "💹" },
      { name: "Bots", path: "/bots", icon: "🤖" },
      { name: "Performance", path: "/performance", icon: "📈" },
+     { name: "Backfill", path: "/backfill", icon: "📥" },
      { name: "Settings", path: "/settings", icon: "⚙️" },
 ];
 
@@ -27,7 +28,10 @@ export default function Sidebar() {
 
      const handleLogout = () => {
           localStorage.removeItem("auth_token");
+          localStorage.removeItem("selectedAccountId");
           setIsAuthenticated(false);
+          // Dispatch event to notify ExchangeContext
+          window.dispatchEvent(new Event("authTokenRemoved"));
           window.location.href = "/";
      };
 
