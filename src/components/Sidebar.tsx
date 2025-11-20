@@ -10,6 +10,7 @@ const menuItems = [
      { name: "Trading", path: "/trading", icon: "💹" },
      { name: "Bots", path: "/bots", icon: "🤖" },
      { name: "Performance", path: "/performance", icon: "📈" },
+     { name: "Predictions", path: "/predictions", icon: "🔮" },
      { name: "Backfill", path: "/backfill", icon: "📥" },
      { name: "Settings", path: "/settings", icon: "⚙️" },
 ];
