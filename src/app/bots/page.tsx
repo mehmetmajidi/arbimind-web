@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useExchange } from "@/contexts/ExchangeContext";
+import Alert from "@/components/Alert";
 
 interface ExchangeAccount {
      id: number;
@@ -34,6 +35,7 @@ interface TradingBot {
      stopped_at: string | null;
      last_error: string | null;
      paper_trading: boolean;
+     strategy_params?: Record<string, unknown> | null;
 }
 
 interface BotStatus {
@@ -86,6 +88,9 @@ export default function BotsPage() {
      const [statusLoading, setStatusLoading] = useState(false);
      const [tradesLoading, setTradesLoading] = useState(false);
      const [error, setError] = useState<string | null>(null);
+     const [success, setSuccess] = useState<string | null>(null);
+     const [warning, setWarning] = useState<string | null>(null);
+     const [info, setInfo] = useState<string | null>(null);
      const [editingBotId, setEditingBotId] = useState<number | null>(null);
 
      // Create bot form state
@@ -104,7 +109,9 @@ export default function BotsPage() {
           take_profit_percent: "",
           duration_hours: "",
           paper_trading: true, // Default to paper trading (safe mode)
+          strategy_params: {} as Record<string, unknown>,
      });
+     const [strategyParamsInput, setStrategyParamsInput] = useState("");
      const [availableSymbols, setAvailableSymbols] = useState<string[]>([]);
      const [symbolInput, setSymbolInput] = useState("");
      const [availableBalances, setAvailableBalances] = useState<Record<string, { free: number; used: number; total: number }>>({});
@@ -113,6 +120,14 @@ export default function BotsPage() {
      // Auto-refresh
      const [autoRefresh, setAutoRefresh] = useState(true);
      const [refreshInterval, setRefreshInterval] = useState(10); // seconds
+     const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(null);
+     const [isRefreshing, setIsRefreshing] = useState(false);
+
+     // Filter and search
+     const [searchQuery, setSearchQuery] = useState("");
+     const [statusFilter, setStatusFilter] = useState<string>("all");
+     const [strategyFilter, setStrategyFilter] = useState<string>("all");
+     const [paperTradingFilter, setPaperTradingFilter] = useState<string>("all");
 
      // Initialize loading state (accounts are now from ExchangeContext)
      useEffect(() => {
@@ -224,7 +239,7 @@ export default function BotsPage() {
                          setAvailableBalances({});
                          
                          if (response.status === 503) {
-                              console.warn("Balance service unavailable - exchange might be down or account inactive");
+                              setWarning("Balance service unavailable - exchange might be down or account inactive");
                          }
                     }
                } catch (error) {
@@ -241,6 +256,7 @@ export default function BotsPage() {
      // Fetch bots
      const fetchBots = useCallback(async () => {
           setBotsLoading(true);
+          setIsRefreshing(true);
           try {
                const token = localStorage.getItem("auth_token") || "";
                if (!token) return;
@@ -255,6 +271,7 @@ export default function BotsPage() {
                     const data = await response.json();
                     setBots(Array.isArray(data) ? data : []);
                     setError(null);
+                    setLastRefreshTime(new Date());
                } else {
                     const errorData = await response.json().catch(() => ({}));
                     setError(errorData.detail || "Failed to load bots");
@@ -264,6 +281,7 @@ export default function BotsPage() {
                setError("Failed to load bots");
           } finally {
                setBotsLoading(false);
+               setIsRefreshing(false);
           }
      }, []);
 
@@ -320,6 +338,23 @@ export default function BotsPage() {
           fetchBots();
      }, [fetchBots]);
 
+     // Manual refresh handler
+     const handleManualRefresh = async () => {
+          setInfo("Refreshing bot data...");
+          try {
+               await fetchBots();
+               if (selectedBot) {
+                    await fetchBotStatus(selectedBot.id);
+                    await fetchBotTrades(selectedBot.id);
+               }
+               setInfo("Data refreshed successfully!");
+               setError(null);
+          } catch (error) {
+               setError("Failed to refresh data");
+               setInfo(null);
+          }
+     };
+
      // Auto-refresh
      useEffect(() => {
           if (!autoRefresh) return;
@@ -352,7 +387,7 @@ export default function BotsPage() {
           }
 
           if (!botForm.name || !botForm.exchange_account_id || !botForm.capital || !botForm.capital_currency || botForm.symbols.length === 0) {
-               setError("Please fill in all required fields including capital currency");
+               setWarning("Please fill in all required fields including capital currency");
                return;
           }
 
@@ -362,13 +397,13 @@ export default function BotsPage() {
                const requestedAmount = parseFloat(botForm.capital);
                
                if (isNaN(requestedAmount) || requestedAmount <= 0) {
-                    setError("Please enter a valid capital amount greater than 0");
+                    setWarning("Please enter a valid capital amount greater than 0");
                     return;
                }
                
                // Check if currency exists in available balances
                if (!availableBalances[botForm.capital_currency]) {
-                    setError(`Currency ${botForm.capital_currency} not found in available balances. Please select a valid currency.`);
+                    setWarning(`Currency ${botForm.capital_currency} not found in available balances. Please select a valid currency.`);
                     return;
                }
                
@@ -378,12 +413,12 @@ export default function BotsPage() {
                if (!botForm.paper_trading) {
                     // Check if balance is 0 or insufficient
                     if (availableAmount <= 0) {
-                         setError(`Insufficient balance. Available: ${availableAmount.toFixed(8)} ${botForm.capital_currency}. Please deposit funds or select a different currency.`);
+                         setWarning(`Insufficient balance. Available: ${availableAmount.toFixed(8)} ${botForm.capital_currency}. Please deposit funds or select a different currency.`);
                          return;
                     }
                     
                     if (requestedAmount > availableAmount) {
-                         setError(`Insufficient balance. Available: ${availableAmount.toFixed(8)} ${botForm.capital_currency}, Requested: ${requestedAmount.toFixed(8)}`);
+                         setWarning(`Insufficient balance. Available: ${availableAmount.toFixed(8)} ${botForm.capital_currency}, Requested: ${requestedAmount.toFixed(8)}`);
                          return;
                     }
                }
@@ -425,6 +460,17 @@ export default function BotsPage() {
                if (botForm.duration_hours) {
                     requestBody.duration_hours = parseInt(botForm.duration_hours);
                }
+               
+               // Parse strategy_params from JSON string
+               if (strategyParamsInput.trim()) {
+                    try {
+                         requestBody.strategy_params = JSON.parse(strategyParamsInput);
+                    } catch (e) {
+                         setWarning("Invalid JSON format for Strategy Parameters. Please check your JSON syntax.");
+                         setCreating(false);
+                         return;
+                    }
+               }
 
                const response = await fetch(`${apiUrl}/bots/create`, {
                     method: "POST",
@@ -438,6 +484,8 @@ export default function BotsPage() {
                if (response.ok) {
                     const data = await response.json();
                     console.log("Bot created:", data);
+                    setSuccess("Bot created successfully!");
+                    setError(null);
                     setShowCreateForm(false);
                     setBotForm({
                          name: "",
@@ -452,8 +500,10 @@ export default function BotsPage() {
                          take_profit_percent: "",
                          duration_hours: "",
                          paper_trading: true,
+                         strategy_params: {},
                     });
                     setSymbolInput("");
+                    setStrategyParamsInput("");
                     await fetchBots();
                } else {
                     const errorData = await response.json().catch(() => ({}));
@@ -485,6 +535,8 @@ export default function BotsPage() {
                });
 
                if (response.ok) {
+                    setSuccess("Bot started successfully!");
+                    setError(null);
                     await fetchBots();
                     if (selectedBot && selectedBot.id === botId) {
                          await fetchBotStatus(botId);
@@ -517,6 +569,8 @@ export default function BotsPage() {
                });
 
                if (response.ok) {
+                    setSuccess("Bot stopped successfully!");
+                    setError(null);
                     await fetchBots();
                     if (selectedBot && selectedBot.id === botId) {
                          await fetchBotStatus(botId);
@@ -562,6 +616,8 @@ export default function BotsPage() {
                });
 
                if (response.ok) {
+                    setSuccess("Bot deleted successfully!");
+                    setError(null);
                     await fetchBots();
                     if (selectedBot && selectedBot.id === botId) {
                          setSelectedBot(null);
@@ -578,9 +634,9 @@ export default function BotsPage() {
 
      // Edit bot - load bot data into form
      const handleEditBot = (bot: TradingBot) => {
-          console.log("Editing bot:", bot);
-          console.log("Bot exchange_account_id:", bot.exchange_account_id);
-          console.log("Available accounts:", accounts);
+          setInfo(`Editing bot: ${bot.name}`);
+          setError(null);
+          setWarning(null);
           
           setBotForm({
                name: bot.name,
@@ -595,7 +651,9 @@ export default function BotsPage() {
                take_profit_percent: bot.take_profit_percent ? String(bot.take_profit_percent) : "",
                duration_hours: bot.duration_hours ? String(bot.duration_hours) : "",
                paper_trading: bot.paper_trading || false,
+               strategy_params: bot.strategy_params || {},
           });
+          setStrategyParamsInput(bot.strategy_params ? JSON.stringify(bot.strategy_params, null, 2) : "");
           setEditingBotId(bot.id);
           setShowCreateForm(true);
      };
@@ -605,7 +663,7 @@ export default function BotsPage() {
           if (!editingBotId) return;
 
           if (!botForm.name || !botForm.capital || botForm.symbols.length === 0) {
-               setError("Please fill in all required fields");
+               setWarning("Please fill in all required fields");
                return;
           }
 
@@ -636,6 +694,17 @@ export default function BotsPage() {
                if (botForm.stop_loss_percent) requestBody.stop_loss_percent = parseFloat(botForm.stop_loss_percent);
                if (botForm.take_profit_percent) requestBody.take_profit_percent = parseFloat(botForm.take_profit_percent);
                if (botForm.duration_hours) requestBody.duration_hours = parseInt(botForm.duration_hours);
+               
+               // Parse strategy_params from JSON string
+               if (strategyParamsInput.trim()) {
+                    try {
+                         requestBody.strategy_params = JSON.parse(strategyParamsInput);
+                    } catch (e) {
+                         setWarning("Invalid JSON format for Strategy Parameters. Please check your JSON syntax.");
+                         setCreating(false);
+                         return;
+                    }
+               }
 
                const response = await fetch(`${apiUrl}/bots/${editingBotId}`, {
                     method: "PUT",
@@ -647,6 +716,8 @@ export default function BotsPage() {
                });
 
                if (response.ok) {
+                    setSuccess("Bot updated successfully!");
+                    setError(null);
                     await fetchBots();
                     setShowCreateForm(false);
                     setEditingBotId(null);
@@ -663,7 +734,9 @@ export default function BotsPage() {
                          take_profit_percent: "",
                          duration_hours: "",
                          paper_trading: true,
+                         strategy_params: {},
                     });
+                    setStrategyParamsInput("");
                } else {
                     const errorData = await response.json().catch(() => ({}));
                     setError(errorData.detail || "Failed to update bot");
@@ -700,43 +773,49 @@ export default function BotsPage() {
      }
 
      return (
-          <div style={{ padding: "32px", maxWidth: "1600px", margin: "0 auto", backgroundColor: "#202020", minHeight: "100vh" }}>
-               {/* Header */}
+          <>
+               <style>{`
+                    @keyframes spin {
+                         0% { transform: rotate(0deg); }
+                         100% { transform: rotate(360deg); }
+                    }
+               `}</style>
+               <div style={{ padding: "32px", maxWidth: "1600px", margin: "0 auto", backgroundColor: "#202020", minHeight: "100vh" }}>
+                    {/* Header */}
                <div style={{ marginBottom: "32px" }}>
                     <h1 style={{ fontSize: "32px", fontWeight: "700", color: "#ffffff", marginBottom: "8px", letterSpacing: "-0.5px" }}>Bot Management Dashboard</h1>
                     <p style={{ color: "#888", fontSize: "14px" }}>Manage and monitor your trading bots</p>
                </div>
 
                {error && (
-                    <div
-                         style={{
-                              padding: "16px",
-                              backgroundColor: "rgba(239, 68, 68, 0.1)",
-                              border: "1px solid rgba(239, 68, 68, 0.3)",
-                              borderRadius: "12px",
-                              marginBottom: "24px",
-                              color: "#ef4444",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "space-between",
-                         }}
-                    >
-                         <span>{error}</span>
-                         <button
-                              onClick={() => setError(null)}
-                              style={{
-                                   background: "none",
-                                   border: "none",
-                                   color: "#ef4444",
-                                   cursor: "pointer",
-                                   fontSize: "20px",
-                                   padding: "0 8px",
-                                   fontWeight: "bold",
-                              }}
-                         >
-                              ×
-                         </button>
-                    </div>
+                    <Alert
+                         type="error"
+                         message={error}
+                         onClose={() => setError(null)}
+                         dismissible={true}
+                    />
+               )}
+               
+               {warning && (
+                    <Alert
+                         type="warning"
+                         message={warning}
+                         onClose={() => setWarning(null)}
+                         dismissible={true}
+                         autoClose={true}
+                         duration={7000}
+                    />
+               )}
+               
+               {info && (
+                    <Alert
+                         type="info"
+                         message={info}
+                         onClose={() => setInfo(null)}
+                         dismissible={true}
+                         autoClose={true}
+                         duration={5000}
+                    />
                )}
 
                {/* Controls */}
@@ -798,6 +877,61 @@ export default function BotsPage() {
                                    <option value={30}>Every 30 seconds</option>
                                    <option value={60}>Every 1 minute</option>
                               </select>
+                         )}
+                         
+                         {/* Manual Refresh Button */}
+                         <button
+                              onClick={handleManualRefresh}
+                              disabled={isRefreshing}
+                              style={{
+                                   padding: "10px 20px",
+                                   backgroundColor: isRefreshing ? "#666" : "#3b82f6",
+                                   color: "white",
+                                   border: "none",
+                                   borderRadius: "10px",
+                                   cursor: isRefreshing ? "not-allowed" : "pointer",
+                                   fontSize: "14px",
+                                   fontWeight: "600",
+                                   display: "flex",
+                                   alignItems: "center",
+                                   gap: "8px",
+                                   transition: "all 0.2s",
+                                   opacity: isRefreshing ? 0.6 : 1,
+                              }}
+                              onMouseEnter={(e) => {
+                                   if (!isRefreshing) {
+                                        e.currentTarget.style.backgroundColor = "#2563eb";
+                                        e.currentTarget.style.transform = "translateY(-2px)";
+                                   }
+                              }}
+                              onMouseLeave={(e) => {
+                                   if (!isRefreshing) {
+                                        e.currentTarget.style.backgroundColor = "#3b82f6";
+                                        e.currentTarget.style.transform = "translateY(0)";
+                                   }
+                              }}
+                         >
+                              <span style={{ 
+                                   display: "inline-block",
+                                   width: "16px",
+                                   height: "16px",
+                                   border: "2px solid white",
+                                   borderTopColor: "transparent",
+                                   borderRadius: "50%",
+                                   animation: isRefreshing ? "spin 1s linear infinite" : "none",
+                              }} />
+                              {isRefreshing ? "Refreshing..." : "Refresh"}
+                         </button>
+                         
+                         {/* Last Refresh Time */}
+                         {lastRefreshTime && (
+                              <span style={{ 
+                                   fontSize: "12px", 
+                                   color: "#888",
+                                   marginLeft: "8px",
+                              }}>
+                                   Last: {lastRefreshTime.toLocaleTimeString()}
+                              </span>
                          )}
                     </div>
 
@@ -894,36 +1028,23 @@ export default function BotsPage() {
                               
                               {/* Error message inside modal */}
                               {error && (
-                                   <div
-                                        style={{
-                                             padding: "12px 16px",
-                                             backgroundColor: "rgba(239, 68, 68, 0.1)",
-                                             border: "1px solid rgba(239, 68, 68, 0.3)",
-                                             borderRadius: "12px",
-                                             marginBottom: "24px",
-                                             color: "#ef4444",
-                                             display: "flex",
-                                             alignItems: "center",
-                                             justifyContent: "space-between",
-                                             fontSize: "14px",
-                                        }}
-                                   >
-                                        <span>{error}</span>
-                                        <button
-                                             onClick={() => setError(null)}
-                                             style={{
-                                                  background: "none",
-                                                  border: "none",
-                                                  color: "#ef4444",
-                                                  cursor: "pointer",
-                                                  fontSize: "18px",
-                                                  padding: "0 8px",
-                                                  fontWeight: "bold",
-                                             }}
-                                        >
-                                             ×
-                                        </button>
-                                   </div>
+                                   <Alert
+                                        type="error"
+                                        message={error}
+                                        onClose={() => setError(null)}
+                                        dismissible={true}
+                                   />
+                              )}
+                              
+                              {success && (
+                                   <Alert
+                                        type="success"
+                                        message={success}
+                                        onClose={() => setSuccess(null)}
+                                        dismissible={true}
+                                        autoClose={true}
+                                        duration={5000}
+                                   />
                               )}
                               
                               <div
@@ -1306,6 +1427,54 @@ export default function BotsPage() {
                                    </div>
                               </div>
 
+                              {/* Strategy Parameters */}
+                              <div style={{ marginTop: "24px", gridColumn: "1 / -1" }}>
+                                   <label style={{ display: "block", marginBottom: "8px", fontWeight: "600", color: "#ffffff", fontSize: "14px" }}>
+                                        Strategy Parameters (JSON, optional):
+                                        <span style={{ marginLeft: "8px", color: "#888", fontSize: "12px", fontWeight: "400" }}>
+                                             (e.g., {"{"}"lookback_period": 20, "threshold": 0.05{"}"})
+                                        </span>
+                                   </label>
+                                   <textarea
+                                        value={strategyParamsInput}
+                                        onChange={(e) => setStrategyParamsInput(e.target.value)}
+                                        placeholder='{"lookback_period": 20, "threshold": 0.05}'
+                                        style={{
+                                             width: "100%",
+                                             minHeight: "120px",
+                                             padding: "12px",
+                                             borderRadius: "10px",
+                                             border: "1px solid rgba(255, 174, 0, 0.3)",
+                                             backgroundColor: "#1a1a1a",
+                                             color: "#ffffff",
+                                             fontSize: "13px",
+                                             fontFamily: "monospace",
+                                             outline: "none",
+                                             transition: "all 0.2s",
+                                             resize: "vertical",
+                                        }}
+                                        onFocus={(e) => {
+                                             e.currentTarget.style.borderColor = "#FFAE00";
+                                             e.currentTarget.style.boxShadow = "0 0 0 3px rgba(255, 174, 0, 0.1)";
+                                        }}
+                                        onBlur={(e) => {
+                                             e.currentTarget.style.borderColor = "rgba(255, 174, 0, 0.3)";
+                                             e.currentTarget.style.boxShadow = "none";
+                                             // Validate JSON on blur
+                                             if (e.target.value.trim()) {
+                                                  try {
+                                                       JSON.parse(e.target.value);
+                                                       setWarning(null); // Clear warning if valid
+                                                  } catch (err) {
+                                                       setWarning("Invalid JSON format in Strategy Parameters. Please check your JSON syntax.");
+                                                  }
+                                             } else {
+                                                  setWarning(null); // Clear warning if empty
+                                             }
+                                        }}
+                                   />
+                              </div>
+
                               {/* Symbols Selection */}
                               <div style={{ marginTop: "24px", gridColumn: "1 / -1" }}>
                                    <label style={{ display: "block", marginBottom: "12px", fontWeight: "600", color: "#ffffff", fontSize: "14px" }}>
@@ -1504,9 +1673,11 @@ export default function BotsPage() {
                                                        max_position_size: "",
                                                        stop_loss_percent: "",
                                                        take_profit_percent: "",
-                                                       duration_hours: "",
-                                                       paper_trading: true,
-                                                  });
+                                                  duration_hours: "",
+                                                  paper_trading: true,
+                                                  strategy_params: {},
+                                             });
+                                             setStrategyParamsInput("");
                                              }}
                                              style={{
                                                   padding: "14px 32px",
@@ -1538,12 +1709,143 @@ export default function BotsPage() {
 
                {/* Bots List */}
                <div style={{ marginBottom: "32px" }}>
-                    <h2 style={{ fontSize: "24px", fontWeight: "700", color: "#ffffff", marginBottom: "20px" }}>My Bots</h2>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", flexWrap: "wrap", gap: "16px" }}>
+                         <h2 style={{ fontSize: "24px", fontWeight: "700", color: "#ffffff", margin: 0 }}>My Bots</h2>
+                         
+                         {/* Search and Filters */}
+                         <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center" }}>
+                              {/* Search Input */}
+                              <input
+                                   type="text"
+                                   placeholder="Search bots..."
+                                   value={searchQuery}
+                                   onChange={(e) => setSearchQuery(e.target.value)}
+                                   style={{
+                                        padding: "10px 16px",
+                                        backgroundColor: "#2a2a2a",
+                                        border: "1px solid rgba(255, 174, 0, 0.3)",
+                                        borderRadius: "10px",
+                                        color: "#ffffff",
+                                        fontSize: "14px",
+                                        minWidth: "200px",
+                                        outline: "none",
+                                   }}
+                                   onFocus={(e) => {
+                                        e.currentTarget.style.borderColor = "#FFAE00";
+                                   }}
+                                   onBlur={(e) => {
+                                        e.currentTarget.style.borderColor = "rgba(255, 174, 0, 0.3)";
+                                   }}
+                              />
+                              
+                              {/* Status Filter */}
+                              <select
+                                   value={statusFilter}
+                                   onChange={(e) => setStatusFilter(e.target.value)}
+                                   style={{
+                                        padding: "10px 16px",
+                                        backgroundColor: "#2a2a2a",
+                                        border: "1px solid rgba(255, 174, 0, 0.3)",
+                                        borderRadius: "10px",
+                                        color: "#ffffff",
+                                        fontSize: "14px",
+                                        cursor: "pointer",
+                                        outline: "none",
+                                   }}
+                              >
+                                   <option value="all">All Status</option>
+                                   <option value="active">Active</option>
+                                   <option value="inactive">Inactive</option>
+                                   <option value="paused">Paused</option>
+                                   <option value="stopped">Stopped</option>
+                                   <option value="error">Error</option>
+                              </select>
+                              
+                              {/* Strategy Filter */}
+                              <select
+                                   value={strategyFilter}
+                                   onChange={(e) => setStrategyFilter(e.target.value)}
+                                   style={{
+                                        padding: "10px 16px",
+                                        backgroundColor: "#2a2a2a",
+                                        border: "1px solid rgba(255, 174, 0, 0.3)",
+                                        borderRadius: "10px",
+                                        color: "#ffffff",
+                                        fontSize: "14px",
+                                        cursor: "pointer",
+                                        outline: "none",
+                                   }}
+                              >
+                                   <option value="all">All Strategies</option>
+                                   <option value="prediction_based">Prediction Based</option>
+                                   <option value="momentum">Momentum</option>
+                                   <option value="mean_reversion">Mean Reversion</option>
+                                   <option value="breakout">Breakout</option>
+                              </select>
+                              
+                              {/* Paper Trading Filter */}
+                              <select
+                                   value={paperTradingFilter}
+                                   onChange={(e) => setPaperTradingFilter(e.target.value)}
+                                   style={{
+                                        padding: "10px 16px",
+                                        backgroundColor: "#2a2a2a",
+                                        border: "1px solid rgba(255, 174, 0, 0.3)",
+                                        borderRadius: "10px",
+                                        color: "#ffffff",
+                                        fontSize: "14px",
+                                        cursor: "pointer",
+                                        outline: "none",
+                                   }}
+                              >
+                                   <option value="all">All Modes</option>
+                                   <option value="paper">Paper Trading</option>
+                                   <option value="real">Real Trading</option>
+                              </select>
+                         </div>
+                    </div>
+                    
                     {botsLoading ? (
                          <div style={{ padding: "40px", textAlign: "center", color: "#888" }}>Loading bots...</div>
-                    ) : bots.length > 0 ? (
-                         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: "20px" }}>
-                              {bots.map((bot) => {
+                    ) : (() => {
+                         // Filter bots
+                         const filteredBots = bots.filter((bot) => {
+                              // Search filter
+                              if (searchQuery) {
+                                   const query = searchQuery.toLowerCase();
+                                   if (
+                                        !bot.name.toLowerCase().includes(query) &&
+                                        !bot.symbols.some(s => s.toLowerCase().includes(query)) &&
+                                        !bot.strategy_type.toLowerCase().includes(query)
+                                   ) {
+                                        return false;
+                                   }
+                              }
+                              
+                              // Status filter
+                              if (statusFilter !== "all" && bot.status.toLowerCase() !== statusFilter.toLowerCase()) {
+                                   return false;
+                              }
+                              
+                              // Strategy filter
+                              if (strategyFilter !== "all" && bot.strategy_type !== strategyFilter) {
+                                   return false;
+                              }
+                              
+                              // Paper trading filter
+                              if (paperTradingFilter === "paper" && !bot.paper_trading) {
+                                   return false;
+                              }
+                              if (paperTradingFilter === "real" && bot.paper_trading) {
+                                   return false;
+                              }
+                              
+                              return true;
+                         });
+                         
+                         return filteredBots.length > 0 ? (
+                              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: "20px" }}>
+                                   {filteredBots.map((bot) => {
                                    const statusColors: Record<string, string> = {
                                         inactive: "#6b7280",
                                         active: "#22c55e",
@@ -1789,13 +2091,18 @@ export default function BotsPage() {
                                              </div>
                                         </div>
                                    );
-                              })}
-                         </div>
-                    ) : (
-                         <div style={{ padding: "40px", textAlign: "center", color: "#888", backgroundColor: "#2a2a2a", borderRadius: "16px", border: "1px solid rgba(255, 174, 0, 0.2)" }}>
-                              <p style={{ fontSize: "16px", margin: 0 }}>No bots created yet. Create your first bot above.</p>
-                         </div>
-                    )}
+                                   })}
+                              </div>
+                         ) : (
+                              <div style={{ padding: "40px", textAlign: "center", color: "#888", backgroundColor: "#2a2a2a", borderRadius: "16px", border: "1px solid rgba(255, 174, 0, 0.2)" }}>
+                                   <p style={{ fontSize: "16px", margin: 0 }}>
+                                        {bots.length > 0 
+                                             ? "No bots match your filters. Try adjusting your search criteria."
+                                             : "No bots created yet. Create your first bot above."}
+                                   </p>
+                              </div>
+                         );
+                    })()}
                </div>
 
                {/* Bot Details */}
@@ -1917,6 +2224,27 @@ export default function BotsPage() {
                                         </div>
                                    )}
                               </div>
+                              
+                              {/* Strategy Parameters Display */}
+                              {selectedBot.strategy_params && Object.keys(selectedBot.strategy_params).length > 0 && (
+                                   <div style={{ marginTop: "20px", padding: "16px", backgroundColor: "rgba(255, 174, 0, 0.05)", borderRadius: "10px", border: "1px solid rgba(255, 174, 0, 0.2)" }}>
+                                        <div style={{ fontSize: "12px", color: "#888", marginBottom: "8px", fontWeight: "500" }}>Strategy Parameters</div>
+                                        <pre style={{
+                                             margin: 0,
+                                             padding: "12px",
+                                             backgroundColor: "#1a1a1a",
+                                             borderRadius: "8px",
+                                             color: "#ffffff",
+                                             fontSize: "12px",
+                                             fontFamily: "monospace",
+                                             overflow: "auto",
+                                             maxHeight: "200px",
+                                        }}>
+                                             {JSON.stringify(selectedBot.strategy_params, null, 2)}
+                                        </pre>
+                                   </div>
+                              )}
+                              
                               {selectedBot.last_error && (
                                    <div
                                         style={{
@@ -2056,5 +2384,6 @@ export default function BotsPage() {
                     </div>
                )}
           </div>
+          </>
      );
 }

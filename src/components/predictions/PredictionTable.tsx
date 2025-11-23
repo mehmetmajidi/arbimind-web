@@ -11,6 +11,7 @@ interface Prediction {
     upper_bound: string;
     lower_bound: string;
     price_error_percent: string | null;
+    price_change_percent: string | null;
     is_verified: boolean;
     within_confidence: boolean | null;
     predicted_at: string;
@@ -64,6 +65,9 @@ export default function PredictionTable({
                                 Predicted
                             </th>
                             <th style={{ padding: "16px", textAlign: "left", color: "#888", fontSize: "14px", fontWeight: "600" }}>
+                                Change %
+                            </th>
+                            <th style={{ padding: "16px", textAlign: "left", color: "#888", fontSize: "14px", fontWeight: "600" }}>
                                 Actual
                             </th>
                             <th style={{ padding: "16px", textAlign: "left", color: "#888", fontSize: "14px", fontWeight: "600" }}>
@@ -83,7 +87,7 @@ export default function PredictionTable({
                     <tbody>
                         {predictions.length === 0 ? (
                             <tr>
-                                <td colSpan={11} style={{ padding: "40px", textAlign: "center", color: "#888" }}>
+                                <td colSpan={12} style={{ padding: "40px", textAlign: "center", color: "#888" }}>
                                     No predictions found
                                 </td>
                             </tr>
@@ -126,8 +130,46 @@ export default function PredictionTable({
                                         <td style={{ padding: "16px", color: "#fff", fontSize: "14px" }}>
                                             {formatPrice(prediction.current_price_at_prediction)}
                                         </td>
-                                        <td style={{ padding: "16px", color: "#FFAE00", fontSize: "14px", fontWeight: "600" }}>
-                                            {formatPrice(prediction.predicted_price)}
+                                        <td style={{ padding: "16px", fontSize: "14px", fontWeight: "600" }}>
+                                            {(() => {
+                                                const predicted = parseFloat(prediction.predicted_price);
+                                                const current = parseFloat(prediction.current_price_at_prediction);
+                                                const changePercent = ((predicted - current) / current) * 100;
+                                                const color = changePercent >= 0 ? "#10b981" : "#ef4444";
+                                                return (
+                                                    <span style={{ color }}>
+                                                        {formatPrice(prediction.predicted_price)}
+                                                    </span>
+                                                );
+                                            })()}
+                                        </td>
+                                        <td style={{ padding: "16px", fontSize: "14px", fontWeight: "600" }}>
+                                            {prediction.price_change_percent ? (() => {
+                                                const changePercent = parseFloat(prediction.price_change_percent);
+                                                const color = changePercent >= 0 ? "#10b981" : "#ef4444";
+                                                const displayValue = Math.abs(changePercent) < 0.01 
+                                                    ? changePercent.toFixed(4) 
+                                                    : changePercent.toFixed(2);
+                                                return (
+                                                    <span style={{ color }}>
+                                                        {changePercent >= 0 ? "+" : ""}{displayValue}%
+                                                    </span>
+                                                );
+                                            })() : (() => {
+                                                // Calculate from prices if not provided
+                                                const predicted = parseFloat(prediction.predicted_price);
+                                                const current = parseFloat(prediction.current_price_at_prediction);
+                                                const changePercent = current > 0 ? ((predicted - current) / current) * 100 : 0;
+                                                const color = changePercent >= 0 ? "#10b981" : "#ef4444";
+                                                const displayValue = Math.abs(changePercent) < 0.01 
+                                                    ? changePercent.toFixed(4) 
+                                                    : changePercent.toFixed(2);
+                                                return (
+                                                    <span style={{ color }}>
+                                                        {changePercent >= 0 ? "+" : ""}{displayValue}%
+                                                    </span>
+                                                );
+                                            })()}
                                         </td>
                                         <td style={{ padding: "16px", color: prediction.actual_price ? "#fff" : "#888", fontSize: "14px" }}>
                                             {prediction.actual_price ? formatPrice(prediction.actual_price) : "N/A"}

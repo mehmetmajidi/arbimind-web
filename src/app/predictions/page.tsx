@@ -25,6 +25,7 @@ interface Prediction {
     predicted_at: string;
     verified_at: string | null;
     exchange_name: string | null;
+    price_change_percent: string | null;
 }
 
 interface PredictionHistoryResponse {

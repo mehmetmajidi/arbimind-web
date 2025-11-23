@@ -326,7 +326,9 @@ export default function GetPredictionModal({
                                                 }}
                                             >
                                                 {pred.price_change_percent >= 0 ? "+" : ""}
-                                                {pred.price_change_percent.toFixed(2)}%
+                                                {Math.abs(pred.price_change_percent) < 0.01 
+                                                    ? pred.price_change_percent.toFixed(4) 
+                                                    : pred.price_change_percent.toFixed(2)}%
                                             </span>
                                         </div>
                                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", fontSize: "13px" }}>
