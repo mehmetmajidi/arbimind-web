@@ -1,6 +1,21 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+
+// Add pulse animation style
+if (typeof document !== "undefined") {
+     const style = document.createElement("style");
+     style.textContent = `
+          @keyframes pulse {
+               0%, 100% { opacity: 1; }
+               50% { opacity: 0.5; }
+          }
+     `;
+     if (!document.head.querySelector('style[data-pulse-animation]')) {
+          style.setAttribute('data-pulse-animation', 'true');
+          document.head.appendChild(style);
+     }
+}
 import { Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, ComposedChart, Area } from "recharts";
 import { useExchange } from "@/contexts/ExchangeContext";
 
@@ -58,6 +73,10 @@ export default function MarketPage() {
      const [refreshInterval, setRefreshInterval] = useState(5); // seconds
      const [useWebSocket, setUseWebSocket] = useState(false);
      const [wsConnection, setWsConnection] = useState<WebSocket | null>(null);
+     const [wsConnectionStatus, setWsConnectionStatus] = useState<"disconnected" | "connecting" | "connected" | "error">("disconnected");
+     const [wsLastUpdate, setWsLastUpdate] = useState<Date | null>(null);
+     const [wsReconnectAttempts, setWsReconnectAttempts] = useState(0);
+     const [wsError, setWsError] = useState<string | null>(null);
 
      // Prediction state
      const [predictions, setPredictions] = useState<Record<string, PredictionData | null>>({});
@@ -338,12 +357,16 @@ export default function MarketPage() {
                     }
                     setWsConnection(null);
                }
+               setWsConnectionStatus("disconnected");
+               setWsReconnectAttempts(0);
+               setWsError(null);
                return;
           }
 
           const token = localStorage.getItem("auth_token");
           if (!token) {
-               setError("Please login to use WebSocket");
+               setWsError("Please login to use WebSocket");
+               setWsConnectionStatus("error");
                return;
           }
 
@@ -359,15 +382,26 @@ export default function MarketPage() {
           let ws: WebSocket | null = null;
           let reconnectTimeout: NodeJS.Timeout | null = null;
           let isManualClose = false;
+          let reconnectAttempts = 0;
+          const maxReconnectAttempts = 10;
+          const baseReconnectDelay = 3000; // 3 seconds
+          const maxReconnectDelay = 30000; // 30 seconds
 
           const connect = () => {
+               if (isManualClose) return;
+
                try {
+                    setWsConnectionStatus("connecting");
+                    setWsError(null);
                     ws = new WebSocket(wsEndpoint);
 
                     ws.onopen = () => {
                          console.log("WebSocket connected for", selectedSymbol);
-                         setError(null);
+                         setWsConnectionStatus("connected");
                          setWsConnection(ws);
+                         setWsReconnectAttempts(0);
+                         reconnectAttempts = 0;
+                         setWsError(null);
                          isManualClose = false;
                     };
 
@@ -378,43 +412,79 @@ export default function MarketPage() {
 
                               if (data.type === "price_update" && data.data) {
                                    setPriceData(data.data);
-                                   setError(null);
+                                   setWsLastUpdate(new Date());
+                                   setWsError(null);
+                                   setWsConnectionStatus("connected");
                               } else if (data.type === "error") {
                                    const errorMsg = data.message || "WebSocket error";
                                    console.error("WebSocket error message:", errorMsg);
-                                   setError(`WebSocket error: ${errorMsg}`);
+                                   setWsError(`WebSocket error: ${errorMsg}`);
+                                   setWsConnectionStatus("error");
                                    // Don't close on error, let worker retry
                               } else if (data.type === "connected") {
                                    console.log("WebSocket connected:", data.message);
-                                   setError(null);
+                                   setWsConnectionStatus("connected");
+                                   setWsError(null);
                               }
                          } catch (error) {
                               console.error("Error parsing WebSocket message:", error);
+                              setWsError(`Error parsing message: ${error instanceof Error ? error.message : "Unknown error"}`);
                          }
                     };
 
                     ws.onerror = (error) => {
                          console.error("WebSocket error event:", error);
+                         setWsConnectionStatus("error");
+                         setWsError("WebSocket connection error");
                          // Error details are usually in onclose
                     };
 
                     ws.onclose = (event) => {
                          console.log("WebSocket disconnected:", event.code, event.reason);
                          setWsConnection(null);
+                         setWsConnectionStatus("disconnected");
 
                          // Auto-reconnect if not manual close and not a policy violation
-                         if (!isManualClose && event.code !== 1008) {
-                              console.log("Attempting to reconnect WebSocket in 3 seconds...");
+                         if (!isManualClose && event.code !== 1008 && reconnectAttempts < maxReconnectAttempts) {
+                              reconnectAttempts++;
+                              setWsReconnectAttempts(reconnectAttempts);
+                              
+                              // Exponential backoff with max delay
+                              const delay = Math.min(baseReconnectDelay * Math.pow(2, reconnectAttempts - 1), maxReconnectDelay);
+                              
+                              console.log(`Attempting to reconnect WebSocket (attempt ${reconnectAttempts}/${maxReconnectAttempts}) in ${delay / 1000} seconds...`);
+                              setWsConnectionStatus("connecting");
+                              setWsError(`Reconnecting... (attempt ${reconnectAttempts}/${maxReconnectAttempts})`);
+                              
                               reconnectTimeout = setTimeout(() => {
                                    if (!isManualClose) {
                                         connect();
                                    }
-                              }, 3000);
+                              }, delay);
+                         } else if (reconnectAttempts >= maxReconnectAttempts) {
+                              setWsError(`Max reconnection attempts (${maxReconnectAttempts}) reached. Please refresh the page.`);
+                              setWsConnectionStatus("error");
+                         } else if (event.code === 1008) {
+                              setWsError("Connection closed due to policy violation. Please check your authentication.");
+                              setWsConnectionStatus("error");
                          }
                     };
                } catch (error) {
                     console.error("Error creating WebSocket:", error);
-                    setError(`Failed to create WebSocket connection: ${error instanceof Error ? error.message : "Unknown error"}`);
+                    setWsError(`Failed to create WebSocket connection: ${error instanceof Error ? error.message : "Unknown error"}`);
+                    setWsConnectionStatus("error");
+                    
+                    // Retry connection after delay
+                    if (!isManualClose && reconnectAttempts < maxReconnectAttempts) {
+                         reconnectAttempts++;
+                         setWsReconnectAttempts(reconnectAttempts);
+                         const delay = Math.min(baseReconnectDelay * Math.pow(2, reconnectAttempts - 1), maxReconnectDelay);
+                         reconnectTimeout = setTimeout(() => {
+                              if (!isManualClose) {
+                                   connect();
+                              }
+                         }, delay);
+                    }
                }
           };
 
@@ -431,6 +501,7 @@ export default function MarketPage() {
                     }
                }
                setWsConnection(null);
+               setWsConnectionStatus("disconnected");
           };
      }, [useWebSocket, autoRefresh, selectedAccountId, selectedSymbol, refreshInterval]);
 
@@ -645,6 +716,113 @@ export default function MarketPage() {
                               )}
                          </div>
                     </div>
+
+                    {/* WebSocket Connection Status */}
+                    {useWebSocket && autoRefresh && selectedSymbol && (
+                         <div>
+                              <label style={{ display: "block", marginBottom: "8px", fontWeight: "600", color: "#FFAE00", fontSize: "14px" }}>
+                                   WebSocket Status
+                              </label>
+                              <div
+                                   style={{
+                                        padding: "12px",
+                                        backgroundColor: "#1a1a1a",
+                                        borderRadius: "8px",
+                                        border: "1px solid rgba(255, 174, 0, 0.3)",
+                                   }}
+                              >
+                                   <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                                        <div
+                                             style={{
+                                                  width: "10px",
+                                                  height: "10px",
+                                                  borderRadius: "50%",
+                                                  backgroundColor:
+                                                       wsConnectionStatus === "connected"
+                                                            ? "#00ff00"
+                                                            : wsConnectionStatus === "connecting"
+                                                            ? "#FFAE00"
+                                                            : wsConnectionStatus === "error"
+                                                            ? "#ff4444"
+                                                            : "#888",
+                                                  animation: wsConnectionStatus === "connecting" ? "pulse 2s infinite" : "none",
+                                             }}
+                                        />
+                                        <span
+                                             style={{
+                                                  fontSize: "13px",
+                                                  fontWeight: "600",
+                                                  color:
+                                                       wsConnectionStatus === "connected"
+                                                            ? "#00ff00"
+                                                            : wsConnectionStatus === "connecting"
+                                                            ? "#FFAE00"
+                                                            : wsConnectionStatus === "error"
+                                                            ? "#ff4444"
+                                                            : "#888",
+                                                  textTransform: "capitalize",
+                                             }}
+                                        >
+                                             {wsConnectionStatus === "connected"
+                                                  ? "Connected"
+                                                  : wsConnectionStatus === "connecting"
+                                                  ? "Connecting..."
+                                                  : wsConnectionStatus === "error"
+                                                  ? "Error"
+                                                  : "Disconnected"}
+                                        </span>
+                                        {wsReconnectAttempts > 0 && wsConnectionStatus !== "connected" && (
+                                             <span style={{ fontSize: "11px", color: "#888", marginLeft: "auto" }}>
+                                                  (Attempt {wsReconnectAttempts}/10)
+                                             </span>
+                                        )}
+                                   </div>
+                                   {wsLastUpdate && wsConnectionStatus === "connected" && (
+                                        <div style={{ fontSize: "11px", color: "#888", marginTop: "4px" }}>
+                                             Last update: {wsLastUpdate.toLocaleTimeString()}
+                                        </div>
+                                   )}
+                                   {wsError && (
+                                        <div
+                                             style={{
+                                                  fontSize: "11px",
+                                                  color: "#ff4444",
+                                                  marginTop: "8px",
+                                                  padding: "6px",
+                                                  backgroundColor: "rgba(255, 68, 68, 0.1)",
+                                                  borderRadius: "4px",
+                                             }}
+                                        >
+                                             {wsError}
+                                        </div>
+                                   )}
+                                   {wsConnectionStatus === "error" && (
+                                        <button
+                                             onClick={() => {
+                                                  setWsReconnectAttempts(0);
+                                                  setWsError(null);
+                                                  // Force reconnection by toggling WebSocket
+                                                  setUseWebSocket(false);
+                                                  setTimeout(() => setUseWebSocket(true), 100);
+                                             }}
+                                             style={{
+                                                  marginTop: "8px",
+                                                  padding: "6px 12px",
+                                                  backgroundColor: "#FFAE00",
+                                                  color: "#000",
+                                                  border: "none",
+                                                  borderRadius: "4px",
+                                                  fontSize: "12px",
+                                                  fontWeight: "600",
+                                                  cursor: "pointer",
+                                             }}
+                                        >
+                                             🔄 Reconnect
+                                        </button>
+                                   )}
+                              </div>
+                         </div>
+                    )}
                </div>
 
                {/* Prediction Panel */}

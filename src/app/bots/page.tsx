@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useExchange } from "@/contexts/ExchangeContext";
 import Alert from "@/components/Alert";
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 
 interface ExchangeAccount {
      id: number;
@@ -122,12 +123,24 @@ export default function BotsPage() {
      const [refreshInterval, setRefreshInterval] = useState(10); // seconds
      const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(null);
      const [isRefreshing, setIsRefreshing] = useState(false);
+     const [useWebSocket, setUseWebSocket] = useState(true);
+
+     // WebSocket connections for bot status updates
+     const [botWsConnections, setBotWsConnections] = useState<Record<number, WebSocket>>({});
+     const [botWsStatus, setBotWsStatus] = useState<Record<number, "disconnected" | "connecting" | "connected" | "error">>({});
 
      // Filter and search
      const [searchQuery, setSearchQuery] = useState("");
      const [statusFilter, setStatusFilter] = useState<string>("all");
      const [strategyFilter, setStrategyFilter] = useState<string>("all");
      const [paperTradingFilter, setPaperTradingFilter] = useState<string>("all");
+
+     // Bot Trades filters and pagination
+     const [tradeStatusFilter, setTradeStatusFilter] = useState<string>("all");
+     const [tradeSymbolFilter, setTradeSymbolFilter] = useState<string>("");
+     const [tradesPage, setTradesPage] = useState(1);
+     const [tradesPerPage, setTradesPerPage] = useState(20);
+     const [allBotTrades, setAllBotTrades] = useState<BotTrade[]>([]);
 
      // Initialize loading state (accounts are now from ExchangeContext)
      useEffect(() => {
@@ -310,7 +323,7 @@ export default function BotsPage() {
      }, []);
 
      // Fetch bot trades
-     const fetchBotTrades = useCallback(async (botId: number) => {
+     const fetchBotTrades = useCallback(async (botId: number, status?: string) => {
           setTradesLoading(true);
           try {
                const token = localStorage.getItem("auth_token") || "";
@@ -318,16 +331,19 @@ export default function BotsPage() {
 
                const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-               const response = await fetch(`${apiUrl}/bots/${botId}/trades?limit=50`, {
+               // Fetch more trades for pagination (fetch 1000 to have enough data)
+               const statusParam = status && status !== "all" ? `&status=${status}` : "";
+               const response = await fetch(`${apiUrl}/bots/${botId}/trades?limit=1000${statusParam}`, {
                     headers: { Authorization: `Bearer ${token}` },
                });
 
                if (response.ok) {
                     const data = await response.json();
-                    setBotTrades(Array.isArray(data) ? data : []);
+                    setAllBotTrades(Array.isArray(data) ? data : []);
                }
           } catch (error) {
                console.error("Error fetching bot trades:", error);
+               setError("Failed to fetch bot trades");
           } finally {
                setTradesLoading(false);
           }
@@ -337,6 +353,182 @@ export default function BotsPage() {
      useEffect(() => {
           fetchBots();
      }, [fetchBots]);
+
+     // WebSocket connections for active bots
+     useEffect(() => {
+          if (!useWebSocket || !autoRefresh) {
+               // Close all WebSocket connections
+               Object.values(botWsConnections).forEach((ws) => {
+                    if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+                         ws.close();
+                    }
+               });
+               setBotWsConnections({});
+               setBotWsStatus({});
+               return;
+          }
+
+          const token = localStorage.getItem("auth_token");
+          if (!token) return;
+
+          const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+          const wsUrl = apiUrl.replace("http://", "ws://").replace("https://", "wss://");
+
+          // Get running bot IDs
+          const runningBotIds = bots.filter((bot) => bot.status === "running").map((bot) => bot.id);
+          
+          // Close connections for bots that are no longer running
+          Object.keys(botWsConnections).forEach((botIdStr) => {
+               const botId = parseInt(botIdStr);
+               if (!runningBotIds.includes(botId)) {
+                    const ws = botWsConnections[botId];
+                    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+                         ws.close();
+                    }
+                    setBotWsConnections((prev) => {
+                         const newConn = { ...prev };
+                         delete newConn[botId];
+                         return newConn;
+                    });
+                    setBotWsStatus((prev) => {
+                         const newStatus = { ...prev };
+                         delete newStatus[botId];
+                         return newStatus;
+                    });
+               }
+          });
+
+          // Connect WebSocket for each running bot that doesn't have a connection
+          runningBotIds.forEach((botId) => {
+               // Skip if already connected or connecting
+               if (botWsConnections[botId] && (botWsConnections[botId].readyState === WebSocket.OPEN || botWsConnections[botId].readyState === WebSocket.CONNECTING)) {
+                    return;
+               }
+
+               // Close existing connection if any (in error state)
+               if (botWsConnections[botId]) {
+                    const existingWs = botWsConnections[botId];
+                    if (existingWs.readyState === WebSocket.CLOSING || existingWs.readyState === WebSocket.CLOSED) {
+                         // Connection is already closed, remove it
+                         setBotWsConnections((prev) => {
+                              const newConn = { ...prev };
+                              delete newConn[botId];
+                              return newConn;
+                         });
+                    } else {
+                         existingWs.close();
+                    }
+               }
+
+               // Create new connection
+               const wsEndpoint = `${wsUrl}/ws/bot/${botId}?token=${token}&interval=${refreshInterval}`;
+               setBotWsStatus((prev) => ({ ...prev, [botId]: "connecting" }));
+
+               try {
+                    const ws = new WebSocket(wsEndpoint);
+
+                    ws.onopen = () => {
+                         console.log(`WebSocket connected for bot ${botId}`);
+                         setBotWsStatus((prev) => ({ ...prev, [botId]: "connected" }));
+                         setBotWsConnections((prev) => ({ ...prev, [botId]: ws }));
+                    };
+
+                    ws.onmessage = (event) => {
+                         try {
+                              const data = JSON.parse(event.data);
+                              console.log(`WebSocket message received for bot ${botId}:`, data);
+
+                              if (data.type === "bot_status_update" && data.data) {
+                                   // Update bot status in the list
+                                   setBots((prevBots) =>
+                                        prevBots.map((b) =>
+                                             b.id === botId
+                                                  ? {
+                                                       ...b,
+                                                       status: data.data.status,
+                                                       current_capital: data.data.current_capital.toString(),
+                                                       total_trades: data.data.total_trades,
+                                                       winning_trades: data.data.winning_trades,
+                                                       losing_trades: data.data.losing_trades,
+                                                       total_pnl: data.data.total_pnl.toString(),
+                                                       last_error: data.data.last_error,
+                                                    }
+                                                  : b
+                                        )
+                                   );
+
+                                   // Update selected bot status if it's the same bot
+                                   if (selectedBot && selectedBot.id === botId) {
+                                        setBotStatus({
+                                             id: data.data.id,
+                                             name: data.data.name,
+                                             status: data.data.status,
+                                             strategy_type: data.data.strategy_type,
+                                             capital: data.data.capital,
+                                             current_capital: data.data.current_capital,
+                                             total_trades: data.data.total_trades,
+                                             winning_trades: data.data.winning_trades,
+                                             losing_trades: data.data.losing_trades,
+                                             win_rate: data.data.win_rate,
+                                             total_pnl: data.data.total_pnl,
+                                             open_positions: data.data.open_positions,
+                                             started_at: data.data.started_at,
+                                             stopped_at: data.data.stopped_at,
+                                             last_error: data.data.last_error,
+                                        });
+                                   }
+                              } else if (data.type === "error") {
+                                   console.error(`WebSocket error for bot ${botId}:`, data.message);
+                                   setBotWsStatus((prev) => ({ ...prev, [botId]: "error" }));
+                              } else if (data.type === "connected") {
+                                   console.log(`WebSocket connected for bot ${botId}:`, data.message);
+                                   setBotWsStatus((prev) => ({ ...prev, [botId]: "connected" }));
+                              }
+                         } catch (error) {
+                              console.error(`Error parsing WebSocket message for bot ${botId}:`, error);
+                         }
+                    };
+
+                    ws.onerror = (error) => {
+                         console.error(`WebSocket error for bot ${botId}:`, error);
+                         setBotWsStatus((prev) => ({ ...prev, [botId]: "error" }));
+                    };
+
+                    ws.onclose = (event) => {
+                         console.log(`WebSocket disconnected for bot ${botId}:`, event.code, event.reason);
+                         setBotWsStatus((prev) => ({ ...prev, [botId]: "disconnected" }));
+                         setBotWsConnections((prev) => {
+                              const newConn = { ...prev };
+                              delete newConn[botId];
+                              return newConn;
+                         });
+
+                         // Auto-reconnect if not manual close and bot is still running
+                         if (event.code !== 1008 && useWebSocket && autoRefresh && runningBotIds.includes(botId)) {
+                              setTimeout(() => {
+                                   if (useWebSocket && autoRefresh && bots.some((b) => b.id === botId && b.status === "running")) {
+                                        setBotWsStatus((prev) => ({ ...prev, [botId]: "connecting" }));
+                                   }
+                              }, 3000);
+                         }
+                    };
+
+                    setBotWsConnections((prev) => ({ ...prev, [botId]: ws }));
+               } catch (error) {
+                    console.error(`Error creating WebSocket for bot ${botId}:`, error);
+                    setBotWsStatus((prev) => ({ ...prev, [botId]: "error" }));
+               }
+          });
+
+          return () => {
+               // Close all connections on cleanup
+               Object.values(botWsConnections).forEach((ws) => {
+                    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+                         ws.close();
+                    }
+               });
+          };
+     }, [bots.map((b) => `${b.id}:${b.status}`).join(","), useWebSocket, autoRefresh, refreshInterval, selectedBot?.id]);
 
      // Manual refresh handler
      const handleManualRefresh = async () => {
@@ -355,28 +547,57 @@ export default function BotsPage() {
           }
      };
 
-     // Auto-refresh
+     // Filter and paginate bot trades
      useEffect(() => {
-          if (!autoRefresh) return;
+          let filtered = [...allBotTrades];
+
+          // Filter by status
+          if (tradeStatusFilter !== "all") {
+               filtered = filtered.filter((trade) => trade.status.toLowerCase() === tradeStatusFilter.toLowerCase());
+          }
+
+          // Filter by symbol
+          if (tradeSymbolFilter) {
+               filtered = filtered.filter((trade) => trade.symbol.toLowerCase().includes(tradeSymbolFilter.toLowerCase()));
+          }
+
+          // Pagination
+          const startIndex = (tradesPage - 1) * tradesPerPage;
+          const endIndex = startIndex + tradesPerPage;
+          setBotTrades(filtered.slice(startIndex, endIndex));
+     }, [allBotTrades, tradeStatusFilter, tradeSymbolFilter, tradesPage, tradesPerPage]);
+
+     // Reset pagination when filters change
+     useEffect(() => {
+          setTradesPage(1);
+     }, [tradeStatusFilter, tradeSymbolFilter]);
+
+     // Auto-refresh (fallback when WebSocket is disabled)
+     useEffect(() => {
+          if (!autoRefresh || useWebSocket) return; // Skip if WebSocket is enabled
 
           const interval = setInterval(() => {
                fetchBots();
                if (selectedBot) {
                     fetchBotStatus(selectedBot.id);
-                    fetchBotTrades(selectedBot.id);
+                    fetchBotTrades(selectedBot.id, tradeStatusFilter);
                }
           }, refreshInterval * 1000);
 
           return () => clearInterval(interval);
-     }, [autoRefresh, refreshInterval, selectedBot, fetchBots, fetchBotStatus, fetchBotTrades]);
+     }, [autoRefresh, useWebSocket, refreshInterval, selectedBot, fetchBots, fetchBotStatus, fetchBotTrades]);
 
      // Update selected bot data
      useEffect(() => {
           if (selectedBot) {
                fetchBotStatus(selectedBot.id);
-               fetchBotTrades(selectedBot.id);
+               fetchBotTrades(selectedBot.id, tradeStatusFilter);
+               // Reset filters and pagination
+               setTradeStatusFilter("all");
+               setTradeSymbolFilter("");
+               setTradesPage(1);
           }
-     }, [selectedBot, fetchBotStatus, fetchBotTrades]);
+     }, [selectedBot, fetchBotStatus, fetchBotTrades, tradeStatusFilter]);
 
      // Create bot
      const handleCreateBot = async () => {
@@ -858,25 +1079,75 @@ export default function BotsPage() {
                               Auto Refresh
                          </label>
                          {autoRefresh && (
-                              <select
-                                   value={refreshInterval}
-                                   onChange={(e) => setRefreshInterval(Number(e.target.value))}
-                                   style={{
-                                        padding: "8px 12px",
-                                        borderRadius: "8px",
-                                        border: "1px solid rgba(255, 174, 0, 0.3)",
-                                        backgroundColor: "#1a1a1a",
-                                        color: "#ffffff",
-                                        fontSize: "14px",
-                                        cursor: "pointer",
-                                        outline: "none",
-                                   }}
-                              >
-                                   <option value={5}>Every 5 seconds</option>
-                                   <option value={10}>Every 10 seconds</option>
-                                   <option value={30}>Every 30 seconds</option>
-                                   <option value={60}>Every 1 minute</option>
-                              </select>
+                              <>
+                                   <label
+                                        style={{
+                                             display: "flex",
+                                             alignItems: "center",
+                                             gap: "10px",
+                                             color: "#ffffff",
+                                             fontSize: "15px",
+                                             fontWeight: "500",
+                                             cursor: "pointer",
+                                        }}
+                                   >
+                                        <input
+                                             type="checkbox"
+                                             checked={useWebSocket}
+                                             onChange={(e) => setUseWebSocket(e.target.checked)}
+                                             style={{
+                                                  width: "18px",
+                                                  height: "18px",
+                                                  cursor: "pointer",
+                                                  accentColor: "#FFAE00",
+                                             }}
+                                        />
+                                        Use WebSocket (Real-time)
+                                   </label>
+                                   {!useWebSocket && (
+                                        <select
+                                             value={refreshInterval}
+                                             onChange={(e) => setRefreshInterval(Number(e.target.value))}
+                                             style={{
+                                                  padding: "8px 12px",
+                                                  borderRadius: "8px",
+                                                  border: "1px solid rgba(255, 174, 0, 0.3)",
+                                                  backgroundColor: "#1a1a1a",
+                                                  color: "#ffffff",
+                                                  fontSize: "14px",
+                                                  cursor: "pointer",
+                                                  outline: "none",
+                                             }}
+                                        >
+                                             <option value={5}>Every 5 seconds</option>
+                                             <option value={10}>Every 10 seconds</option>
+                                             <option value={30}>Every 30 seconds</option>
+                                             <option value={60}>Every 1 minute</option>
+                                        </select>
+                                   )}
+                                   {useWebSocket && (
+                                        <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", color: "#888" }}>
+                                             <div
+                                                  style={{
+                                                       width: "8px",
+                                                       height: "8px",
+                                                       borderRadius: "50%",
+                                                       backgroundColor:
+                                                            Object.values(botWsStatus).some((s) => s === "connected")
+                                                                 ? "#00ff00"
+                                                                 : Object.values(botWsStatus).some((s) => s === "connecting")
+                                                                 ? "#FFAE00"
+                                                                 : Object.values(botWsStatus).some((s) => s === "error")
+                                                                 ? "#ff4444"
+                                                                 : "#888",
+                                                  }}
+                                             />
+                                             <span>
+                                                  {Object.values(botWsStatus).filter((s) => s === "connected").length} / {Object.keys(botWsStatus).length} bots connected
+                                             </span>
+                                        </div>
+                                   )}
+                              </>
                          )}
                          
                          {/* Manual Refresh Button */}
@@ -1707,6 +1978,103 @@ export default function BotsPage() {
                     </div>
                )}
 
+               {/* Dashboard - Overall Stats */}
+               <div style={{ marginBottom: "32px" }}>
+                    <h2 style={{ fontSize: "24px", fontWeight: "700", color: "#ffffff", marginBottom: "20px" }}>Bots Dashboard</h2>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "20px", marginBottom: "24px" }}>
+                         {(() => {
+                              const totalBots = bots.length;
+                              const activeBots = bots.filter((b) => b.status.toLowerCase() === "active").length;
+                              const totalTrades = bots.reduce((sum, b) => sum + b.total_trades, 0);
+                              const totalWinningTrades = bots.reduce((sum, b) => sum + b.winning_trades, 0);
+                              const totalLosingTrades = bots.reduce((sum, b) => sum + b.losing_trades, 0);
+                              const overallWinRate = totalTrades > 0 ? (totalWinningTrades / totalTrades) * 100 : 0;
+                              const totalPnl = bots.reduce((sum, b) => sum + parseFloat(b.total_pnl || "0"), 0);
+                              const totalCapital = bots.reduce((sum, b) => sum + parseFloat(b.current_capital || b.capital || "0"), 0);
+                              
+                              return (
+                                   <>
+                                        <div style={{
+                                             padding: "20px",
+                                             backgroundColor: "#2a2a2a",
+                                             border: "1px solid rgba(255, 174, 0, 0.2)",
+                                             borderRadius: "16px",
+                                             boxShadow: "0 4px 12px rgba(0, 0, 0, 0.3)",
+                                        }}>
+                                             <div style={{ fontSize: "12px", color: "#888", marginBottom: "8px", fontWeight: "500" }}>Total Bots</div>
+                                             <div style={{ fontSize: "32px", fontWeight: "700", color: "#ffffff" }}>{totalBots}</div>
+                                             <div style={{ fontSize: "11px", color: "#888", marginTop: "4px" }}>
+                                                  {activeBots} active
+                                             </div>
+                                        </div>
+                                        
+                                        <div style={{
+                                             padding: "20px",
+                                             backgroundColor: "#2a2a2a",
+                                             border: "1px solid rgba(255, 174, 0, 0.2)",
+                                             borderRadius: "16px",
+                                             boxShadow: "0 4px 12px rgba(0, 0, 0, 0.3)",
+                                        }}>
+                                             <div style={{ fontSize: "12px", color: "#888", marginBottom: "8px", fontWeight: "500" }}>Total Trades</div>
+                                             <div style={{ fontSize: "32px", fontWeight: "700", color: "#ffffff" }}>{totalTrades.toLocaleString()}</div>
+                                             <div style={{ fontSize: "11px", color: "#888", marginTop: "4px" }}>
+                                                  {totalWinningTrades} wins / {totalLosingTrades} losses
+                                             </div>
+                                        </div>
+                                        
+                                        <div style={{
+                                             padding: "20px",
+                                             backgroundColor: "#2a2a2a",
+                                             border: "1px solid rgba(255, 174, 0, 0.2)",
+                                             borderRadius: "16px",
+                                             boxShadow: "0 4px 12px rgba(0, 0, 0, 0.3)",
+                                        }}>
+                                             <div style={{ fontSize: "12px", color: "#888", marginBottom: "8px", fontWeight: "500" }}>Overall Win Rate</div>
+                                             <div style={{ fontSize: "32px", fontWeight: "700", color: overallWinRate >= 50 ? "#22c55e" : "#ef4444" }}>
+                                                  {overallWinRate.toFixed(1)}%
+                                             </div>
+                                             <div style={{ fontSize: "11px", color: "#888", marginTop: "4px" }}>
+                                                  {totalWinningTrades} / {totalTrades} trades
+                                             </div>
+                                        </div>
+                                        
+                                        <div style={{
+                                             padding: "20px",
+                                             backgroundColor: "#2a2a2a",
+                                             border: "1px solid rgba(255, 174, 0, 0.2)",
+                                             borderRadius: "16px",
+                                             boxShadow: "0 4px 12px rgba(0, 0, 0, 0.3)",
+                                        }}>
+                                             <div style={{ fontSize: "12px", color: "#888", marginBottom: "8px", fontWeight: "500" }}>Total P&L</div>
+                                             <div style={{ fontSize: "32px", fontWeight: "700", color: totalPnl >= 0 ? "#22c55e" : "#ef4444" }}>
+                                                  ${totalPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                             </div>
+                                             <div style={{ fontSize: "11px", color: "#888", marginTop: "4px" }}>
+                                                  Across all bots
+                                             </div>
+                                        </div>
+                                        
+                                        <div style={{
+                                             padding: "20px",
+                                             backgroundColor: "#2a2a2a",
+                                             border: "1px solid rgba(255, 174, 0, 0.2)",
+                                             borderRadius: "16px",
+                                             boxShadow: "0 4px 12px rgba(0, 0, 0, 0.3)",
+                                        }}>
+                                             <div style={{ fontSize: "12px", color: "#888", marginBottom: "8px", fontWeight: "500" }}>Total Capital</div>
+                                             <div style={{ fontSize: "32px", fontWeight: "700", color: "#ffffff" }}>
+                                                  ${totalCapital.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                             </div>
+                                             <div style={{ fontSize: "11px", color: "#888", marginTop: "4px" }}>
+                                                  Combined capital
+                                             </div>
+                                        </div>
+                                   </>
+                              );
+                         })()}
+                    </div>
+               </div>
+
                {/* Bots List */}
                <div style={{ marginBottom: "32px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", flexWrap: "wrap", gap: "16px" }}>
@@ -1883,7 +2251,40 @@ export default function BotsPage() {
                                              }}
                                         >
                                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-                                                  <h3 style={{ margin: 0, fontSize: "18px", fontWeight: "600", color: "#ffffff" }}>{bot.name}</h3>
+                                                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                                       <h3 style={{ margin: 0, fontSize: "18px", fontWeight: "600", color: "#ffffff" }}>{bot.name}</h3>
+                                                       {useWebSocket && bot.status === "running" && botWsStatus[bot.id] && (
+                                                            <div
+                                                                 style={{
+                                                                      width: "8px",
+                                                                      height: "8px",
+                                                                      borderRadius: "50%",
+                                                                      backgroundColor:
+                                                                           botWsStatus[bot.id] === "connected"
+                                                                                ? "#00ff00"
+                                                                                : botWsStatus[bot.id] === "connecting"
+                                                                                ? "#FFAE00"
+                                                                                : botWsStatus[bot.id] === "error"
+                                                                                ? "#ff4444"
+                                                                                : "#888",
+                                                                      animation: botWsStatus[bot.id] === "connecting" ? "pulse 2s infinite" : "none",
+                                                                      boxShadow:
+                                                                           botWsStatus[bot.id] === "connected"
+                                                                                ? "0 0 8px rgba(0, 255, 0, 0.5)"
+                                                                                : "none",
+                                                                 }}
+                                                                 title={
+                                                                      botWsStatus[bot.id] === "connected"
+                                                                           ? "Real-time updates active"
+                                                                           : botWsStatus[bot.id] === "connecting"
+                                                                           ? "Connecting..."
+                                                                           : botWsStatus[bot.id] === "error"
+                                                                           ? "Connection error"
+                                                                           : "Disconnected"
+                                                                 }
+                                                            />
+                                                       )}
+                                                  </div>
                                                   <span
                                                        style={{
                                                             padding: "6px 12px",
@@ -2180,6 +2581,239 @@ export default function BotsPage() {
                               </div>
                          ) : null}
 
+                         {/* Performance Charts */}
+                         {botStatus && allBotTrades.length > 0 && (
+                              <div
+                                   style={{
+                                        padding: "24px",
+                                        backgroundColor: "#2a2a2a",
+                                        border: "1px solid rgba(255, 174, 0, 0.2)",
+                                        borderRadius: "16px",
+                                        marginBottom: "24px",
+                                        boxShadow: "0 4px 12px rgba(0, 0, 0, 0.3)",
+                                   }}
+                              >
+                                   <h3 style={{ fontSize: "18px", fontWeight: "600", color: "#FFAE00", marginBottom: "20px", marginTop: 0 }}>Performance Charts</h3>
+                                   
+                                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: "24px" }}>
+                                        {/* P&L Over Time Chart */}
+                                        <div>
+                                             <h4 style={{ fontSize: "14px", fontWeight: "600", color: "#ffffff", marginBottom: "12px" }}>P&L Over Time</h4>
+                                             <ResponsiveContainer width="100%" height={250}>
+                                                  <LineChart
+                                                       data={(() => {
+                                                            // Group trades by date and calculate cumulative P&L
+                                                            const tradesByDate: Record<string, number> = {};
+                                                            let cumulativePnl = 0;
+                                                            
+                                                            [...allBotTrades]
+                                                                 .filter((t) => t.exit_time && t.status === "closed")
+                                                                 .sort((a, b) => new Date(a.exit_time!).getTime() - new Date(b.exit_time!).getTime())
+                                                                 .forEach((trade) => {
+                                                                      cumulativePnl += parseFloat(trade.pnl);
+                                                                      const date = new Date(trade.exit_time!).toLocaleDateString();
+                                                                      tradesByDate[date] = cumulativePnl;
+                                                                 });
+                                                            
+                                                            return Object.entries(tradesByDate).map(([date, pnl]) => ({
+                                                                 date,
+                                                                 pnl: Number(pnl.toFixed(2)),
+                                                            }));
+                                                       })()}
+                                                  >
+                                                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 174, 0, 0.1)" />
+                                                       <XAxis dataKey="date" stroke="#888" style={{ fontSize: "11px" }} />
+                                                       <YAxis stroke="#888" style={{ fontSize: "11px" }} />
+                                                       <Tooltip
+                                                            contentStyle={{
+                                                                 backgroundColor: "#1a1a1a",
+                                                                 border: "1px solid rgba(255, 174, 0, 0.3)",
+                                                                 borderRadius: "8px",
+                                                                 color: "#ffffff",
+                                                            }}
+                                                       />
+                                                       <Legend />
+                                                       <Line
+                                                            type="monotone"
+                                                            dataKey="pnl"
+                                                            stroke="#FFAE00"
+                                                            strokeWidth={2}
+                                                            dot={{ fill: "#FFAE00", r: 3 }}
+                                                            name="Cumulative P&L"
+                                                       />
+                                                  </LineChart>
+                                             </ResponsiveContainer>
+                                        </div>
+
+                                        {/* Win/Loss Distribution Chart */}
+                                        <div>
+                                             <h4 style={{ fontSize: "14px", fontWeight: "600", color: "#ffffff", marginBottom: "12px" }}>Win/Loss Distribution</h4>
+                                             <ResponsiveContainer width="100%" height={250}>
+                                                  <BarChart
+                                                       data={(() => {
+                                                            const closedTrades = allBotTrades.filter((t) => t.status === "closed");
+                                                            const wins = closedTrades.filter((t) => parseFloat(t.pnl) > 0).length;
+                                                            const losses = closedTrades.filter((t) => parseFloat(t.pnl) < 0).length;
+                                                            const breakeven = closedTrades.filter((t) => parseFloat(t.pnl) === 0).length;
+                                                            
+                                                            return [
+                                                                 { name: "Wins", value: wins, color: "#22c55e" },
+                                                                 { name: "Losses", value: losses, color: "#ef4444" },
+                                                                 { name: "Breakeven", value: breakeven, color: "#888" },
+                                                            ];
+                                                       })()}
+                                                  >
+                                                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 174, 0, 0.1)" />
+                                                       <XAxis dataKey="name" stroke="#888" style={{ fontSize: "11px" }} />
+                                                       <YAxis stroke="#888" style={{ fontSize: "11px" }} />
+                                                       <Tooltip
+                                                            contentStyle={{
+                                                                 backgroundColor: "#1a1a1a",
+                                                                 border: "1px solid rgba(255, 174, 0, 0.3)",
+                                                                 borderRadius: "8px",
+                                                                 color: "#ffffff",
+                                                            }}
+                                                       />
+                                                       <Bar dataKey="value" fill="#FFAE00" />
+                                                  </BarChart>
+                                             </ResponsiveContainer>
+                                        </div>
+
+                                        {/* Win Rate Over Time Chart */}
+                                        <div>
+                                             <h4 style={{ fontSize: "14px", fontWeight: "600", color: "#ffffff", marginBottom: "12px" }}>Win Rate Over Time</h4>
+                                             <ResponsiveContainer width="100%" height={250}>
+                                                  <LineChart
+                                                       data={(() => {
+                                                            // Calculate win rate for each day
+                                                            const tradesByDate: Record<string, { wins: number; total: number }> = {};
+                                                            
+                                                            [...allBotTrades]
+                                                                 .filter((t) => t.exit_time && t.status === "closed")
+                                                                 .sort((a, b) => new Date(a.exit_time!).getTime() - new Date(b.exit_time!).getTime())
+                                                                 .forEach((trade) => {
+                                                                      const date = new Date(trade.exit_time!).toLocaleDateString();
+                                                                      if (!tradesByDate[date]) {
+                                                                           tradesByDate[date] = { wins: 0, total: 0 };
+                                                                      }
+                                                                      tradesByDate[date].total++;
+                                                                      if (parseFloat(trade.pnl) > 0) {
+                                                                           tradesByDate[date].wins++;
+                                                                      }
+                                                                 });
+                                                            
+                                                            return Object.entries(tradesByDate).map(([date, stats]) => ({
+                                                                 date,
+                                                                 winRate: stats.total > 0 ? Number(((stats.wins / stats.total) * 100).toFixed(1)) : 0,
+                                                            }));
+                                                       })()}
+                                                  >
+                                                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 174, 0, 0.1)" />
+                                                       <XAxis dataKey="date" stroke="#888" style={{ fontSize: "11px" }} />
+                                                       <YAxis stroke="#888" style={{ fontSize: "11px" }} domain={[0, 100]} />
+                                                       <Tooltip
+                                                            contentStyle={{
+                                                                 backgroundColor: "#1a1a1a",
+                                                                 border: "1px solid rgba(255, 174, 0, 0.3)",
+                                                                 borderRadius: "8px",
+                                                                 color: "#ffffff",
+                                                            }}
+                                                            formatter={(value: number) => [`${value}%`, "Win Rate"]}
+                                                       />
+                                                       <Legend />
+                                                       <Line
+                                                            type="monotone"
+                                                            dataKey="winRate"
+                                                            stroke="#22c55e"
+                                                            strokeWidth={2}
+                                                            dot={{ fill: "#22c55e", r: 3 }}
+                                                            name="Win Rate %"
+                                                       />
+                                                  </LineChart>
+                                             </ResponsiveContainer>
+                                        </div>
+
+                                        {/* Trade Frequency Chart */}
+                                        <div>
+                                             <h4 style={{ fontSize: "14px", fontWeight: "600", color: "#ffffff", marginBottom: "12px" }}>Trade Frequency</h4>
+                                             <ResponsiveContainer width="100%" height={250}>
+                                                  <BarChart
+                                                       data={(() => {
+                                                            // Count trades per day
+                                                            const tradesByDate: Record<string, number> = {};
+                                                            
+                                                            allBotTrades.forEach((trade) => {
+                                                                 const date = new Date(trade.entry_time).toLocaleDateString();
+                                                                 tradesByDate[date] = (tradesByDate[date] || 0) + 1;
+                                                            });
+                                                            
+                                                            return Object.entries(tradesByDate)
+                                                                 .map(([date, count]) => ({ date, count }))
+                                                                 .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+                                                                 .slice(-14); // Last 14 days
+                                                       })()}
+                                                  >
+                                                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 174, 0, 0.1)" />
+                                                       <XAxis dataKey="date" stroke="#888" style={{ fontSize: "11px" }} />
+                                                       <YAxis stroke="#888" style={{ fontSize: "11px" }} />
+                                                       <Tooltip
+                                                            contentStyle={{
+                                                                 backgroundColor: "#1a1a1a",
+                                                                 border: "1px solid rgba(255, 174, 0, 0.3)",
+                                                                 borderRadius: "8px",
+                                                                 color: "#ffffff",
+                                                            }}
+                                                       />
+                                                       <Bar dataKey="count" fill="#6366f1" />
+                                                  </BarChart>
+                                             </ResponsiveContainer>
+                                        </div>
+
+                                        {/* P&L by Symbol Chart */}
+                                        {(() => {
+                                             const pnlBySymbol: Record<string, number> = {};
+                                             allBotTrades
+                                                  .filter((t) => t.status === "closed")
+                                                  .forEach((trade) => {
+                                                       if (!pnlBySymbol[trade.symbol]) {
+                                                            pnlBySymbol[trade.symbol] = 0;
+                                                       }
+                                                       pnlBySymbol[trade.symbol] += parseFloat(trade.pnl);
+                                                  });
+                                             
+                                             const chartData = Object.entries(pnlBySymbol)
+                                                  .map(([symbol, pnl]) => ({ symbol, pnl: Number(pnl.toFixed(2)) }))
+                                                  .sort((a, b) => b.pnl - a.pnl)
+                                                  .slice(0, 10); // Top 10 symbols
+                                             
+                                             if (chartData.length === 0) return null;
+                                             
+                                             return (
+                                                  <div style={{ gridColumn: "1 / -1" }}>
+                                                       <h4 style={{ fontSize: "14px", fontWeight: "600", color: "#ffffff", marginBottom: "12px" }}>P&L by Symbol (Top 10)</h4>
+                                                       <ResponsiveContainer width="100%" height={300}>
+                                                            <BarChart data={chartData} layout="vertical">
+                                                                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 174, 0, 0.1)" />
+                                                                 <XAxis type="number" stroke="#888" style={{ fontSize: "11px" }} />
+                                                                 <YAxis dataKey="symbol" type="category" stroke="#888" style={{ fontSize: "11px" }} width={80} />
+                                                                 <Tooltip
+                                                                      contentStyle={{
+                                                                           backgroundColor: "#1a1a1a",
+                                                                           border: "1px solid rgba(255, 174, 0, 0.3)",
+                                                                           borderRadius: "8px",
+                                                                           color: "#ffffff",
+                                                                      }}
+                                                                 />
+                                                                 <Bar dataKey="pnl" fill="#FFAE00" />
+                                                            </BarChart>
+                                                       </ResponsiveContainer>
+                                                  </div>
+                                             );
+                                        })()}
+                                   </div>
+                              </div>
+                         )}
+
                          {/* Bot Configuration */}
                          <div
                               style={{
@@ -2264,7 +2898,194 @@ export default function BotsPage() {
 
                          {/* Bot Trades */}
                          <div>
-                              <h3 style={{ fontSize: "18px", fontWeight: "600", color: "#FFAE00", marginBottom: "20px" }}>Trade History</h3>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", flexWrap: "wrap", gap: "16px" }}>
+                                   <h3 style={{ fontSize: "18px", fontWeight: "600", color: "#FFAE00", margin: 0 }}>Trade History</h3>
+                                   
+                                   {/* Export and Filters */}
+                                   <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center" }}>
+                                        {/* Export Buttons */}
+                                        {allBotTrades.length > 0 && (
+                                             <>
+                                                  <button
+                                                       onClick={() => {
+                                                            // Export to CSV
+                                                            const headers = ["ID", "Symbol", "Side", "Quantity", "Entry Price", "Exit Price", "P&L", "P&L %", "Status", "Entry Time", "Exit Time", "Entry Reason", "Exit Reason", "Prediction Confidence", "Prediction Horizon"];
+                                                            
+                                                            const rows = allBotTrades.map((trade) => [
+                                                                 trade.id,
+                                                                 trade.symbol,
+                                                                 trade.side,
+                                                                 trade.quantity,
+                                                                 trade.entry_price,
+                                                                 trade.exit_price || "N/A",
+                                                                 trade.pnl,
+                                                                 trade.pnl_percent || "N/A",
+                                                                 trade.status,
+                                                                 trade.entry_time,
+                                                                 trade.exit_time || "N/A",
+                                                                 trade.entry_reason || "N/A",
+                                                                 trade.exit_reason || "N/A",
+                                                                 trade.prediction_confidence || "N/A",
+                                                                 trade.prediction_horizon || "N/A",
+                                                            ]);
+                                                            
+                                                            const csvContent = [headers, ...rows].map((row) => 
+                                                                 row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")
+                                                            ).join("\n");
+                                                            
+                                                            const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+                                                            const url = URL.createObjectURL(blob);
+                                                            const a = document.createElement("a");
+                                                            a.href = url;
+                                                            a.download = `bot_${selectedBot?.id}_trades_${new Date().toISOString().split("T")[0]}.csv`;
+                                                            a.click();
+                                                            URL.revokeObjectURL(url);
+                                                            setSuccess("Trades exported to CSV successfully!");
+                                                       }}
+                                                       style={{
+                                                            padding: "8px 16px",
+                                                            backgroundColor: "#22c55e",
+                                                            border: "none",
+                                                            borderRadius: "8px",
+                                                            color: "white",
+                                                            fontSize: "13px",
+                                                            cursor: "pointer",
+                                                            fontWeight: "600",
+                                                            display: "flex",
+                                                            alignItems: "center",
+                                                            gap: "6px",
+                                                       }}
+                                                       onMouseEnter={(e) => {
+                                                            e.currentTarget.style.backgroundColor = "#16a34a";
+                                                       }}
+                                                       onMouseLeave={(e) => {
+                                                            e.currentTarget.style.backgroundColor = "#22c55e";
+                                                       }}
+                                                  >
+                                                       📥 Export CSV
+                                                  </button>
+                                                  
+                                                  <button
+                                                       onClick={() => {
+                                                            // Export to JSON
+                                                            const jsonData = JSON.stringify(allBotTrades, null, 2);
+                                                            const blob = new Blob([jsonData], { type: "application/json" });
+                                                            const url = URL.createObjectURL(blob);
+                                                            const a = document.createElement("a");
+                                                            a.href = url;
+                                                            a.download = `bot_${selectedBot?.id}_trades_${new Date().toISOString().split("T")[0]}.json`;
+                                                            a.click();
+                                                            URL.revokeObjectURL(url);
+                                                            setSuccess("Trades exported to JSON successfully!");
+                                                       }}
+                                                       style={{
+                                                            padding: "8px 16px",
+                                                            backgroundColor: "#6366f1",
+                                                            border: "none",
+                                                            borderRadius: "8px",
+                                                            color: "white",
+                                                            fontSize: "13px",
+                                                            cursor: "pointer",
+                                                            fontWeight: "600",
+                                                            display: "flex",
+                                                            alignItems: "center",
+                                                            gap: "6px",
+                                                       }}
+                                                       onMouseEnter={(e) => {
+                                                            e.currentTarget.style.backgroundColor = "#4f46e5";
+                                                       }}
+                                                       onMouseLeave={(e) => {
+                                                            e.currentTarget.style.backgroundColor = "#6366f1";
+                                                       }}
+                                                  >
+                                                       📥 Export JSON
+                                                  </button>
+                                             </>
+                                        )}
+                                        
+                                        {/* Filters */}
+                                        {/* Status Filter */}
+                                        <select
+                                             value={tradeStatusFilter}
+                                             onChange={(e) => setTradeStatusFilter(e.target.value)}
+                                             style={{
+                                                  padding: "8px 12px",
+                                                  backgroundColor: "#2a2a2a",
+                                                  border: "1px solid rgba(255, 174, 0, 0.3)",
+                                                  borderRadius: "8px",
+                                                  color: "#ffffff",
+                                                  fontSize: "13px",
+                                                  cursor: "pointer",
+                                                  outline: "none",
+                                             }}
+                                        >
+                                             <option value="all">All Status</option>
+                                             <option value="open">Open</option>
+                                             <option value="closed">Closed</option>
+                                        </select>
+
+                                        {/* Symbol Filter */}
+                                        <input
+                                             type="text"
+                                             placeholder="Filter by symbol..."
+                                             value={tradeSymbolFilter}
+                                             onChange={(e) => setTradeSymbolFilter(e.target.value)}
+                                             style={{
+                                                  padding: "8px 12px",
+                                                  backgroundColor: "#2a2a2a",
+                                                  border: "1px solid rgba(255, 174, 0, 0.3)",
+                                                  borderRadius: "8px",
+                                                  color: "#ffffff",
+                                                  fontSize: "13px",
+                                                  width: "150px",
+                                                  outline: "none",
+                                             }}
+                                        />
+
+                                        {/* Trades Per Page */}
+                                        <select
+                                             value={tradesPerPage}
+                                             onChange={(e) => {
+                                                  setTradesPerPage(Number(e.target.value));
+                                                  setTradesPage(1);
+                                             }}
+                                             style={{
+                                                  padding: "8px 12px",
+                                                  backgroundColor: "#2a2a2a",
+                                                  border: "1px solid rgba(255, 174, 0, 0.3)",
+                                                  borderRadius: "8px",
+                                                  color: "#ffffff",
+                                                  fontSize: "13px",
+                                                  cursor: "pointer",
+                                                  outline: "none",
+                                             }}
+                                        >
+                                             <option value={10}>10 per page</option>
+                                             <option value={20}>20 per page</option>
+                                             <option value={50}>50 per page</option>
+                                             <option value={100}>100 per page</option>
+                                        </select>
+                                   </div>
+                              </div>
+
+                              {/* Pagination Info */}
+                              {(() => {
+                                   const filteredTrades = allBotTrades.filter((trade) => {
+                                        if (tradeStatusFilter !== "all" && trade.status.toLowerCase() !== tradeStatusFilter.toLowerCase()) return false;
+                                        if (tradeSymbolFilter && !trade.symbol.toLowerCase().includes(tradeSymbolFilter.toLowerCase())) return false;
+                                        return true;
+                                   });
+                                   const totalPages = Math.ceil(filteredTrades.length / tradesPerPage);
+                                   const startIndex = (tradesPage - 1) * tradesPerPage;
+                                   const endIndex = Math.min(startIndex + tradesPerPage, filteredTrades.length);
+                                   
+                                   return (
+                                        <div style={{ marginBottom: "16px", color: "#888", fontSize: "13px" }}>
+                                             Showing {startIndex + 1}-{endIndex} of {filteredTrades.length} trades
+                                        </div>
+                                   );
+                              })()}
+
                               {tradesLoading ? (
                                    <div style={{ padding: "40px", textAlign: "center", color: "#888" }}>Loading trades...</div>
                               ) : botTrades.length > 0 ? (
@@ -2380,6 +3201,60 @@ export default function BotsPage() {
                                         <p style={{ fontSize: "16px", margin: 0 }}>No trades yet</p>
                                    </div>
                               )}
+
+                              {/* Pagination Controls */}
+                              {(() => {
+                                   const filteredTrades = allBotTrades.filter((trade) => {
+                                        if (tradeStatusFilter !== "all" && trade.status.toLowerCase() !== tradeStatusFilter.toLowerCase()) return false;
+                                        if (tradeSymbolFilter && !trade.symbol.toLowerCase().includes(tradeSymbolFilter.toLowerCase())) return false;
+                                        return true;
+                                   });
+                                   const totalPages = Math.ceil(filteredTrades.length / tradesPerPage);
+                                   
+                                   if (totalPages <= 1) return null;
+                                   
+                                   return (
+                                        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "8px", marginTop: "20px" }}>
+                                             <button
+                                                  onClick={() => setTradesPage((p) => Math.max(1, p - 1))}
+                                                  disabled={tradesPage === 1}
+                                                  style={{
+                                                       padding: "8px 16px",
+                                                       backgroundColor: tradesPage === 1 ? "#1a1a1a" : "#2a2a2a",
+                                                       border: "1px solid rgba(255, 174, 0, 0.3)",
+                                                       borderRadius: "8px",
+                                                       color: tradesPage === 1 ? "#666" : "#ffffff",
+                                                       fontSize: "13px",
+                                                       cursor: tradesPage === 1 ? "not-allowed" : "pointer",
+                                                       fontWeight: "600",
+                                                  }}
+                                             >
+                                                  Previous
+                                             </button>
+                                             
+                                             <span style={{ color: "#888", fontSize: "13px", padding: "0 12px" }}>
+                                                  Page {tradesPage} of {totalPages}
+                                             </span>
+                                             
+                                             <button
+                                                  onClick={() => setTradesPage((p) => Math.min(totalPages, p + 1))}
+                                                  disabled={tradesPage === totalPages}
+                                                  style={{
+                                                       padding: "8px 16px",
+                                                       backgroundColor: tradesPage === totalPages ? "#1a1a1a" : "#2a2a2a",
+                                                       border: "1px solid rgba(255, 174, 0, 0.3)",
+                                                       borderRadius: "8px",
+                                                       color: tradesPage === totalPages ? "#666" : "#ffffff",
+                                                       fontSize: "13px",
+                                                       cursor: tradesPage === totalPages ? "not-allowed" : "pointer",
+                                                       fontWeight: "600",
+                                                  }}
+                                             >
+                                                  Next
+                                             </button>
+                                        </div>
+                                   );
+                              })()}
                          </div>
                     </div>
                )}

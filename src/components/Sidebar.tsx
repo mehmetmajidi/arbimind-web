@@ -11,6 +11,8 @@ const menuItems = [
      { name: "Bots", path: "/bots", icon: "🤖" },
      { name: "Performance", path: "/performance", icon: "📈" },
      { name: "Predictions", path: "/predictions", icon: "🔮" },
+     { name: "Monitoring", path: "/monitoring", icon: "🔔" },
+     { name: "Training", path: "/training", icon: "🎓" },
      { name: "Backfill", path: "/backfill", icon: "📥" },
      { name: "Settings", path: "/settings", icon: "⚙️" },
 ];

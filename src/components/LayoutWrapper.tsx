@@ -19,7 +19,6 @@ export default function LayoutWrapper({ children }: { children: React.ReactNode 
             <div
                 style={{
                     marginLeft: "250px",
-                    paddingTop: "70px", // Account for header height
                     minHeight: "100vh",
                     backgroundColor: "#202020",
                 }}
