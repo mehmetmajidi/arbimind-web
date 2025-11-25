@@ -53,6 +53,7 @@ export default function TrainingPage() {
     const [jobLogs, setJobLogs] = useState<string>("");
     const [showStartForm, setShowStartForm] = useState(false);
     const [showRetrainForm, setShowRetrainForm] = useState(false);
+    const [expandedLogs, setExpandedLogs] = useState<Record<string, boolean>>({});
 
     // Start Training Form State
     const [startFormData, setStartFormData] = useState({
@@ -828,8 +829,7 @@ export default function TrainingPage() {
                                         cursor: "pointer",
                                         transition: "all 0.2s ease",
                                     }}
-                                    onClick={() => setSelectedJob(selectedJob === job.job_id ? null : job.job_id)}
-                                    onMouseEnter={(e) => {
+                                   onMouseEnter={(e) => {
                                         e.currentTarget.style.borderColor = "#FFAE00";
                                         e.currentTarget.style.backgroundColor = "#252525";
                                     }}
@@ -839,7 +839,7 @@ export default function TrainingPage() {
                                     }}
                                 >
                                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                                        <div>
+                                        <div onClick={() => setSelectedJob(selectedJob === job.job_id ? null : job.job_id)}>
                                             <div style={{ fontSize: "18px", fontWeight: "600", color: "#ffffff", marginBottom: "4px" }}>
                                                 {job.job_id}
                                             </div>
@@ -1165,29 +1165,113 @@ export default function TrainingPage() {
                                                 </div>
                                             )}
 
-                                            <h3 style={{ fontSize: "16px", fontWeight: "600", marginBottom: "12px", color: "#FFAE00" }}>
-                                                Logs
-                                            </h3>
-                                            <div
-                                                style={{
-                                                    padding: "12px",
-                                                    backgroundColor: "#1a1a1a",
-                                                    borderRadius: "6px",
-                                                    maxHeight: "300px",
-                                                    overflowY: "auto",
-                                                    fontSize: "12px",
-                                                    fontFamily: "monospace",
-                                                    color: "#888888",
-                                                    whiteSpace: "pre-wrap",
-                                                }}
-                                            >
-                                                {jobLogs || job.last_log_lines.join("\n") || "No logs available"}
+                                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
+                                                <h3 style={{ fontSize: "16px", fontWeight: "600", color: "#FFAE00", margin: 0 }}>
+                                                    Logs
+                                                </h3>
+                                                <div style={{ display: "flex", gap: "8px" }}>
+                                                    <button
+                                                        onClick={() => {
+                                                            const logsText = jobLogs || job.last_log_lines.join("\n") || "No logs available";
+                                                            navigator.clipboard.writeText(logsText).then(() => {
+                                                                setSuccess("Logs copied to clipboard!");
+                                                                setTimeout(() => setSuccess(null), 2000);
+                                                            }).catch(() => {
+                                                                setError("Failed to copy logs");
+                                                                setTimeout(() => setError(null), 2000);
+                                                            });
+                                                        }}
+                                                        style={{
+                                                            padding: "4px 8px",
+                                                            backgroundColor: "rgba(255, 174, 0, 0.1)",
+                                                            color: "#FFAE00",
+                                                            border: "1px solid rgba(255, 174, 0, 0.3)",
+                                                            borderRadius: "4px",
+                                                            cursor: "pointer",
+                                                            fontSize: "11px",
+                                                            fontWeight: "600",
+                                                            display: "flex",
+                                                            alignItems: "center",
+                                                            gap: "4px",
+                                                        }}
+                                                        title="Copy logs"
+                                                    >
+                                                        📋 Copy
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setExpandedLogs(prev => ({ ...prev, [job.job_id]: !prev[job.job_id] }))}
+                                                        style={{
+                                                            padding: "4px 8px",
+                                                            backgroundColor: "rgba(255, 174, 0, 0.1)",
+                                                            color: "#FFAE00",
+                                                            border: "1px solid rgba(255, 174, 0, 0.3)",
+                                                            borderRadius: "4px",
+                                                            cursor: "pointer",
+                                                            fontSize: "11px",
+                                                            fontWeight: "600",
+                                                            display: "flex",
+                                                            alignItems: "center",
+                                                            gap: "4px",
+                                                        }}
+                                                        title={expandedLogs[job.job_id] ? "Collapse logs" : "Expand logs"}
+                                                    >
+                                                        {expandedLogs[job.job_id] ? "▼" : "▶"} {expandedLogs[job.job_id] ? "Collapse" : "Expand"}
+                                                    </button>
+                                                </div>
                                             </div>
+                                            {expandedLogs[job.job_id] && (
+                                                <div
+                                                    style={{
+                                                        padding: "12px",
+                                                        backgroundColor: "#1a1a1a",
+                                                        borderRadius: "6px",
+                                                        maxHeight: "300px",
+                                                        overflowY: "auto",
+                                                        fontSize: "12px",
+                                                        fontFamily: "monospace",
+                                                        color: "#888888",
+                                                        whiteSpace: "pre-wrap",
+                                                        userSelect: "text",
+                                                    }}
+                                                >
+                                                    {jobLogs || job.last_log_lines.join("\n") || "No logs available"}
+                                                </div>
+                                            )}
                                             {job.error_lines.length > 0 && (
                                                 <div style={{ marginTop: "12px" }}>
-                                                    <h3 style={{ fontSize: "16px", fontWeight: "600", marginBottom: "12px", color: "#ff4444" }}>
-                                                        Errors
-                                                    </h3>
+                                                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
+                                                        <h3 style={{ fontSize: "16px", fontWeight: "600", color: "#ff4444", margin: 0 }}>
+                                                            Errors
+                                                        </h3>
+                                                        <button
+                                                            onClick={() => {
+                                                                const errorsText = job.error_lines.join("\n");
+                                                                navigator.clipboard.writeText(errorsText).then(() => {
+                                                                    setSuccess("Errors copied to clipboard!");
+                                                                    setTimeout(() => setSuccess(null), 2000);
+                                                                }).catch(() => {
+                                                                    setError("Failed to copy errors");
+                                                                    setTimeout(() => setError(null), 2000);
+                                                                });
+                                                            }}
+                                                            style={{
+                                                                padding: "4px 8px",
+                                                                backgroundColor: "rgba(255, 68, 68, 0.1)",
+                                                                color: "#ff4444",
+                                                                border: "1px solid rgba(255, 68, 68, 0.3)",
+                                                                borderRadius: "4px",
+                                                                cursor: "pointer",
+                                                                fontSize: "11px",
+                                                                fontWeight: "600",
+                                                                display: "flex",
+                                                                alignItems: "center",
+                                                                gap: "4px",
+                                                            }}
+                                                            title="Copy errors"
+                                                        >
+                                                            📋 Copy
+                                                        </button>
+                                                    </div>
                                                     <div
                                                         style={{
                                                             padding: "12px",
@@ -1199,6 +1283,7 @@ export default function TrainingPage() {
                                                             fontFamily: "monospace",
                                                             color: "#ff4444",
                                                             whiteSpace: "pre-wrap",
+                                                            userSelect: "text",
                                                         }}
                                                     >
                                                         {job.error_lines.join("\n")}

@@ -90,6 +90,33 @@ export default function BackfillPage() {
      const [symbolsLoading, setSymbolsLoading] = useState(false);
      const [dataStatus, setDataStatus] = useState<Record<string, SymbolDataStatus>>({});
      const [dataStatusLoading, setDataStatusLoading] = useState(false);
+     
+     // Sync All Exchanges state
+     const [syncingAll, setSyncingAll] = useState(false);
+     const [syncAllResults, setSyncAllResults] = useState<{
+          summary?: {
+               exchanges_synced: number;
+               exchanges_failed: number;
+               total_symbols: number;
+               total_added: number;
+               total_updated: number;
+          };
+          results?: Record<string, any>;
+     } | null>(null);
+     const [showSyncAllResults, setShowSyncAllResults] = useState(false);
+     
+     // Sync Specific Exchange state
+     const [exchanges, setExchanges] = useState<Array<{ id: number; name: string; display_name: string; is_active: boolean }>>([]);
+     const [selectedExchangeName, setSelectedExchangeName] = useState<string>("");
+     const [syncingExchange, setSyncingExchange] = useState(false);
+     const [syncExchangeResult, setSyncExchangeResult] = useState<{
+          exchange_name?: string;
+          total?: number;
+          added?: number;
+          updated?: number;
+          error?: string;
+     } | null>(null);
+     const [showSyncExchangeResult, setShowSyncExchangeResult] = useState(false);
 
      // Filter and search state
      const [searchQuery, setSearchQuery] = useState("");
@@ -174,6 +201,135 @@ export default function BackfillPage() {
                setSymbolsLoading(false);
           }
      }, [selectedAccountId, apiUrl, fetchMarkets]);
+
+     // Fetch exchanges list
+     const fetchExchanges = useCallback(async () => {
+          try {
+               const token = getAuthToken();
+               if (!token) return;
+
+               const response = await fetch(`${apiUrl}/exchange/exchanges`, {
+                    headers: { Authorization: `Bearer ${token}` },
+               });
+
+               if (response.ok) {
+                    const data = await response.json();
+                    const activeExchanges = (Array.isArray(data) ? data : []).filter((ex: any) => ex.is_active !== false);
+                    setExchanges(activeExchanges);
+               }
+          } catch (error) {
+               console.error("Error fetching exchanges:", error);
+          }
+     }, [apiUrl]);
+
+     // Sync all exchanges
+     const syncAllExchanges = useCallback(async () => {
+          setSyncingAll(true);
+          setError(null);
+          setSuccess(null);
+          setSyncAllResults(null);
+          setShowSyncAllResults(false);
+
+          try {
+               const token = getAuthToken();
+               if (!token) {
+                    setError("Please login to sync exchanges");
+                    return;
+               }
+
+               const response = await fetch(`${apiUrl}/market/symbols/sync-all`, {
+                    method: "POST",
+                    headers: { Authorization: `Bearer ${token}` },
+               });
+
+               if (response.ok) {
+                    const data = await response.json();
+                    setSyncAllResults({
+                         summary: data.summary,
+                         results: data.results,
+                    });
+                    setSuccess(data.message || "All exchanges synced successfully");
+                    setShowSyncAllResults(true);
+                    
+                    // Reload markets if we have a selected account
+                    if (selectedAccountId) {
+                         await fetchMarkets();
+                    }
+               } else {
+                    const errorData = await response.json().catch(() => ({}));
+                    setError(errorData.detail || "Failed to sync all exchanges");
+               }
+          } catch (error) {
+               console.error("Error syncing all exchanges:", error);
+               setError("Failed to sync all exchanges");
+          } finally {
+               setSyncingAll(false);
+          }
+     }, [apiUrl, selectedAccountId, fetchMarkets]);
+
+     // Sync specific exchange
+     const syncSpecificExchange = useCallback(async () => {
+          if (!selectedExchangeName) {
+               setError("Please select an exchange");
+               return;
+          }
+
+          setSyncingExchange(true);
+          setError(null);
+          setSuccess(null);
+          setSyncExchangeResult(null);
+          setShowSyncExchangeResult(false);
+
+          try {
+               const token = getAuthToken();
+               if (!token) {
+                    setError("Please login to sync exchange");
+                    return;
+               }
+
+               const response = await fetch(`${apiUrl}/market/symbols/sync/${encodeURIComponent(selectedExchangeName)}`, {
+                    method: "POST",
+                    headers: { Authorization: `Bearer ${token}` },
+               });
+
+               if (response.ok) {
+                    const data = await response.json();
+                    setSyncExchangeResult({
+                         exchange_name: selectedExchangeName,
+                         total: data.data?.total || 0,
+                         added: data.data?.added || 0,
+                         updated: data.data?.updated || 0,
+                    });
+                    setSuccess(data.message || `Exchange ${selectedExchangeName} synced successfully`);
+                    setShowSyncExchangeResult(true);
+                    
+                    // Reload markets if we have a selected account
+                    if (selectedAccountId) {
+                         await fetchMarkets();
+                    }
+               } else {
+                    const errorData = await response.json().catch(() => ({}));
+                    const errorMsg = errorData.detail || "Failed to sync exchange";
+                    setSyncExchangeResult({
+                         exchange_name: selectedExchangeName,
+                         error: errorMsg,
+                    });
+                    setError(errorMsg);
+                    setShowSyncExchangeResult(true);
+               }
+          } catch (error) {
+               console.error("Error syncing exchange:", error);
+               const errorMsg = "Failed to sync exchange";
+               setSyncExchangeResult({
+                    exchange_name: selectedExchangeName,
+                    error: errorMsg,
+               });
+               setError(errorMsg);
+               setShowSyncExchangeResult(true);
+          } finally {
+               setSyncingExchange(false);
+          }
+     }, [selectedExchangeName, apiUrl, selectedAccountId, fetchMarkets]);
 
      // Fetch data status
      const fetchDataStatus = useCallback(async () => {
@@ -669,6 +825,11 @@ export default function BackfillPage() {
           }
      }, [selectedAccountId]);
 
+     // Fetch exchanges on mount
+     useEffect(() => {
+          fetchExchanges();
+     }, [fetchExchanges]);
+
      // Update pages when interval changes
      useEffect(() => {
           setFormData((prev) => ({ ...prev, total_pages: calculatePages(prev.interval) }));
@@ -754,7 +915,7 @@ export default function BackfillPage() {
      }, [markets, searchQuery, statusFilter, intervalFilter, dataStatus, jobs, availableIntervals]);
 
      return (
-          <div className="min-h-screen bg-[#1a1a1a] text-white p-6" style={{ marginLeft: "250px", paddingTop: "90px" }}>
+          <div className="min-h-screen bg-[#1a1a1a] text-white p-6" style={{  paddingTop: "24px" }}>
                <div className="max-w-7xl mx-auto">
                     {/* Header */}
                     <div className="mb-8">
@@ -807,19 +968,221 @@ export default function BackfillPage() {
                          </div>
                     )}
 
-                    {/* Sync Symbols Button */}
+                    {/* Sync Symbols Buttons */}
                     {selectedAccountId && (
-                         <div className="mb-6 flex justify-between items-center">
-                              <div className="text-sm text-gray-400">
-                                   {markets.length > 0 ? <>📊 {markets.length} symbols loaded from database</> : <>⚠️ No symbols in database. Sync from exchange to load symbols.</>}
+                         <div className="mb-6 space-y-4">
+                              <div className="flex justify-between items-center gap-4">
+                                   <div className="text-sm text-gray-400">
+                                        {markets.length > 0 ? <>📊 {markets.length} symbols loaded from database</> : <>⚠️ No symbols in database. Sync from exchange to load symbols.</>}
+                                   </div>
+                                   <div className="flex gap-3">
+                                        <button
+                                             onClick={syncSymbols}
+                                             disabled={symbolsLoading}
+                                             className="px-4 py-2 bg-blue-600/20 border border-blue-500/30 text-blue-400 rounded-lg hover:bg-blue-600/30 transition-colors disabled:opacity-50 text-sm font-medium"
+                                        >
+                                             {symbolsLoading ? "⏳ Syncing..." : "🔄 Sync Current Exchange"}
+                                        </button>
+                                        <button
+                                             onClick={syncAllExchanges}
+                                             disabled={syncingAll || symbolsLoading}
+                                             className="px-4 py-2 bg-[#FFAE00]/20 border border-[#FFAE00]/30 text-[#FFAE00] rounded-lg hover:bg-[#FFAE00]/30 transition-colors disabled:opacity-50 text-sm font-medium"
+                                        >
+                                             {syncingAll ? "⏳ Syncing All..." : "🌐 Sync All Exchanges"}
+                                        </button>
+                                   </div>
                               </div>
-                              <button
-                                   onClick={syncSymbols}
-                                   disabled={symbolsLoading}
-                                   className="px-4 py-2 bg-blue-600/20 border border-blue-500/30 text-blue-400 rounded-lg hover:bg-blue-600/30 transition-colors disabled:opacity-50 text-sm font-medium"
-                              >
-                                   {symbolsLoading ? "⏳ Syncing..." : "🔄 Sync Symbols from Exchange"}
-                              </button>
+                              
+                              {/* Sync Specific Exchange */}
+                              <div className="flex items-center gap-3 p-4 bg-[#1a1a1a] border border-[#333] rounded-lg">
+                                   <label className="text-sm text-gray-400 whitespace-nowrap">Sync Specific Exchange:</label>
+                                   <select
+                                        value={selectedExchangeName}
+                                        onChange={(e) => setSelectedExchangeName(e.target.value)}
+                                        disabled={syncingExchange || syncingAll}
+                                        className="flex-1 px-4 py-2 bg-[#252525] border border-[#333] text-white rounded-lg focus:outline-none focus:border-[#FFAE00] disabled:opacity-50 text-sm"
+                                   >
+                                        <option value="">Select Exchange...</option>
+                                        {exchanges.map((ex) => (
+                                             <option key={ex.id} value={ex.name}>
+                                                  {ex.display_name} ({ex.name})
+                                             </option>
+                                        ))}
+                                   </select>
+                                   <button
+                                        onClick={syncSpecificExchange}
+                                        disabled={!selectedExchangeName || syncingExchange || syncingAll || symbolsLoading}
+                                        className="px-4 py-2 bg-purple-600/20 border border-purple-500/30 text-purple-400 rounded-lg hover:bg-purple-600/30 transition-colors disabled:opacity-50 text-sm font-medium whitespace-nowrap"
+                                   >
+                                        {syncingExchange ? "⏳ Syncing..." : "🔄 Sync"}
+                                   </button>
+                              </div>
+                         </div>
+                    )}
+                    
+                    {/* Sync All Exchanges Results Modal */}
+                    {showSyncAllResults && syncAllResults && (
+                         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setShowSyncAllResults(false)}>
+                              <div className="bg-[#252525] border border-[#333] rounded-xl p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+                                   <div className="flex justify-between items-center mb-6">
+                                        <h2 className="text-2xl font-semibold text-[#FFAE00]">Sync All Exchanges - Results</h2>
+                                        <button
+                                             onClick={() => setShowSyncAllResults(false)}
+                                             className="text-gray-400 hover:text-white transition-colors text-2xl"
+                                        >
+                                             ×
+                                        </button>
+                                   </div>
+                                   
+                                   {/* Summary */}
+                                   {syncAllResults.summary && (
+                                        <div className="mb-6 p-4 bg-[#1a1a1a] border border-[#333] rounded-lg">
+                                             <h3 className="text-lg font-semibold mb-3 text-white">Summary</h3>
+                                             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                                                  <div>
+                                                       <div className="text-sm text-gray-400">Exchanges Synced</div>
+                                                       <div className="text-xl font-bold text-green-400">{syncAllResults.summary.exchanges_synced}</div>
+                                                  </div>
+                                                  <div>
+                                                       <div className="text-sm text-gray-400">Exchanges Failed</div>
+                                                       <div className="text-xl font-bold text-red-400">{syncAllResults.summary.exchanges_failed}</div>
+                                                  </div>
+                                                  <div>
+                                                       <div className="text-sm text-gray-400">Total Symbols</div>
+                                                       <div className="text-xl font-bold text-blue-400">{syncAllResults.summary.total_symbols}</div>
+                                                  </div>
+                                                  <div>
+                                                       <div className="text-sm text-gray-400">Added</div>
+                                                       <div className="text-xl font-bold text-green-400">{syncAllResults.summary.total_added}</div>
+                                                  </div>
+                                                  <div>
+                                                       <div className="text-sm text-gray-400">Updated</div>
+                                                       <div className="text-xl font-bold text-yellow-400">{syncAllResults.summary.total_updated}</div>
+                                                  </div>
+                                             </div>
+                                        </div>
+                                   )}
+                                   
+                                   {/* Detailed Results */}
+                                   {syncAllResults.results && (
+                                        <div>
+                                             <h3 className="text-lg font-semibold mb-3 text-white">Exchange Details</h3>
+                                             <div className="space-y-3">
+                                                  {Object.entries(syncAllResults.results).map(([exchangeName, result]: [string, any]) => (
+                                                       <div
+                                                            key={exchangeName}
+                                                            className={`p-4 rounded-lg border ${
+                                                                 result.error
+                                                                      ? "bg-red-500/10 border-red-500/30"
+                                                                      : "bg-green-500/10 border-green-500/30"
+                                                            }`}
+                                                       >
+                                                            <div className="flex justify-between items-start mb-2">
+                                                                 <div className="font-semibold text-white">{exchangeName}</div>
+                                                                 {result.error ? (
+                                                                      <span className="px-2 py-1 bg-red-500/20 text-red-400 rounded text-xs">Failed</span>
+                                                                 ) : (
+                                                                      <span className="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs">Success</span>
+                                                                 )}
+                                                            </div>
+                                                            {result.error ? (
+                                                                 <div className="text-sm text-red-400">{result.error}</div>
+                                                            ) : (
+                                                                 <div className="grid grid-cols-3 gap-4 mt-2 text-sm">
+                                                                      <div>
+                                                                           <span className="text-gray-400">Total: </span>
+                                                                           <span className="text-white font-semibold">{result.total || 0}</span>
+                                                                      </div>
+                                                                      <div>
+                                                                           <span className="text-gray-400">Added: </span>
+                                                                           <span className="text-green-400 font-semibold">{result.added || 0}</span>
+                                                                      </div>
+                                                                      <div>
+                                                                           <span className="text-gray-400">Updated: </span>
+                                                                           <span className="text-yellow-400 font-semibold">{result.updated || 0}</span>
+                                                                      </div>
+                                                                 </div>
+                                                            )}
+                                                       </div>
+                                                  ))}
+                                             </div>
+                                        </div>
+                                   )}
+                                   
+                                   <div className="mt-6 flex justify-end">
+                                        <button
+                                             onClick={() => setShowSyncAllResults(false)}
+                                             className="px-6 py-2 bg-[#FFAE00] text-black rounded-lg hover:bg-[#FFD700] transition-colors font-semibold"
+                                        >
+                                             Close
+                                        </button>
+                                   </div>
+                              </div>
+                         </div>
+                    )}
+
+                    {/* Sync Specific Exchange Result Modal */}
+                    {showSyncExchangeResult && syncExchangeResult && (
+                         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setShowSyncExchangeResult(false)}>
+                              <div className="bg-[#252525] border border-[#333] rounded-xl p-6 max-w-2xl w-full" onClick={(e) => e.stopPropagation()}>
+                                   <div className="flex justify-between items-center mb-6">
+                                        <h2 className="text-2xl font-semibold text-[#FFAE00]">Sync Exchange - Results</h2>
+                                        <button
+                                             onClick={() => setShowSyncExchangeResult(false)}
+                                             className="text-gray-400 hover:text-white transition-colors text-2xl"
+                                        >
+                                             ×
+                                        </button>
+                                   </div>
+                                   
+                                   {syncExchangeResult.error ? (
+                                        <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-lg">
+                                             <div className="flex items-center gap-2 mb-2">
+                                                  <span className="text-red-400 font-semibold">❌ Error</span>
+                                             </div>
+                                             <div className="text-sm text-gray-300 mb-2">
+                                                  <span className="text-gray-400">Exchange: </span>
+                                                  <span className="font-semibold">{syncExchangeResult.exchange_name}</span>
+                                             </div>
+                                             <div className="text-sm text-red-400">{syncExchangeResult.error}</div>
+                                        </div>
+                                   ) : (
+                                        <div className="space-y-4">
+                                             <div className="p-4 bg-green-500/10 border border-green-500/30 rounded-lg">
+                                                  <div className="flex items-center gap-2 mb-3">
+                                                       <span className="text-green-400 font-semibold">✅ Success</span>
+                                                  </div>
+                                                  <div className="text-sm text-gray-300 mb-2">
+                                                       <span className="text-gray-400">Exchange: </span>
+                                                       <span className="font-semibold">{syncExchangeResult.exchange_name}</span>
+                                                  </div>
+                                                  <div className="grid grid-cols-3 gap-4 mt-4">
+                                                       <div>
+                                                            <div className="text-xs text-gray-400 mb-1">Total Symbols</div>
+                                                            <div className="text-xl font-bold text-blue-400">{syncExchangeResult.total || 0}</div>
+                                                       </div>
+                                                       <div>
+                                                            <div className="text-xs text-gray-400 mb-1">Added</div>
+                                                            <div className="text-xl font-bold text-green-400">{syncExchangeResult.added || 0}</div>
+                                                       </div>
+                                                       <div>
+                                                            <div className="text-xs text-gray-400 mb-1">Updated</div>
+                                                            <div className="text-xl font-bold text-yellow-400">{syncExchangeResult.updated || 0}</div>
+                                                       </div>
+                                                  </div>
+                                             </div>
+                                        </div>
+                                   )}
+                                   
+                                   <div className="mt-6 flex justify-end">
+                                        <button
+                                             onClick={() => setShowSyncExchangeResult(false)}
+                                             className="px-6 py-2 bg-[#FFAE00] text-black rounded-lg hover:bg-[#FFD700] transition-colors font-semibold"
+                                        >
+                                             Close
+                                        </button>
+                                   </div>
+                              </div>
                          </div>
                     )}
 

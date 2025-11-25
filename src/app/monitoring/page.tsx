@@ -95,6 +95,14 @@ export default function MonitoringPage() {
      const [autoRefresh, setAutoRefresh] = useState(false);
      const [refreshInterval, setRefreshInterval] = useState(30); // seconds
      const [anomalyHistory, setAnomalyHistory] = useState<Array<{ time: string; score: number }>>([]);
+     
+     // WebSocket for real-time alerts
+     const [useWebSocket, setUseWebSocket] = useState(true);
+     const [wsAlertConnection, setWsAlertConnection] = useState<WebSocket | null>(null);
+     const [wsAlertConnectionStatus, setWsAlertConnectionStatus] = useState<"disconnected" | "connecting" | "connected" | "error">("disconnected");
+     const [wsAlertError, setWsAlertError] = useState<string | null>(null);
+     const [wsAlertReconnectAttempts, setWsAlertReconnectAttempts] = useState(0);
+     const [notificationsEnabled, setNotificationsEnabled] = useState(false);
 
      // Alert Management states
      const [showThresholdSettings, setShowThresholdSettings] = useState(false);
@@ -395,9 +403,188 @@ export default function MonitoringPage() {
           }
      }, [selectedSymbol, interval, apiUrl, normalizeSymbol]);
 
-     // Auto-refresh
+     // Request notification permission on mount
      useEffect(() => {
-          if (!autoRefresh || !selectedSymbol) return;
+          if ("Notification" in window && Notification.permission === "default") {
+               // Don't request automatically, let user enable it manually
+          }
+     }, []);
+
+     // WebSocket connection for real-time alerts
+     useEffect(() => {
+          if (!useWebSocket || !autoRefresh || !selectedSymbol) {
+               // Close WebSocket if disabled
+               if (wsAlertConnection) {
+                    if (wsAlertConnection.readyState === WebSocket.OPEN || wsAlertConnection.readyState === WebSocket.CONNECTING) {
+                         wsAlertConnection.close();
+                    }
+                    setWsAlertConnection(null);
+               }
+               setWsAlertConnectionStatus("disconnected");
+               setWsAlertReconnectAttempts(0);
+               setWsAlertError(null);
+               return;
+          }
+
+          const token = localStorage.getItem("auth_token");
+          if (!token) {
+               setWsAlertError("Please login to use WebSocket");
+               setWsAlertConnectionStatus("error");
+               return;
+          }
+
+          const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+          // Convert http to ws
+          const wsUrl = apiUrl.replace("http://", "ws://").replace("https://", "wss://");
+          const normalizedSymbol = encodeURIComponent(selectedSymbol);
+          const wsEndpoint = `${wsUrl}/ws/alerts/${normalizedSymbol}?token=${token}&interval=${interval}&alert_interval=${refreshInterval}`;
+
+          console.log("Connecting to WebSocket for alerts:", wsEndpoint);
+
+          let ws: WebSocket | null = null;
+          let reconnectTimeout: NodeJS.Timeout | null = null;
+          let isManualClose = false;
+          let reconnectAttempts = 0;
+          const maxReconnectAttempts = 10;
+          const baseReconnectDelay = 3000; // 3 seconds
+          const maxReconnectDelay = 30000; // 30 seconds
+
+          const connect = () => {
+               if (isManualClose) return;
+
+               setWsAlertConnectionStatus("connecting");
+               setWsAlertError(null);
+
+               try {
+                    ws = new WebSocket(wsEndpoint);
+
+                    ws.onopen = () => {
+                         console.log("WebSocket connected for alerts");
+                         setWsAlertConnection(ws);
+                         setWsAlertConnectionStatus("connected");
+                         setWsAlertReconnectAttempts(0);
+                         reconnectAttempts = 0;
+                    };
+
+                    ws.onmessage = (event) => {
+                         try {
+                              const data = JSON.parse(event.data);
+                              console.log("WebSocket message received for alerts:", data);
+
+                              if (data.type === "alerts" && data.alerts) {
+                                   // Update alerts in the list
+                                   setAlerts((prevAlerts) => {
+                                        const newAlerts = [...data.alerts];
+                                        
+                                        // Merge with existing alerts, avoiding duplicates
+                                        const existingTimestamps = new Set(prevAlerts.map(a => `${a.timestamp}_${a.symbol}`));
+                                        const uniqueNewAlerts = newAlerts.filter(a => !existingTimestamps.has(`${a.timestamp}_${a.symbol}`));
+                                        
+                                        // Combine and sort by timestamp (newest first)
+                                        const combined = [...uniqueNewAlerts, ...prevAlerts]
+                                             .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+                                             .slice(0, 100); // Keep last 100 alerts
+                                        
+                                        return combined;
+                                   });
+                                   
+                                   // Show browser notifications for new alerts
+                                   if (notificationsEnabled && "Notification" in window && Notification.permission === "granted") {
+                                        data.alerts.forEach((alert: Alert) => {
+                                             const notification = new Notification(`Alert: ${alert.symbol}`, {
+                                                  body: `${alert.severity.toUpperCase()}: ${alert.message}`,
+                                                  icon: "/favicon.ico",
+                                                  tag: `${alert.symbol}_${alert.timestamp}`, // Prevent duplicate notifications
+                                                  requireInteraction: alert.severity === "critical",
+                                             });
+                                             
+                                             // Auto-close after 5 seconds (except critical)
+                                             if (alert.severity !== "critical") {
+                                                  setTimeout(() => notification.close(), 5000);
+                                             }
+                                        });
+                                   }
+                                   
+                                   // Update alert history
+                                   if (alertsEnabled) {
+                                        setAlertHistory((prev) => {
+                                             const updated = [...data.alerts, ...prev]
+                                                  .filter((alert, index, self) => 
+                                                       index === self.findIndex((a) => a.timestamp === alert.timestamp && a.symbol === alert.symbol)
+                                                  )
+                                                  .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+                                                  .slice(0, 1000);
+                                             
+                                             localStorage.setItem("alertHistory", JSON.stringify(updated));
+                                             return updated;
+                                        });
+                                   }
+                              } else if (data.type === "error") {
+                                   const errorMsg = data.message || "WebSocket error";
+                                   console.error("WebSocket error message:", errorMsg);
+                                   setWsAlertError(errorMsg);
+                                   setWsAlertConnectionStatus("error");
+                              } else if (data.type === "connected") {
+                                   console.log("WebSocket connected:", data.message);
+                              }
+                         } catch (error) {
+                              console.error("Error parsing WebSocket message:", error);
+                         }
+                    };
+
+                    ws.onerror = (error) => {
+                         console.error("WebSocket error:", error);
+                         setWsAlertError("WebSocket connection error");
+                         setWsAlertConnectionStatus("error");
+                    };
+
+                    ws.onclose = (event) => {
+                         console.log("WebSocket disconnected:", event.code, event.reason);
+                         setWsAlertConnection(null);
+                         setWsAlertConnectionStatus("disconnected");
+
+                         // Auto-reconnect if not manual close and within max attempts
+                         if (event.code !== 1008 && useWebSocket && autoRefresh && !isManualClose && reconnectAttempts < maxReconnectAttempts) {
+                              reconnectAttempts++;
+                              setWsAlertReconnectAttempts(reconnectAttempts);
+                              
+                              const delay = Math.min(baseReconnectDelay * Math.pow(2, reconnectAttempts - 1), maxReconnectDelay);
+                              console.log(`Reconnecting in ${delay}ms (attempt ${reconnectAttempts}/${maxReconnectAttempts})`);
+                              
+                              reconnectTimeout = setTimeout(() => {
+                                   if (useWebSocket && autoRefresh && selectedSymbol) {
+                                        connect();
+                                   }
+                              }, delay);
+                         } else if (reconnectAttempts >= maxReconnectAttempts) {
+                              setWsAlertError("Max reconnection attempts reached");
+                              setWsAlertConnectionStatus("error");
+                         }
+                    };
+               } catch (error) {
+                    console.error("Error creating WebSocket:", error);
+                    setWsAlertError("Failed to create WebSocket connection");
+                    setWsAlertConnectionStatus("error");
+               }
+          };
+
+          connect();
+
+          return () => {
+               isManualClose = true;
+               if (reconnectTimeout) {
+                    clearTimeout(reconnectTimeout);
+               }
+               if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+                    ws.close();
+               }
+          };
+     }, [useWebSocket, autoRefresh, selectedSymbol, interval, refreshInterval, notificationsEnabled, alertsEnabled]);
+
+     // Auto-refresh (fallback when WebSocket is disabled)
+     useEffect(() => {
+          if (!autoRefresh || useWebSocket || !selectedSymbol) return; // Skip if WebSocket is enabled
 
           const intervalId = window.setInterval(() => {
                fetchAnomalyScore();
@@ -407,7 +594,7 @@ export default function MonitoringPage() {
           }, refreshInterval * 1000);
 
           return () => window.clearInterval(intervalId);
-     }, [autoRefresh, refreshInterval, selectedSymbol, fetchAnomalyScore, fetchJumpDetection, fetchAlerts, fetchThresholdTriggers]);
+     }, [autoRefresh, useWebSocket, refreshInterval, selectedSymbol, fetchAnomalyScore, fetchJumpDetection, fetchAlerts, fetchThresholdTriggers]);
 
      // Fetch all data when symbol or interval changes
      useEffect(() => {
@@ -575,22 +762,126 @@ export default function MonitoringPage() {
                     </div>
 
                     {/* Auto-refresh */}
-                    <div style={{ marginTop: "24px", display: "flex", alignItems: "center", gap: "12px" }}>
+                    <div style={{ marginTop: "24px", display: "flex", flexDirection: "column", gap: "12px" }}>
                          <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
                               <input
                                    type="checkbox"
                                    checked={autoRefresh}
                                    onChange={(e) => setAutoRefresh(e.target.checked)}
-                                   style={{ cursor: "pointer" }}
+                                   style={{
+                                        width: "18px",
+                                        height: "18px",
+                                        cursor: "pointer",
+                                        accentColor: "#FFAE00",
+                                   }}
                               />
-                              <span style={{ fontSize: "13px", color: "#888" }}>Auto-refresh</span>
+                              <span style={{ color: "#ffffff", fontSize: "14px" }}>Auto Refresh</span>
                          </label>
+                         
+                         {/* WebSocket Toggle */}
+                         {autoRefresh && (
+                              <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
+                                   <input
+                                        type="checkbox"
+                                        checked={useWebSocket}
+                                        onChange={(e) => setUseWebSocket(e.target.checked)}
+                                        style={{
+                                             width: "18px",
+                                             height: "18px",
+                                             cursor: "pointer",
+                                             accentColor: "#FFAE00",
+                                        }}
+                                   />
+                                   <span style={{ color: "#ffffff", fontSize: "14px" }}>Use WebSocket (Real-time)</span>
+                              </label>
+                         )}
+                         
+                         {/* Browser Notifications Toggle */}
+                         {autoRefresh && useWebSocket && (
+                              <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
+                                   <input
+                                        type="checkbox"
+                                        checked={notificationsEnabled}
+                                        onChange={async (e) => {
+                                             if (e.target.checked) {
+                                                  // Request notification permission
+                                                  if ("Notification" in window) {
+                                                       if (Notification.permission === "default") {
+                                                            const permission = await Notification.requestPermission();
+                                                            if (permission === "granted") {
+                                                                 setNotificationsEnabled(true);
+                                                                 setSuccess("Browser notifications enabled!");
+                                                                 setTimeout(() => setSuccess(null), 3000);
+                                                            } else {
+                                                                 setError("Notification permission denied");
+                                                                 setTimeout(() => setError(null), 3000);
+                                                            }
+                                                       } else if (Notification.permission === "granted") {
+                                                            setNotificationsEnabled(true);
+                                                       } else {
+                                                            setError("Notification permission denied. Please enable in browser settings.");
+                                                            setTimeout(() => setError(null), 3000);
+                                                       }
+                                                  } else {
+                                                       setError("Browser does not support notifications");
+                                                       setTimeout(() => setError(null), 3000);
+                                                  }
+                                             } else {
+                                                  setNotificationsEnabled(false);
+                                             }
+                                        }}
+                                        style={{
+                                             width: "18px",
+                                             height: "18px",
+                                             cursor: "pointer",
+                                             accentColor: "#FFAE00",
+                                        }}
+                                   />
+                                   <span style={{ color: "#ffffff", fontSize: "14px" }}>Browser Notifications</span>
+                              </label>
+                         )}
+                         
+                         {/* WebSocket Status */}
+                         {useWebSocket && autoRefresh && selectedSymbol && (
+                              <div
+                                   style={{
+                                        padding: "8px 12px",
+                                        borderRadius: "8px",
+                                        backgroundColor: wsAlertConnectionStatus === "connected" ? "rgba(34, 197, 94, 0.1)" : wsAlertConnectionStatus === "error" ? "rgba(239, 68, 68, 0.1)" : "rgba(107, 114, 128, 0.1)",
+                                        border: `1px solid ${wsAlertConnectionStatus === "connected" ? "rgba(34, 197, 94, 0.3)" : wsAlertConnectionStatus === "error" ? "rgba(239, 68, 68, 0.3)" : "rgba(107, 114, 128, 0.3)"}`,
+                                        color: wsAlertConnectionStatus === "connected" ? "#22c55e" : wsAlertConnectionStatus === "error" ? "#ef4444" : "#9ca3af",
+                                        fontSize: "12px",
+                                        marginTop: "8px",
+                                   }}
+                              >
+                                   <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                        <span>
+                                             {wsAlertConnectionStatus === "connected" ? "🟢" : wsAlertConnectionStatus === "connecting" ? "🟡" : wsAlertConnectionStatus === "error" ? "🔴" : "⚪"}
+                                        </span>
+                                        <span>
+                                             Alerts: {wsAlertConnectionStatus === "connected"
+                                                  ? "Real-time"
+                                                  : wsAlertConnectionStatus === "connecting"
+                                                  ? "Connecting..."
+                                                  : wsAlertConnectionStatus === "error"
+                                                  ? `Error: ${wsAlertError || "Connection failed"}`
+                                                  : "Disconnected"}
+                                        </span>
+                                   </div>
+                                   {wsAlertReconnectAttempts > 0 && wsAlertConnectionStatus !== "connected" && (
+                                        <div style={{ marginTop: "4px", fontSize: "11px", opacity: 0.8 }}>
+                                             Reconnecting... (attempt {wsAlertReconnectAttempts}/10)
+                                        </div>
+                                   )}
+                              </div>
+                         )}
+                         
                          {autoRefresh && (
                               <select
                                    value={refreshInterval}
                                    onChange={(e) => setRefreshInterval(Number(e.target.value))}
                                    style={{
-                                        padding: "6px 12px",
+                                        padding: "8px 12px",
                                         backgroundColor: "#2a2a2a",
                                         border: "1px solid rgba(255, 174, 0, 0.3)",
                                         borderRadius: "8px",
@@ -598,12 +889,13 @@ export default function MonitoringPage() {
                                         fontSize: "12px",
                                         cursor: "pointer",
                                         outline: "none",
+                                        marginTop: "8px",
                                    }}
                               >
-                                   <option value={10}>10s</option>
-                                   <option value={30}>30s</option>
-                                   <option value={60}>1m</option>
-                                   <option value={300}>5m</option>
+                                   <option value={10}>Every 10 seconds</option>
+                                   <option value={30}>Every 30 seconds</option>
+                                   <option value={60}>Every 1 minute</option>
+                                   <option value={120}>Every 2 minutes</option>
                               </select>
                          )}
                     </div>

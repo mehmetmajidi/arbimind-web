@@ -13,6 +13,14 @@ export default function LoginPage() {
      const [loading, setLoading] = useState(false);
      const [error, setError] = useState<string | null>(null);
 
+     const handleGoogleLogin = () => {
+          const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+          const redirectUri = typeof window !== "undefined" ? `${window.location.origin}/oauth-success` : "http://localhost:3000/oauth-success";
+          
+          // Redirect to backend OAuth endpoint
+          window.location.href = `${apiUrl}/auth/google/login?redirect_uri=${encodeURIComponent(redirectUri)}`;
+     };
+
      const handleSubmit = async (e: React.FormEvent) => {
           e.preventDefault();
           setLoading(true);
@@ -187,6 +195,41 @@ export default function LoginPage() {
                               {loading ? "Logging in..." : "Login"}
                          </button>
                     </form>
+
+                    <div style={{ marginTop: "24px", marginBottom: "24px", textAlign: "center", position: "relative" }}>
+                         <div style={{ position: "absolute", left: 0, right: 0, top: "50%", height: "1px", backgroundColor: "#ddd" }}></div>
+                         <span style={{ position: "relative", backgroundColor: "white", padding: "0 16px", color: "#666" }}>or</span>
+                    </div>
+
+                    <button
+                         onClick={handleGoogleLogin}
+                         disabled={loading}
+                         style={{
+                              width: "100%",
+                              padding: "12px",
+                              backgroundColor: "white",
+                              color: "#333",
+                              border: "1px solid #ddd",
+                              borderRadius: "4px",
+                              fontSize: "16px",
+                              fontWeight: "500",
+                              cursor: loading ? "not-allowed" : "pointer",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              gap: "8px",
+                         }}
+                    >
+                         <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+                              <g fill="none" fillRule="evenodd">
+                                   <path d="M17.64 9.205c0-.639-.057-1.252-.164-1.841H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.615z" fill="#4285F4" fillRule="nonzero"/>
+                                   <path d="M9 18c2.43 0 4.467-.806 5.96-2.18l-2.908-2.258c-.806.54-1.837.86-3.052.86-2.347 0-4.337-1.584-5.047-3.71H.957v2.332C2.438 15.983 5.482 18 9 18z" fill="#34A853" fillRule="nonzero"/>
+                                   <path d="M3.953 10.71c-.18-.54-.282-1.117-.282-1.71 0-.593.102-1.17.282-1.71V4.958H.957C3.438 2.017 6.482 0 9 0c2.43 0 4.467.806 5.96 2.18L9 4.5c-2.347 0-4.337 1.584-5.047 3.71z" fill="#FBBC05" fillRule="nonzero"/>
+                                   <path d="M9 3.75c1.325 0 2.515.456 3.45 1.35l2.585-2.585C13.467.806 11.43 0 9 0 5.482 0 2.438 2.017.957 4.958L3.953 7.71C4.663 5.584 6.653 3.75 9 3.75z" fill="#EA4335" fillRule="nonzero"/>
+                              </g>
+                         </svg>
+                         Sign in with Google
+                    </button>
 
                     <div style={{ marginTop: "24px", textAlign: "center" }}>
                          <p style={{ color: "#666", margin: 0 }}>

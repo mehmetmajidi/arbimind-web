@@ -75,6 +75,12 @@ interface BotTrade {
      exit_reason: string | null;
      prediction_confidence: string | null;
      prediction_horizon: string | null;
+     // Dynamic exit strategy fields
+     dynamic_take_profit: string | null;
+     dynamic_stop_loss: string | null;
+     highest_price: string | null;
+     lowest_price: string | null;
+     last_jump_detection: Record<string, unknown> | null;
 }
 
 export default function BotsPage() {
@@ -98,19 +104,23 @@ export default function BotsPage() {
      const [showCreateForm, setShowCreateForm] = useState(false);
      const [creating, setCreating] = useState(false);
      const [botForm, setBotForm] = useState({
-          name: "",
+          name: "My Trading Bot", // Default name
           exchange_account_id: "",
           capital: "",
           capital_currency: "", // Currency for capital (USDT, TRY, etc.)
-          risk_per_trade: "0.02",
+          risk_per_trade: "0.02", // Default
           symbols: [] as string[],
-          strategy_type: "prediction_based",
+          strategy_type: "prediction_based", // Default
           max_position_size: "",
-          stop_loss_percent: "",
-          take_profit_percent: "",
+          stop_loss_percent: "0.05", // Default 5%
+          take_profit_percent: "0.10", // Default 10%
           duration_hours: "",
           paper_trading: true, // Default to paper trading (safe mode)
-          strategy_params: {} as Record<string, unknown>,
+          strategy_params: {
+               use_dynamic_exit: true, // Enable dynamic exit by default
+               trailing_stop_percent: 0.5, // 0.5% trailing stop
+               jump_tp_adjustment: 0.3, // 0.3% TP adjustment on jump
+          } as Record<string, unknown>,
      });
      const [strategyParamsInput, setStrategyParamsInput] = useState("");
      const [availableSymbols, setAvailableSymbols] = useState<string[]>([]);
@@ -142,10 +152,27 @@ export default function BotsPage() {
      const [tradesPerPage, setTradesPerPage] = useState(20);
      const [allBotTrades, setAllBotTrades] = useState<BotTrade[]>([]);
 
+     // Demo wallet state
+     const [demoWallet, setDemoWallet] = useState<{
+          balance: string;
+          initial_balance: string;
+          total_pnl: string;
+          total_pnl_percent: string;
+     } | null>(null);
+     const [demoWalletLoading, setDemoWalletLoading] = useState(false);
+     const [resettingWallet, setResettingWallet] = useState(false);
+
      // Initialize loading state (accounts are now from ExchangeContext)
      useEffect(() => {
           setLoading(false);
      }, []);
+     
+     // Auto-select first exchange account if available (only if not already set)
+     useEffect(() => {
+          if (accounts.length > 0 && !botForm.exchange_account_id && !showCreateForm) {
+               // Don't auto-select when form is not shown
+          }
+     }, [accounts, showCreateForm]);
 
      // Fetch available symbols when account is selected
      useEffect(() => {
@@ -169,13 +196,25 @@ export default function BotsPage() {
                          const data = await response.json();
                          // API returns {exchange, count, markets: [{symbol, base, quote, active, ...}]}
                          const markets = data.markets || [];
-                         // Extract symbols and sort them
-                         const symbols = markets
+                         // Extract symbols and filter
+                         let symbols = markets
                               .filter((m: { active?: boolean }) => m.active !== false)
-                              .map((m: { symbol: string }) => m.symbol)
-                              .sort();
-                         setAvailableSymbols(symbols);
-                         console.log(`Fetched ${symbols.length} available symbols from ${data.exchange || 'exchange'}`);
+                              .map((m: { symbol: string; quote?: string }) => ({
+                                   symbol: m.symbol,
+                                   quote: m.quote || ""
+                              }));
+                         
+                         // In demo mode (paper trading), only show USDT pairs
+                         if (botForm.paper_trading) {
+                              symbols = symbols.filter((m: { quote: string }) => 
+                                   m.quote && m.quote.toUpperCase() === "USDT"
+                              );
+                         }
+                         
+                         // Extract just the symbol strings and sort
+                         const symbolStrings = symbols.map((m: { symbol: string }) => m.symbol).sort();
+                         setAvailableSymbols(symbolStrings);
+                         console.log(`Fetched ${symbolStrings.length} available symbols from ${data.exchange || 'exchange'}${botForm.paper_trading ? ' (USDT pairs only)' : ''}`);
                     } else {
                          console.error("Failed to fetch symbols:", response.status);
                          setAvailableSymbols([]);
@@ -187,7 +226,7 @@ export default function BotsPage() {
           };
 
           fetchSymbols();
-     }, [botForm.exchange_account_id]);
+     }, [botForm.exchange_account_id, botForm.paper_trading]);
 
      // Fetch available balances when account is selected
      useEffect(() => {
@@ -349,10 +388,91 @@ export default function BotsPage() {
           }
      }, []);
 
+     // Fetch demo wallet
+     const fetchDemoWallet = useCallback(async () => {
+          setDemoWalletLoading(true);
+          try {
+               const token = localStorage.getItem("auth_token") || "";
+               if (!token) return;
+
+               const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+               const response = await fetch(`${apiUrl}/demo/wallet/balance`, {
+                    headers: { Authorization: `Bearer ${token}` },
+               });
+
+               if (response.ok) {
+                    const data = await response.json();
+                    setDemoWallet(data);
+               } else {
+                    console.error("Failed to fetch demo wallet");
+               }
+          } catch (error) {
+               console.error("Error fetching demo wallet:", error);
+          } finally {
+               setDemoWalletLoading(false);
+          }
+     }, []);
+
+     // Reset demo wallet
+     const resetDemoWallet = useCallback(async () => {
+          if (!confirm("آیا مطمئن هستید که می‌خواهید کیف پول دمو را ریست کنید؟ تمام موجودی به مقدار اولیه برمی‌گردد.")) {
+               return;
+          }
+
+          setResettingWallet(true);
+          try {
+               const token = localStorage.getItem("auth_token") || "";
+               if (!token) return;
+
+               const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+               const response = await fetch(`${apiUrl}/demo/wallet/reset`, {
+                    method: "POST",
+                    headers: { 
+                         Authorization: `Bearer ${token}`,
+                         "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({}),
+               });
+
+               if (response.ok) {
+                    const data = await response.json();
+                    setDemoWallet({
+                         balance: data.balance_usdt,
+                         initial_balance: data.initial_balance,
+                         total_pnl: data.total_pnl,
+                         total_pnl_percent: data.total_pnl_percent,
+                    });
+                    setSuccess("کیف پول دمو با موفقیت ریست شد");
+               } else {
+                    const errorData = await response.json().catch(() => ({}));
+                    setError(errorData.detail || "Failed to reset wallet");
+               }
+          } catch (error) {
+               console.error("Error resetting demo wallet:", error);
+               setError("Failed to reset wallet");
+          } finally {
+               setResettingWallet(false);
+          }
+     }, []);
+
      // Initial fetch
      useEffect(() => {
           fetchBots();
-     }, [fetchBots]);
+          fetchDemoWallet();
+     }, [fetchBots, fetchDemoWallet]);
+
+     // Auto-refresh demo wallet
+     useEffect(() => {
+          if (!autoRefresh) return;
+
+          const interval = setInterval(() => {
+               fetchDemoWallet();
+          }, refreshInterval * 1000);
+
+          return () => clearInterval(interval);
+     }, [autoRefresh, refreshInterval, fetchDemoWallet]);
 
      // WebSocket connections for active bots
      useEffect(() => {
@@ -607,22 +727,78 @@ export default function BotsPage() {
                return;
           }
 
-          if (!botForm.name || !botForm.exchange_account_id || !botForm.capital || !botForm.capital_currency || botForm.symbols.length === 0) {
-               setWarning("Please fill in all required fields including capital currency");
+          // Simplified validation: only check duration, capital, and symbols
+          if (!botForm.duration_hours || !botForm.capital || botForm.symbols.length === 0) {
+               setWarning("لطفاً تمام فیلدهای الزامی را پر کنید: ساعت، مبلغ و نوع کوین");
+               return;
+          }
+          
+          if (!botForm.exchange_account_id) {
+               setWarning("لطفاً حساب صرافی را انتخاب کنید");
                return;
           }
 
-          // Validate capital doesn't exceed available balance
-          // Note: Paper trading bots don't need real balance, but we still validate the amount
-          if (botForm.capital_currency) {
-               const requestedAmount = parseFloat(botForm.capital);
-               
+          // For paper trading, ensure USDT is selected
+          if (botForm.paper_trading && !botForm.capital_currency) {
+               setBotForm(prev => ({ ...prev, capital_currency: "USDT" }));
+          }
+
+          if (!botForm.capital_currency) {
+               setWarning("Please select a capital currency");
+               return;
+          }
+
+          // For paper trading, if capital is not provided, use available virtual wallet balance
+          let requestedAmount: number;
+          if (botForm.paper_trading) {
+               if (!botForm.capital || botForm.capital.trim() === "") {
+                    // Use available virtual wallet balance
+                    if (demoWallet) {
+                         requestedAmount = parseFloat(demoWallet.balance);
+                         setBotForm(prev => ({ ...prev, capital: requestedAmount.toString() }));
+                    } else {
+                         // Default to 10000 if wallet not loaded yet
+                         requestedAmount = 10000;
+                         setBotForm(prev => ({ ...prev, capital: "10000" }));
+                    }
+               } else {
+                    requestedAmount = parseFloat(botForm.capital);
+               }
+          } else {
+               // For real trading, capital is required
+               if (!botForm.capital || botForm.capital.trim() === "") {
+                    setWarning("Please enter a capital amount");
+                    return;
+               }
+               requestedAmount = parseFloat(botForm.capital);
+          }
+          
+          // Validate capital amount
                if (isNaN(requestedAmount) || requestedAmount <= 0) {
                     setWarning("Please enter a valid capital amount greater than 0");
                     return;
                }
                
-               // Check if currency exists in available balances
+          // For paper trading, validate against virtual wallet balance
+          if (botForm.paper_trading) {
+               if (botForm.capital_currency !== "USDT") {
+                    setWarning("Paper trading only supports USDT. Please select USDT as capital currency.");
+                    return;
+               }
+               
+               if (demoWallet) {
+                    const availableAmount = parseFloat(demoWallet.balance);
+                    if (requestedAmount > availableAmount) {
+                         setWarning(
+                              `Insufficient virtual wallet balance. Available: ${availableAmount.toFixed(2)} USDT, ` +
+                              `Requested: ${requestedAmount.toFixed(2)} USDT. ` +
+                              `Your demo wallet has ${availableAmount.toFixed(2)} USDT.`
+                         );
+                         return;
+                    }
+               }
+          } else {
+               // For real trading, validate against exchange balance
                if (!availableBalances[botForm.capital_currency]) {
                     setWarning(`Currency ${botForm.capital_currency} not found in available balances. Please select a valid currency.`);
                     return;
@@ -630,8 +806,6 @@ export default function BotsPage() {
                
                const availableAmount = availableBalances[botForm.capital_currency].free;
                
-               // Only validate balance for real trading bots (not paper trading)
-               if (!botForm.paper_trading) {
                     // Check if balance is 0 or insufficient
                     if (availableAmount <= 0) {
                          setWarning(`Insufficient balance. Available: ${availableAmount.toFixed(8)} ${botForm.capital_currency}. Please deposit funds or select a different currency.`);
@@ -642,8 +816,6 @@ export default function BotsPage() {
                          setWarning(`Insufficient balance. Available: ${availableAmount.toFixed(8)} ${botForm.capital_currency}, Requested: ${requestedAmount.toFixed(8)}`);
                          return;
                     }
-               }
-               // For paper trading, we allow any amount (it's simulated)
           }
 
           setCreating(true);
@@ -662,7 +834,7 @@ export default function BotsPage() {
                const requestBody: Record<string, string | number | string[] | boolean | null> = {
                     name: botForm.name,
                     exchange_account_id: parseInt(botForm.exchange_account_id),
-                    capital: parseFloat(botForm.capital),
+                    capital: requestedAmount,
                     risk_per_trade: parseFloat(botForm.risk_per_trade),
                     symbols: botForm.symbols,
                     strategy_type: botForm.strategy_type,
@@ -883,8 +1055,42 @@ export default function BotsPage() {
      const handleUpdateBot = async () => {
           if (!editingBotId) return;
 
-          if (!botForm.name || !botForm.capital || botForm.symbols.length === 0) {
-               setWarning("Please fill in all required fields");
+          if (!botForm.name || botForm.symbols.length === 0) {
+               setWarning("Please fill in all required fields (name and symbols)");
+               return;
+          }
+
+          // For paper trading, if capital is not provided, use available virtual wallet balance
+          let requestedAmount: number;
+          if (botForm.paper_trading) {
+               if (!botForm.capital || botForm.capital.trim() === "") {
+                    // Use available virtual wallet balance
+                    if (demoWallet) {
+                         requestedAmount = parseFloat(demoWallet.balance);
+                         setBotForm(prev => ({ ...prev, capital: requestedAmount.toString() }));
+                    } else {
+                         // Keep existing capital if wallet not loaded
+                         if (!botForm.capital) {
+                              setWarning("Please enter a capital amount");
+                              return;
+                         }
+                         requestedAmount = parseFloat(botForm.capital);
+                    }
+               } else {
+                    requestedAmount = parseFloat(botForm.capital);
+               }
+          } else {
+               // For real trading, capital is required
+               if (!botForm.capital || botForm.capital.trim() === "") {
+                    setWarning("Please enter a capital amount");
+                    return;
+               }
+               requestedAmount = parseFloat(botForm.capital);
+          }
+
+          // Validate capital amount
+          if (isNaN(requestedAmount) || requestedAmount <= 0) {
+               setWarning("Please enter a valid capital amount greater than 0");
                return;
           }
 
@@ -904,7 +1110,7 @@ export default function BotsPage() {
                const requestBody: Record<string, string | number | string[] | boolean | null> = {
                     name: botForm.name,
                     exchange_account_id: botForm.exchange_account_id ? parseInt(botForm.exchange_account_id) : null,
-                    capital: parseFloat(botForm.capital),
+                    capital: requestedAmount,
                     risk_per_trade: parseFloat(botForm.risk_per_trade),
                     symbols: botForm.symbols,
                     strategy_type: botForm.strategy_type,
@@ -1318,6 +1524,7 @@ export default function BotsPage() {
                                    />
                               )}
                               
+                              {/* Simplified form: Only Duration, Capital, and Symbols */}
                               <div
                                    style={{
                                         display: "grid",
@@ -1325,40 +1532,15 @@ export default function BotsPage() {
                                         gap: "20px",
                                    }}
                               >
+                                   {/* Exchange Account - Required */}
                                    <div>
-                                        <label style={{ display: "block", marginBottom: "8px", fontWeight: "600", color: "#ffffff", fontSize: "14px" }}>Bot Name:</label>
-                                        <input
-                                             type="text"
-                                             value={botForm.name}
-                                             onChange={(e) => setBotForm({ ...botForm, name: e.target.value })}
-                                             placeholder="My Trading Bot"
-                                             style={{
-                                                  width: "100%",
-                                                  padding: "12px",
-                                                  borderRadius: "10px",
-                                                  border: "1px solid rgba(255, 174, 0, 0.3)",
-                                                  backgroundColor: "#1a1a1a",
-                                                  color: "#ffffff",
-                                                  fontSize: "14px",
-                                                  outline: "none",
-                                                  transition: "all 0.2s",
-                                             }}
-                                             onFocus={(e) => {
-                                                  e.currentTarget.style.borderColor = "#FFAE00";
-                                                  e.currentTarget.style.boxShadow = "0 0 0 3px rgba(255, 174, 0, 0.1)";
-                                             }}
-                                             onBlur={(e) => {
-                                                  e.currentTarget.style.borderColor = "rgba(255, 174, 0, 0.3)";
-                                                  e.currentTarget.style.boxShadow = "none";
-                                             }}
-                                        />
-                                   </div>
-
-                                   <div>
-                                        <label style={{ display: "block", marginBottom: "8px", fontWeight: "600", color: "#ffffff", fontSize: "14px" }}>Exchange Account:</label>
+                                        <label style={{ display: "block", marginBottom: "8px", fontWeight: "600", color: "#ffffff", fontSize: "14px" }}>
+                                             حساب صرافی <span style={{ color: "#ef4444" }}>*</span>:
+                                        </label>
                                         <select
                                              value={botForm.exchange_account_id}
                                              onChange={(e) => setBotForm({ ...botForm, exchange_account_id: e.target.value })}
+                                             required
                                              style={{
                                                   width: "100%",
                                                   padding: "12px",
@@ -1381,7 +1563,7 @@ export default function BotsPage() {
                                              }}
                                         >
                                              <option value="" style={{ backgroundColor: "#1a1a1a" }}>
-                                                  Select Exchange
+                                                  انتخاب صرافی
                                              </option>
                                              {accounts.map((acc) => (
                                                   <option key={acc.id} value={String(acc.id)} style={{ backgroundColor: "#1a1a1a" }}>
@@ -1390,72 +1572,81 @@ export default function BotsPage() {
                                              ))}
                                         </select>
                                    </div>
-
+                                   
+                                   {/* Duration (hours) - Required */}
                                    <div>
                                         <label style={{ display: "block", marginBottom: "8px", fontWeight: "600", color: "#ffffff", fontSize: "14px" }}>
-                                             Capital:
-                                             {botForm.exchange_account_id && botForm.capital_currency && availableBalances[botForm.capital_currency] && (
-                                                  <span style={{ marginLeft: "8px", color: "#888", fontSize: "12px", fontWeight: "400" }}>
-                                                       (Available: {availableBalances[botForm.capital_currency].free.toFixed(8)} {botForm.capital_currency})
+                                             مدت زمان (ساعت) <span style={{ color: "#ef4444" }}>*</span>:
+                                        </label>
+                                        <input
+                                             type="number"
+                                             step="1"
+                                             min="1"
+                                             value={botForm.duration_hours}
+                                             onChange={(e) => setBotForm({ ...botForm, duration_hours: e.target.value })}
+                                             placeholder="2"
+                                             required
+                                             style={{
+                                                  width: "100%",
+                                                  padding: "12px",
+                                                  borderRadius: "10px",
+                                                  border: "1px solid rgba(255, 174, 0, 0.3)",
+                                                  backgroundColor: "#1a1a1a",
+                                                  color: "#ffffff",
+                                                  fontSize: "14px",
+                                                  outline: "none",
+                                                  transition: "all 0.2s",
+                                             }}
+                                             onFocus={(e) => {
+                                                  e.currentTarget.style.borderColor = "#FFAE00";
+                                                  e.currentTarget.style.boxShadow = "0 0 0 3px rgba(255, 174, 0, 0.1)";
+                                             }}
+                                             onBlur={(e) => {
+                                                  e.currentTarget.style.borderColor = "rgba(255, 174, 0, 0.3)";
+                                                  e.currentTarget.style.boxShadow = "none";
+                                             }}
+                                        />
+                                   </div>
+
+                                   {/* Capital - Required */}
+                                   <div>
+                                        <label style={{ display: "block", marginBottom: "8px", fontWeight: "600", color: "#ffffff", fontSize: "14px" }}>
+                                             مبلغ (USDT) <span style={{ color: "#ef4444" }}>*</span>:
+                                             {botForm.paper_trading && demoWallet ? (
+                                                  <span style={{ marginLeft: "8px", color: "#FFAE00", fontSize: "12px", fontWeight: "400" }}>
+                                                       (موجودی دمو: {parseFloat(demoWallet.balance).toFixed(2)} USDT)
                                                   </span>
-                                             )}
+                                             ) : null}
                                         </label>
                                         <div style={{ display: "flex", gap: "8px" }}>
-                                             {botForm.exchange_account_id ? (
+                                             {/* For paper trading, always use USDT */}
+                                             {botForm.paper_trading && (
                                                   <>
-                                                       <select
-                                                            value={botForm.capital_currency}
-                                                            onChange={(e) => setBotForm({ ...botForm, capital_currency: e.target.value, capital: "" })}
-                                                            disabled={balancesLoading || Object.keys(availableBalances).length === 0}
-                                                            style={{
-                                                                 minWidth: "120px",
-                                                                 padding: "12px",
-                                                                 borderRadius: "10px",
-                                                                 border: "1px solid rgba(255, 174, 0, 0.3)",
-                                                                 backgroundColor: "#1a1a1a",
-                                                                 color: "#ffffff",
-                                                                 fontSize: "14px",
-                                                                 outline: "none",
-                                                                 cursor: balancesLoading || Object.keys(availableBalances).length === 0 ? "not-allowed" : "pointer",
-                                                                 transition: "all 0.2s",
-                                                                 opacity: balancesLoading || Object.keys(availableBalances).length === 0 ? 0.6 : 1,
-                                                            }}
-                                                            onFocus={(e) => {
-                                                                 if (!balancesLoading && Object.keys(availableBalances).length > 0) {
-                                                                      e.currentTarget.style.borderColor = "#FFAE00";
-                                                                      e.currentTarget.style.boxShadow = "0 0 0 3px rgba(255, 174, 0, 0.1)";
-                                                                 }
-                                                            }}
-                                                            onBlur={(e) => {
-                                                                 e.currentTarget.style.borderColor = "rgba(255, 174, 0, 0.3)";
-                                                                 e.currentTarget.style.boxShadow = "none";
-                                                            }}
-                                                       >
-                                                            <option value="" style={{ backgroundColor: "#1a1a1a", color: "#888" }}>
-                                                                 {balancesLoading ? "Loading..." : Object.keys(availableBalances).length === 0 ? "No balance" : "Select Currency"}
-                                                            </option>
-                                                            {Object.keys(availableBalances)
-                                                                 .sort()
-                                                                 .map((currency) => {
-                                                                      const balance = availableBalances[currency];
-                                                                      const free = balance?.free || 0;
-                                                                      const total = balance?.total || 0;
-                                                                      const hasBalance = free > 0 || total > 0;
-                                                                      return (
-                                                                           <option key={currency} value={currency} style={{ backgroundColor: "#1a1a1a", color: hasBalance ? "#ffffff" : "#888" }}>
-                                                                                {currency} (Free: {free.toFixed(8)})
-                                                                           </option>
-                                                                      );
-                                                                 })}
-                                                       </select>
+                                                       <div style={{
+                                                            minWidth: "120px",
+                                                            padding: "12px",
+                                                            borderRadius: "10px",
+                                                            border: "1px solid rgba(255, 174, 0, 0.3)",
+                                                            backgroundColor: "rgba(255, 174, 0, 0.1)",
+                                                            color: "#FFAE00",
+                                                            fontSize: "14px",
+                                                            fontWeight: "600",
+                                                            display: "flex",
+                                                            alignItems: "center",
+                                                            justifyContent: "center",
+                                                       }}>
+                                                            USDT
+                                                       </div>
                                                        <input
                                                             type="number"
                                                             step="any"
                                                             min="0"
                                                             value={botForm.capital}
-                                                            onChange={(e) => setBotForm({ ...botForm, capital: e.target.value })}
-                                                            placeholder={botForm.capital_currency ? `Enter amount in ${botForm.capital_currency}` : "Enter amount"}
-                                                            disabled={!botForm.capital_currency}
+                                                            onChange={(e) => {
+                                                                 setBotForm({ ...botForm, capital: e.target.value, capital_currency: "USDT" });
+                                                            }}
+                                                            placeholder="مبلغ را وارد کنید"
+                                                            required
                                                             style={{
                                                                  flex: 1,
                                                                  padding: "12px",
@@ -1466,14 +1657,10 @@ export default function BotsPage() {
                                                                  fontSize: "14px",
                                                                  outline: "none",
                                                                  transition: "all 0.2s",
-                                                                 opacity: !botForm.capital_currency ? 0.6 : 1,
-                                                                 cursor: !botForm.capital_currency ? "not-allowed" : "text",
                                                             }}
                                                             onFocus={(e) => {
-                                                                 if (botForm.capital_currency) {
-                                                                      e.currentTarget.style.borderColor = "#FFAE00";
-                                                                      e.currentTarget.style.boxShadow = "0 0 0 3px rgba(255, 174, 0, 0.1)";
-                                                                 }
+                                                                 e.currentTarget.style.borderColor = "#FFAE00";
+                                                                 e.currentTarget.style.boxShadow = "0 0 0 3px rgba(255, 174, 0, 0.1)";
                                                             }}
                                                             onBlur={(e) => {
                                                                  e.currentTarget.style.borderColor = "rgba(255, 174, 0, 0.3)";
@@ -1481,293 +1668,29 @@ export default function BotsPage() {
                                                             }}
                                                        />
                                                   </>
-                                             ) : (
-                                                  <div style={{
-                                                       flex: 1,
-                                                       padding: "12px",
-                                                       borderRadius: "10px",
-                                                       border: "1px solid rgba(255, 174, 0, 0.3)",
-                                                       backgroundColor: "#1a1a1a",
-                                                       color: "#888",
-                                                       fontSize: "14px",
-                                                       textAlign: "center",
-                                                  }}>
-                                                       Please select an exchange account first
-                                                  </div>
                                              )}
                                         </div>
                                    </div>
 
-                                   <div>
-                                        <label style={{ display: "block", marginBottom: "8px", fontWeight: "600", color: "#ffffff", fontSize: "14px" }}>Risk Per Trade (%):</label>
-                                        <input
-                                             type="number"
-                                             step="0.001"
-                                             min="0.001"
-                                             max="0.1"
-                                             value={botForm.risk_per_trade}
-                                             onChange={(e) => setBotForm({ ...botForm, risk_per_trade: e.target.value })}
-                                             placeholder="0.02"
-                                             style={{
-                                                  width: "100%",
-                                                  padding: "12px",
-                                                  borderRadius: "10px",
-                                                  border: "1px solid rgba(255, 174, 0, 0.3)",
-                                                  backgroundColor: "#1a1a1a",
-                                                  color: "#ffffff",
-                                                  fontSize: "14px",
-                                                  outline: "none",
-                                                  transition: "all 0.2s",
-                                             }}
-                                             onFocus={(e) => {
-                                                  e.currentTarget.style.borderColor = "#FFAE00";
-                                                  e.currentTarget.style.boxShadow = "0 0 0 3px rgba(255, 174, 0, 0.1)";
-                                             }}
-                                             onBlur={(e) => {
-                                                  e.currentTarget.style.borderColor = "rgba(255, 174, 0, 0.3)";
-                                                  e.currentTarget.style.boxShadow = "none";
-                                             }}
-                                        />
-                                   </div>
 
-                                   <div>
-                                        <label style={{ display: "block", marginBottom: "8px", fontWeight: "600", color: "#ffffff", fontSize: "14px" }}>Strategy Type:</label>
-                                        <select
-                                             value={botForm.strategy_type}
-                                             onChange={(e) => setBotForm({ ...botForm, strategy_type: e.target.value })}
-                                             style={{
-                                                  width: "100%",
-                                                  padding: "12px",
-                                                  borderRadius: "10px",
-                                                  border: "1px solid rgba(255, 174, 0, 0.3)",
-                                                  backgroundColor: "#1a1a1a",
-                                                  color: "#ffffff",
-                                                  fontSize: "14px",
-                                                  outline: "none",
-                                                  cursor: "pointer",
-                                                  transition: "all 0.2s",
-                                             }}
-                                             onFocus={(e) => {
-                                                  e.currentTarget.style.borderColor = "#FFAE00";
-                                                  e.currentTarget.style.boxShadow = "0 0 0 3px rgba(255, 174, 0, 0.1)";
-                                             }}
-                                             onBlur={(e) => {
-                                                  e.currentTarget.style.borderColor = "rgba(255, 174, 0, 0.3)";
-                                                  e.currentTarget.style.boxShadow = "none";
-                                             }}
-                                        >
-                                             <option value="prediction_based" style={{ backgroundColor: "#1a1a1a" }}>
-                                                  Prediction Based
-                                             </option>
-                                             <option value="momentum" style={{ backgroundColor: "#1a1a1a" }}>
-                                                  Momentum
-                                             </option>
-                                             <option value="mean_reversion" style={{ backgroundColor: "#1a1a1a" }}>
-                                                  Mean Reversion
-                                             </option>
-                                             <option value="breakout" style={{ backgroundColor: "#1a1a1a" }}>
-                                                  Breakout
-                                             </option>
-                                        </select>
-                                   </div>
-
-                                   <div>
-                                        <label style={{ display: "block", marginBottom: "8px", fontWeight: "600", color: "#ffffff", fontSize: "14px" }}>Duration (hours, optional):</label>
-                                        <input
-                                             type="number"
-                                             step="1"
-                                             min="1"
-                                             value={botForm.duration_hours}
-                                             onChange={(e) => setBotForm({ ...botForm, duration_hours: e.target.value })}
-                                             placeholder="2"
-                                             style={{
-                                                  width: "100%",
-                                                  padding: "12px",
-                                                  borderRadius: "10px",
-                                                  border: "1px solid rgba(255, 174, 0, 0.3)",
-                                                  backgroundColor: "#1a1a1a",
-                                                  color: "#ffffff",
-                                                  fontSize: "14px",
-                                                  outline: "none",
-                                                  transition: "all 0.2s",
-                                             }}
-                                             onFocus={(e) => {
-                                                  e.currentTarget.style.borderColor = "#FFAE00";
-                                                  e.currentTarget.style.boxShadow = "0 0 0 3px rgba(255, 174, 0, 0.1)";
-                                             }}
-                                             onBlur={(e) => {
-                                                  e.currentTarget.style.borderColor = "rgba(255, 174, 0, 0.3)";
-                                                  e.currentTarget.style.boxShadow = "none";
-                                             }}
-                                        />
-                                   </div>
-
-                                   {/* Paper Trading Mode */}
-                                   <div
-                                        style={{
-                                             gridColumn: "1 / -1",
-                                             marginTop: "8px",
-                                             marginBottom: "16px",
-                                             padding: "16px",
-                                             backgroundColor: "rgba(255, 174, 0, 0.1)",
-                                             borderRadius: "12px",
-                                             border: "1px solid rgba(255, 174, 0, 0.3)",
-                                        }}
-                                   >
-                                        <label style={{ display: "flex", alignItems: "center", gap: "12px", cursor: "pointer" }}>
-                                             <input
-                                                  type="checkbox"
-                                                  checked={botForm.paper_trading}
-                                                  onChange={(e) => setBotForm({ ...botForm, paper_trading: e.target.checked })}
-                                                  style={{
-                                                       width: "20px",
-                                                       height: "20px",
-                                                       cursor: "pointer",
-                                                       accentColor: "#FFAE00",
-                                                  }}
-                                             />
-                                             <div>
-                                                  <span style={{ fontWeight: "600", color: "#FFAE00", fontSize: "15px" }}>📝 Paper Trading (Demo Mode)</span>
-                                                  <div style={{ fontSize: "13px", color: "#aaa", marginTop: "4px" }}>معاملات شبیه‌سازی می‌شوند و پول واقعی استفاده نمی‌شود. برای تست امن است.</div>
-                                             </div>
-                                        </label>
-                                   </div>
-
-                                   <div>
-                                        <label style={{ display: "block", marginBottom: "8px", fontWeight: "600", color: "#ffffff", fontSize: "14px" }}>Stop Loss (%):</label>
-                                        <input
-                                             type="number"
-                                             step="0.001"
-                                             min="0.001"
-                                             max="0.5"
-                                             value={botForm.stop_loss_percent}
-                                             onChange={(e) => setBotForm({ ...botForm, stop_loss_percent: e.target.value })}
-                                             placeholder="0.05"
-                                             style={{
-                                                  width: "100%",
-                                                  padding: "12px",
-                                                  borderRadius: "10px",
-                                                  border: "1px solid rgba(255, 174, 0, 0.3)",
-                                                  backgroundColor: "#1a1a1a",
-                                                  color: "#ffffff",
-                                                  fontSize: "14px",
-                                                  outline: "none",
-                                                  transition: "all 0.2s",
-                                             }}
-                                             onFocus={(e) => {
-                                                  e.currentTarget.style.borderColor = "#FFAE00";
-                                                  e.currentTarget.style.boxShadow = "0 0 0 3px rgba(255, 174, 0, 0.1)";
-                                             }}
-                                             onBlur={(e) => {
-                                                  e.currentTarget.style.borderColor = "rgba(255, 174, 0, 0.3)";
-                                                  e.currentTarget.style.boxShadow = "none";
-                                             }}
-                                        />
-                                   </div>
-
-                                   <div>
-                                        <label style={{ display: "block", marginBottom: "8px", fontWeight: "600", color: "#ffffff", fontSize: "14px" }}>Take Profit (%):</label>
-                                        <input
-                                             type="number"
-                                             step="0.001"
-                                             min="0.001"
-                                             max="2.0"
-                                             value={botForm.take_profit_percent}
-                                             onChange={(e) => setBotForm({ ...botForm, take_profit_percent: e.target.value })}
-                                             placeholder="0.10"
-                                             style={{
-                                                  width: "100%",
-                                                  padding: "12px",
-                                                  borderRadius: "10px",
-                                                  border: "1px solid rgba(255, 174, 0, 0.3)",
-                                                  backgroundColor: "#1a1a1a",
-                                                  color: "#ffffff",
-                                                  fontSize: "14px",
-                                                  outline: "none",
-                                                  transition: "all 0.2s",
-                                             }}
-                                             onFocus={(e) => {
-                                                  e.currentTarget.style.borderColor = "#FFAE00";
-                                                  e.currentTarget.style.boxShadow = "0 0 0 3px rgba(255, 174, 0, 0.1)";
-                                             }}
-                                             onBlur={(e) => {
-                                                  e.currentTarget.style.borderColor = "rgba(255, 174, 0, 0.3)";
-                                                  e.currentTarget.style.boxShadow = "none";
-                                             }}
-                                        />
-                                   </div>
                               </div>
 
-                              {/* Strategy Parameters */}
-                              <div style={{ marginTop: "24px", gridColumn: "1 / -1" }}>
-                                   <label style={{ display: "block", marginBottom: "8px", fontWeight: "600", color: "#ffffff", fontSize: "14px" }}>
-                                        Strategy Parameters (JSON, optional):
-                                        <span style={{ marginLeft: "8px", color: "#888", fontSize: "12px", fontWeight: "400" }}>
-                                             (e.g., {"{"}"lookback_period": 20, "threshold": 0.05{"}"})
-                                        </span>
-                                   </label>
-                                   <textarea
-                                        value={strategyParamsInput}
-                                        onChange={(e) => setStrategyParamsInput(e.target.value)}
-                                        placeholder='{"lookback_period": 20, "threshold": 0.05}'
-                                        style={{
-                                             width: "100%",
-                                             minHeight: "120px",
-                                             padding: "12px",
-                                             borderRadius: "10px",
-                                             border: "1px solid rgba(255, 174, 0, 0.3)",
-                                             backgroundColor: "#1a1a1a",
-                                             color: "#ffffff",
-                                             fontSize: "13px",
-                                             fontFamily: "monospace",
-                                             outline: "none",
-                                             transition: "all 0.2s",
-                                             resize: "vertical",
-                                        }}
-                                        onFocus={(e) => {
-                                             e.currentTarget.style.borderColor = "#FFAE00";
-                                             e.currentTarget.style.boxShadow = "0 0 0 3px rgba(255, 174, 0, 0.1)";
-                                        }}
-                                        onBlur={(e) => {
-                                             e.currentTarget.style.borderColor = "rgba(255, 174, 0, 0.3)";
-                                             e.currentTarget.style.boxShadow = "none";
-                                             // Validate JSON on blur
-                                             if (e.target.value.trim()) {
-                                                  try {
-                                                       JSON.parse(e.target.value);
-                                                       setWarning(null); // Clear warning if valid
-                                                  } catch (err) {
-                                                       setWarning("Invalid JSON format in Strategy Parameters. Please check your JSON syntax.");
-                                                  }
-                                             } else {
-                                                  setWarning(null); // Clear warning if empty
-                                             }
-                                        }}
-                                   />
-                              </div>
-
-                              {/* Symbols Selection */}
+                              {/* Symbols Selection - Required */}
                               <div style={{ marginTop: "24px", gridColumn: "1 / -1" }}>
                                    <label style={{ display: "block", marginBottom: "12px", fontWeight: "600", color: "#ffffff", fontSize: "14px" }}>
-                                        Trading Symbols:
-                                        {!botForm.exchange_account_id && (
-                                             <span style={{ marginLeft: "8px", color: "#888", fontSize: "12px", fontWeight: "400" }}>
-                                                  (Select an exchange account first)
-                                             </span>
-                                        )}
+                                        نوع کوین <span style={{ color: "#ef4444" }}>*</span>:
                                         {botForm.exchange_account_id && availableSymbols.length > 0 && (
                                              <span style={{ marginLeft: "8px", color: "#888", fontSize: "12px", fontWeight: "400" }}>
-                                                  ({availableSymbols.length} symbols available)
+                                                  ({availableSymbols.length} نماد موجود)
                                              </span>
                                         )}
                                    </label>
                                    <div style={{ display: "flex", gap: "12px", marginBottom: "12px" }}>
-                                        {botForm.exchange_account_id ? (
+                                        {botForm.exchange_account_id && availableSymbols.length > 0 ? (
                                              <>
                                                   <select
                                                        value={symbolInput}
                                                        onChange={(e) => setSymbolInput(e.target.value)}
-                                                       disabled={availableSymbols.length === 0}
                                                        style={{
                                                             flex: 1,
                                                             padding: "12px",
@@ -1778,14 +1701,11 @@ export default function BotsPage() {
                                                             fontSize: "14px",
                                                             outline: "none",
                                                             transition: "all 0.2s",
-                                                            cursor: availableSymbols.length === 0 ? "not-allowed" : "pointer",
-                                                            opacity: availableSymbols.length === 0 ? 0.6 : 1,
+                                                            cursor: "pointer",
                                                        }}
                                                        onFocus={(e) => {
-                                                            if (availableSymbols.length > 0) {
-                                                                 e.currentTarget.style.borderColor = "#FFAE00";
-                                                                 e.currentTarget.style.boxShadow = "0 0 0 3px rgba(255, 174, 0, 0.1)";
-                                                            }
+                                                            e.currentTarget.style.borderColor = "#FFAE00";
+                                                            e.currentTarget.style.boxShadow = "0 0 0 3px rgba(255, 174, 0, 0.1)";
                                                        }}
                                                        onBlur={(e) => {
                                                             e.currentTarget.style.borderColor = "rgba(255, 174, 0, 0.3)";
@@ -1793,7 +1713,7 @@ export default function BotsPage() {
                                                        }}
                                                   >
                                                        <option value="" style={{ backgroundColor: "#1a1a1a", color: "#888" }}>
-                                                            {availableSymbols.length === 0 ? "Loading symbols..." : "Select a symbol"}
+                                                            انتخاب نماد
                                                        </option>
                                                        {availableSymbols.map((sym) => (
                                                             <option key={sym} value={sym} style={{ backgroundColor: "#1a1a1a", color: "#ffffff" }}>
@@ -1831,7 +1751,7 @@ export default function BotsPage() {
                                                             }
                                                        }}
                                                   >
-                                                       Add
+                                                       افزودن
                                                   </button>
                                              </>
                                         ) : (
@@ -1845,7 +1765,7 @@ export default function BotsPage() {
                                                   fontSize: "14px",
                                                   textAlign: "center",
                                              }}>
-                                                  Please select an exchange account to view available symbols
+                                                  در حال بارگذاری نمادها...
                                              </div>
                                         )}
                                    </div>
@@ -1934,20 +1854,24 @@ export default function BotsPage() {
                                                   setEditingBotId(null);
                                                   setShowCreateForm(false);
                                                   setBotForm({
-                                                       name: "",
-                                                       exchange_account_id: "",
+                                                       name: "My Trading Bot",
+                                                       exchange_account_id: accounts.length > 0 ? String(accounts[0].id) : "",
                                                        capital: "",
-                                                       capital_currency: "",
+                                                       capital_currency: "USDT",
                                                        risk_per_trade: "0.02",
                                                        symbols: [],
                                                        strategy_type: "prediction_based",
                                                        max_position_size: "",
-                                                       stop_loss_percent: "",
-                                                       take_profit_percent: "",
-                                                  duration_hours: "",
-                                                  paper_trading: true,
-                                                  strategy_params: {},
-                                             });
+                                                       stop_loss_percent: "0.05",
+                                                       take_profit_percent: "0.10",
+                                                       duration_hours: "",
+                                                       paper_trading: true,
+                                                       strategy_params: {
+                                                            use_dynamic_exit: true,
+                                                            trailing_stop_percent: 0.5,
+                                                            jump_tp_adjustment: 0.3,
+                                                       },
+                                                  });
                                              setStrategyParamsInput("");
                                              }}
                                              style={{
@@ -1973,6 +1897,92 @@ export default function BotsPage() {
                                              Cancel
                                         </button>
                                    )}
+                              </div>
+                         </div>
+                    </div>
+               )}
+
+               {/* Demo Wallet Card */}
+               {demoWallet && (
+                    <div style={{ marginBottom: "32px" }}>
+                         <div style={{
+                              padding: "24px",
+                              backgroundColor: "rgba(255, 174, 0, 0.1)",
+                              border: "2px solid rgba(255, 174, 0, 0.3)",
+                              borderRadius: "16px",
+                              boxShadow: "0 4px 12px rgba(0, 0, 0, 0.3)",
+                         }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", flexWrap: "wrap", gap: "16px" }}>
+                                   <div>
+                                        <h2 style={{ fontSize: "24px", fontWeight: "700", color: "#FFAE00", marginBottom: "8px" }}>💰 کیف پول دمو</h2>
+                                        <p style={{ fontSize: "14px", color: "#aaa" }}>
+                                             موجودی مجازی برای معاملات دمو - با استفاده از پیش‌بینی‌ها
+                                        </p>
+                                   </div>
+                                   <button
+                                        onClick={resetDemoWallet}
+                                        disabled={resettingWallet}
+                                        style={{
+                                             padding: "10px 20px",
+                                             backgroundColor: resettingWallet ? "#666" : "rgba(239, 68, 68, 0.2)",
+                                             border: `1px solid ${resettingWallet ? "#666" : "rgba(239, 68, 68, 0.4)"}`,
+                                             borderRadius: "8px",
+                                             color: resettingWallet ? "#888" : "#ef4444",
+                                             cursor: resettingWallet ? "not-allowed" : "pointer",
+                                             fontWeight: "600",
+                                             fontSize: "14px",
+                                             transition: "all 0.3s",
+                                        }}
+                                        onMouseEnter={(e) => {
+                                             if (!resettingWallet) {
+                                                  e.currentTarget.style.backgroundColor = "rgba(239, 68, 68, 0.3)";
+                                             }
+                                        }}
+                                        onMouseLeave={(e) => {
+                                             if (!resettingWallet) {
+                                                  e.currentTarget.style.backgroundColor = "rgba(239, 68, 68, 0.2)";
+                                             }
+                                        }}
+                                   >
+                                        {resettingWallet ? "در حال ریست..." : "🔄 ریست کیف پول"}
+                                   </button>
+                              </div>
+                              
+                              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "20px" }}>
+                                   <div>
+                                        <div style={{ fontSize: "12px", color: "#888", marginBottom: "8px", fontWeight: "500" }}>موجودی فعلی</div>
+                                        <div style={{ fontSize: "32px", fontWeight: "700", color: "#ffffff" }}>
+                                             ${parseFloat(demoWallet.balance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </div>
+                                        <div style={{ fontSize: "11px", color: "#888", marginTop: "4px" }}>USDT</div>
+                                   </div>
+                                   
+                                   <div>
+                                        <div style={{ fontSize: "12px", color: "#888", marginBottom: "8px", fontWeight: "500" }}>موجودی اولیه</div>
+                                        <div style={{ fontSize: "32px", fontWeight: "700", color: "#888" }}>
+                                             ${parseFloat(demoWallet.initial_balance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </div>
+                                        <div style={{ fontSize: "11px", color: "#888", marginTop: "4px" }}>USDT</div>
+                                   </div>
+                                   
+                                   <div>
+                                        <div style={{ fontSize: "12px", color: "#888", marginBottom: "8px", fontWeight: "500" }}>سود/زیان کل</div>
+                                        <div style={{ 
+                                             fontSize: "32px", 
+                                             fontWeight: "700", 
+                                             color: parseFloat(demoWallet.total_pnl) >= 0 ? "#22c55e" : "#ef4444" 
+                                        }}>
+                                             ${parseFloat(demoWallet.total_pnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </div>
+                                        <div style={{ 
+                                             fontSize: "11px", 
+                                             color: parseFloat(demoWallet.total_pnl) >= 0 ? "#22c55e" : "#ef4444",
+                                             marginTop: "4px",
+                                             fontWeight: "600",
+                                        }}>
+                                             {parseFloat(demoWallet.total_pnl_percent) >= 0 ? "+" : ""}{parseFloat(demoWallet.total_pnl_percent).toFixed(2)}%
+                                        </div>
+                                   </div>
                               </div>
                          </div>
                     </div>
@@ -2325,7 +2335,7 @@ export default function BotsPage() {
                                                   </div>
                                                   
                                                   {/* Paper Trading Badge */}
-                                                  <div style={{ display: "flex", alignItems: "center" }}>
+                                                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                                                        <span
                                                             style={{
                                                                  padding: "4px 10px",
@@ -2338,23 +2348,55 @@ export default function BotsPage() {
                                                                  border: `1px solid ${bot.paper_trading ? "rgba(255, 174, 0, 0.4)" : "rgba(34, 197, 94, 0.4)"}`,
                                                             }}
                                                        >
-                                                            {bot.paper_trading ? "DEMO" : "REAL"}
+                                                            {bot.paper_trading ? "📝 DEMO" : "💰 REAL"}
                                                        </span>
+                                                       {bot.paper_trading && (
+                                                            <span
+                                                                 style={{
+                                                                      fontSize: "10px",
+                                                                      color: "#888",
+                                                                      fontStyle: "italic",
+                                                                 }}
+                                                            >
+                                                                 (شبیه‌سازی)
+                                                            </span>
+                                                       )}
                                                   </div>
                                              </div>
                                              
+                                             {bot.paper_trading && (
+                                                  <div
+                                                       style={{
+                                                            marginBottom: "12px",
+                                                            padding: "8px 12px",
+                                                            backgroundColor: "rgba(255, 174, 0, 0.08)",
+                                                            borderRadius: "8px",
+                                                            border: "1px solid rgba(255, 174, 0, 0.2)",
+                                                       }}
+                                                  >
+                                                       <div style={{ fontSize: "11px", color: "#FFAE00", fontWeight: "500" }}>
+                                                            📊 نتایج شبیه‌سازی شده (شامل کارمزد و slippage)
+                                                       </div>
+                                                  </div>
+                                             )}
                                              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "16px" }}>
                                                   <div>
                                                        <div style={{ fontSize: "12px", color: "#888", marginBottom: "4px" }}>Capital</div>
                                                        <div style={{ fontWeight: "600", color: "#ffffff", fontSize: "16px" }}>
                                                             ${parseFloat(bot.current_capital).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                        </div>
+                                                       {bot.paper_trading && (
+                                                            <div style={{ fontSize: "10px", color: "#666", marginTop: "2px" }}>مجازی</div>
+                                                       )}
                                                   </div>
                                                   <div>
                                                        <div style={{ fontSize: "12px", color: "#888", marginBottom: "4px" }}>Total P&L</div>
                                                        <div style={{ fontWeight: "600", color: pnlColor, fontSize: "16px" }}>
                                                             ${pnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                        </div>
+                                                       {bot.paper_trading && (
+                                                            <div style={{ fontSize: "10px", color: "#666", marginTop: "2px" }}>شبیه‌سازی شده</div>
+                                                       )}
                                                   </div>
                                                   <div>
                                                        <div style={{ fontSize: "12px", color: "#888", marginBottom: "4px" }}>Trades</div>

@@ -61,6 +61,9 @@ export default function TradingPage() {
      const { selectedAccountId, accounts } = useExchange();
      const [orders, setOrders] = useState<Order[]>([]);
      const [positions, setPositions] = useState<Position[]>([]);
+     const [closedPositions, setClosedPositions] = useState<Position[]>([]);
+     const [closedPositionsLoading, setClosedPositionsLoading] = useState(false);
+     const [showClosedPositions, setShowClosedPositions] = useState(false);
      const [balance, setBalance] = useState<Balance | null>(null);
      const [trades, setTrades] = useState<Trade[]>([]);
 
@@ -85,6 +88,31 @@ export default function TradingPage() {
      // Auto-refresh
      const [autoRefresh, setAutoRefresh] = useState(true);
      const [refreshInterval, setRefreshInterval] = useState(10); // seconds
+     
+     // WebSocket for real-time order updates
+     const [useWebSocket, setUseWebSocket] = useState(true);
+     const [wsConnection, setWsConnection] = useState<WebSocket | null>(null);
+     const [wsConnectionStatus, setWsConnectionStatus] = useState<"disconnected" | "connecting" | "connected" | "error">("disconnected");
+     const [wsError, setWsError] = useState<string | null>(null);
+     const [wsReconnectAttempts, setWsReconnectAttempts] = useState(0);
+     
+     // WebSocket for real-time position updates
+     const [wsPositionConnection, setWsPositionConnection] = useState<WebSocket | null>(null);
+     const [wsPositionConnectionStatus, setWsPositionConnectionStatus] = useState<"disconnected" | "connecting" | "connected" | "error">("disconnected");
+     const [wsPositionError, setWsPositionError] = useState<string | null>(null);
+     const [wsPositionReconnectAttempts, setWsPositionReconnectAttempts] = useState(0);
+     
+     // Order details modal
+     const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+     const [showOrderDetails, setShowOrderDetails] = useState(false);
+     const [refreshingOrderId, setRefreshingOrderId] = useState<number | null>(null);
+     const [pendingOrdersRefreshInterval, setPendingOrdersRefreshInterval] = useState<NodeJS.Timeout | null>(null);
+     
+     // Position details modal
+     const [selectedPosition, setSelectedPosition] = useState<Position | null>(null);
+     const [showPositionDetails, setShowPositionDetails] = useState(false);
+     const [positionTrades, setPositionTrades] = useState<Trade[]>([]);
+     const [positionTradesLoading, setPositionTradesLoading] = useState(false);
 
      // Initialize loading state
      useEffect(() => {
@@ -153,6 +181,38 @@ export default function TradingPage() {
           }
      }, [selectedAccountId]);
 
+     // Fetch closed positions
+     const fetchClosedPositions = useCallback(async () => {
+          if (!selectedAccountId) return;
+
+          setClosedPositionsLoading(true);
+          try {
+               const token = localStorage.getItem("auth_token") || "";
+               if (!token) return;
+
+               const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+               const response = await fetch(`${apiUrl}/trading/positions/closed?exchange_account_id=${selectedAccountId}&limit=100`, {
+                    headers: { Authorization: `Bearer ${token}` },
+               });
+
+               if (response.ok) {
+                    const data = await response.json();
+                    setClosedPositions(Array.isArray(data) ? data : []);
+                    setError(null);
+               } else {
+                    const errorData = await response.json().catch(() => ({}));
+                    console.error("Error fetching closed positions:", errorData.detail || "Failed to load closed positions");
+                    setClosedPositions([]);
+               }
+          } catch (error) {
+               console.error("Error fetching closed positions:", error);
+               setClosedPositions([]);
+          } finally {
+               setClosedPositionsLoading(false);
+          }
+     }, [selectedAccountId]);
+
      // Fetch balance
      const fetchBalance = useCallback(async () => {
           if (!selectedAccountId) return;
@@ -214,6 +274,69 @@ export default function TradingPage() {
           }
      }, [selectedAccountId]);
 
+     // Refresh single order status
+     const refreshOrderStatus = useCallback(async (orderId: number) => {
+          setRefreshingOrderId(orderId);
+          try {
+               const token = localStorage.getItem("auth_token") || "";
+               if (!token) return;
+
+               const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+               const response = await fetch(`${apiUrl}/trading/orders/${orderId}`, {
+                    headers: { Authorization: `Bearer ${token}` },
+               });
+
+               if (response.ok) {
+                    const updatedOrder = await response.json();
+                    // Update order in the list
+                    setOrders((prevOrders) =>
+                         prevOrders.map((order) => (order.id === orderId ? updatedOrder : order))
+                    );
+                    // Update selected order if it's the same
+                    if (selectedOrder && selectedOrder.id === orderId) {
+                         setSelectedOrder(updatedOrder);
+                    }
+               } else {
+                    const errorData = await response.json().catch(() => ({}));
+                    console.error("Error refreshing order:", errorData.detail || "Failed to refresh order");
+               }
+          } catch (error) {
+               console.error("Error refreshing order:", error);
+          } finally {
+               setRefreshingOrderId(null);
+          }
+     }, [selectedOrder]);
+
+     // Fetch position trades (entry/exit history)
+     const fetchPositionTrades = useCallback(async (symbol: string) => {
+          setPositionTradesLoading(true);
+          try {
+               const token = localStorage.getItem("auth_token") || "";
+               if (!token) return;
+
+               const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+               const response = await fetch(`${apiUrl}/trading/trades?symbol=${encodeURIComponent(symbol)}&limit=100`, {
+                    headers: { Authorization: `Bearer ${token}` },
+               });
+
+               if (response.ok) {
+                    const data = await response.json();
+                    setPositionTrades(Array.isArray(data) ? data : []);
+               } else {
+                    const errorData = await response.json().catch(() => ({}));
+                    console.error("Error fetching position trades:", errorData.detail || "Failed to fetch trades");
+                    setPositionTrades([]);
+               }
+          } catch (error) {
+               console.error("Error fetching position trades:", error);
+               setPositionTrades([]);
+          } finally {
+               setPositionTradesLoading(false);
+          }
+     }, []);
+
      // Fetch data when account changes
      useEffect(() => {
           if (selectedAccountId) {
@@ -221,12 +344,303 @@ export default function TradingPage() {
                fetchPositions();
                fetchBalance();
                fetchTrades();
+               if (showClosedPositions) {
+                    fetchClosedPositions();
+               }
           }
-     }, [selectedAccountId, fetchOrders, fetchPositions, fetchBalance, fetchTrades]);
+     }, [selectedAccountId, fetchOrders, fetchPositions, fetchBalance, fetchTrades, showClosedPositions, fetchClosedPositions]);
 
-     // Auto-refresh
+     // WebSocket connection for real-time order updates
      useEffect(() => {
-          if (!autoRefresh || !selectedAccountId) return;
+          if (!useWebSocket || !autoRefresh || !selectedAccountId) {
+               // Close WebSocket if disabled
+               if (wsConnection) {
+                    if (wsConnection.readyState === WebSocket.OPEN || wsConnection.readyState === WebSocket.CONNECTING) {
+                         wsConnection.close();
+                    }
+                    setWsConnection(null);
+               }
+               setWsConnectionStatus("disconnected");
+               setWsReconnectAttempts(0);
+               setWsError(null);
+               return;
+          }
+
+          const token = localStorage.getItem("auth_token");
+          if (!token) {
+               setWsError("Please login to use WebSocket");
+               setWsConnectionStatus("error");
+               return;
+          }
+
+          const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+          // Convert http to ws
+          const wsUrl = apiUrl.replace("http://", "ws://").replace("https://", "wss://");
+          const wsEndpoint = `${wsUrl}/ws/orders/${selectedAccountId}?token=${token}&interval=${refreshInterval}`;
+
+          console.log("Connecting to WebSocket for orders:", wsEndpoint);
+
+          let ws: WebSocket | null = null;
+          let reconnectTimeout: NodeJS.Timeout | null = null;
+          let isManualClose = false;
+          let reconnectAttempts = 0;
+          const maxReconnectAttempts = 10;
+          const baseReconnectDelay = 3000; // 3 seconds
+          const maxReconnectDelay = 30000; // 30 seconds
+
+          const connect = () => {
+               if (isManualClose) return;
+
+               setWsConnectionStatus("connecting");
+               setWsError(null);
+
+               try {
+                    ws = new WebSocket(wsEndpoint);
+
+                    ws.onopen = () => {
+                         console.log("WebSocket connected for orders");
+                         setWsConnection(ws);
+                         setWsConnectionStatus("connected");
+                         setWsReconnectAttempts(0);
+                         reconnectAttempts = 0;
+                    };
+
+                    ws.onmessage = (event) => {
+                         try {
+                              const data = JSON.parse(event.data);
+                              console.log("WebSocket message received for orders:", data);
+
+                              if (data.type === "order_updates" && data.orders) {
+                                   // Update orders in the list
+                                   setOrders((prevOrders) => {
+                                        const updatedOrders = [...prevOrders];
+                                        
+                                        data.orders.forEach((updatedOrder: Order) => {
+                                             const index = updatedOrders.findIndex((o) => o.id === updatedOrder.id);
+                                             if (index >= 0) {
+                                                  // Update existing order
+                                                  updatedOrders[index] = updatedOrder;
+                                             } else {
+                                                  // New order, add to list
+                                                  updatedOrders.unshift(updatedOrder);
+                                             }
+                                        });
+                                        
+                                        // Sort by created_at (newest first)
+                                        return updatedOrders.sort((a, b) => {
+                                             const dateA = new Date(a.created_at).getTime();
+                                             const dateB = new Date(b.created_at).getTime();
+                                             return dateB - dateA;
+                                        });
+                                   });
+                              } else if (data.type === "error") {
+                                   const errorMsg = data.message || "WebSocket error";
+                                   console.error("WebSocket error message:", errorMsg);
+                                   setWsError(errorMsg);
+                                   setWsConnectionStatus("error");
+                              } else if (data.type === "connected") {
+                                   console.log("WebSocket connected:", data.message);
+                              }
+                         } catch (error) {
+                              console.error("Error parsing WebSocket message:", error);
+                         }
+                    };
+
+                    ws.onerror = (error) => {
+                         console.error("WebSocket error:", error);
+                         setWsError("WebSocket connection error");
+                         setWsConnectionStatus("error");
+                    };
+
+                    ws.onclose = (event) => {
+                         console.log("WebSocket disconnected:", event.code, event.reason);
+                         setWsConnection(null);
+                         setWsConnectionStatus("disconnected");
+
+                         // Auto-reconnect if not manual close and within max attempts
+                         if (event.code !== 1008 && useWebSocket && autoRefresh && !isManualClose && reconnectAttempts < maxReconnectAttempts) {
+                              reconnectAttempts++;
+                              setWsReconnectAttempts(reconnectAttempts);
+                              
+                              const delay = Math.min(baseReconnectDelay * Math.pow(2, reconnectAttempts - 1), maxReconnectDelay);
+                              console.log(`Reconnecting in ${delay}ms (attempt ${reconnectAttempts}/${maxReconnectAttempts})`);
+                              
+                              reconnectTimeout = setTimeout(() => {
+                                   if (useWebSocket && autoRefresh && selectedAccountId) {
+                                        connect();
+                                   }
+                              }, delay);
+                         } else if (reconnectAttempts >= maxReconnectAttempts) {
+                              setWsError("Max reconnection attempts reached");
+                              setWsConnectionStatus("error");
+                         }
+                    };
+               } catch (error) {
+                    console.error("Error creating WebSocket:", error);
+                    setWsError("Failed to create WebSocket connection");
+                    setWsConnectionStatus("error");
+               }
+          };
+
+          connect();
+
+          return () => {
+               isManualClose = true;
+               if (reconnectTimeout) {
+                    clearTimeout(reconnectTimeout);
+               }
+               if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+                    ws.close();
+               }
+          };
+     }, [useWebSocket, autoRefresh, selectedAccountId, refreshInterval]);
+
+     // WebSocket connection for real-time position updates
+     useEffect(() => {
+          if (!useWebSocket || !autoRefresh || !selectedAccountId) {
+               // Close WebSocket if disabled
+               if (wsPositionConnection) {
+                    if (wsPositionConnection.readyState === WebSocket.OPEN || wsPositionConnection.readyState === WebSocket.CONNECTING) {
+                         wsPositionConnection.close();
+                    }
+                    setWsPositionConnection(null);
+               }
+               setWsPositionConnectionStatus("disconnected");
+               setWsPositionReconnectAttempts(0);
+               setWsPositionError(null);
+               return;
+          }
+
+          const token = localStorage.getItem("auth_token");
+          if (!token) {
+               setWsPositionError("Please login to use WebSocket");
+               setWsPositionConnectionStatus("error");
+               return;
+          }
+
+          const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+          // Convert http to ws
+          const wsUrl = apiUrl.replace("http://", "ws://").replace("https://", "wss://");
+          const wsEndpoint = `${wsUrl}/ws/positions/${selectedAccountId}?token=${token}&interval=${refreshInterval}`;
+
+          console.log("Connecting to WebSocket for positions:", wsEndpoint);
+
+          let ws: WebSocket | null = null;
+          let reconnectTimeout: NodeJS.Timeout | null = null;
+          let isManualClose = false;
+          let reconnectAttempts = 0;
+          const maxReconnectAttempts = 10;
+          const baseReconnectDelay = 3000; // 3 seconds
+          const maxReconnectDelay = 30000; // 30 seconds
+
+          const connect = () => {
+               if (isManualClose) return;
+
+               setWsPositionConnectionStatus("connecting");
+               setWsPositionError(null);
+
+               try {
+                    ws = new WebSocket(wsEndpoint);
+
+                    ws.onopen = () => {
+                         console.log("WebSocket connected for positions");
+                         setWsPositionConnection(ws);
+                         setWsPositionConnectionStatus("connected");
+                         setWsPositionReconnectAttempts(0);
+                         reconnectAttempts = 0;
+                    };
+
+                    ws.onmessage = (event) => {
+                         try {
+                              const data = JSON.parse(event.data);
+                              console.log("WebSocket message received for positions:", data);
+
+                              if (data.type === "position_updates" && data.positions) {
+                                   // Update positions in the list
+                                   setPositions((prevPositions) => {
+                                        const updatedPositions = [...prevPositions];
+                                        
+                                        data.positions.forEach((updatedPosition: Position) => {
+                                             const index = updatedPositions.findIndex((p) => p.id === updatedPosition.id);
+                                             if (index >= 0) {
+                                                  // Update existing position
+                                                  updatedPositions[index] = updatedPosition;
+                                             } else {
+                                                  // New position, add to list
+                                                  updatedPositions.push(updatedPosition);
+                                             }
+                                        });
+                                        
+                                        // Remove closed positions
+                                        return updatedPositions.filter((p) => !p.closed_at);
+                                   });
+                              } else if (data.type === "error") {
+                                   const errorMsg = data.message || "WebSocket error";
+                                   console.error("WebSocket error message:", errorMsg);
+                                   setWsPositionError(errorMsg);
+                                   setWsPositionConnectionStatus("error");
+                              } else if (data.type === "connected") {
+                                   console.log("WebSocket connected:", data.message);
+                              }
+                         } catch (error) {
+                              console.error("Error parsing WebSocket message:", error);
+                         }
+                    };
+
+                    ws.onerror = (error) => {
+                         console.error("WebSocket error:", error);
+                         setWsPositionError("WebSocket connection error");
+                         setWsPositionConnectionStatus("error");
+                    };
+
+                    ws.onclose = (event) => {
+                         console.log("WebSocket disconnected:", event.code, event.reason);
+                         setWsPositionConnection(null);
+                         setWsPositionConnectionStatus("disconnected");
+
+                         // Auto-reconnect if not manual close and within max attempts
+                         if (event.code !== 1008 && useWebSocket && autoRefresh && !isManualClose && reconnectAttempts < maxReconnectAttempts) {
+                              reconnectAttempts++;
+                              setWsPositionReconnectAttempts(reconnectAttempts);
+                              
+                              const delay = Math.min(baseReconnectDelay * Math.pow(2, reconnectAttempts - 1), maxReconnectDelay);
+                              console.log(`Reconnecting in ${delay}ms (attempt ${reconnectAttempts}/${maxReconnectAttempts})`);
+                              
+                              reconnectTimeout = setTimeout(() => {
+                                   if (useWebSocket && autoRefresh && selectedAccountId) {
+                                        connect();
+                                   }
+                              }, delay);
+                         } else if (reconnectAttempts >= maxReconnectAttempts) {
+                              setWsPositionError("Max reconnection attempts reached");
+                              setWsPositionConnectionStatus("error");
+                         }
+                    };
+               } catch (error) {
+                    console.error("Error creating WebSocket:", error);
+                    setWsPositionError("Failed to create WebSocket connection");
+                    setWsPositionConnectionStatus("error");
+               }
+          };
+
+          connect();
+
+          return () => {
+               isManualClose = true;
+               if (reconnectTimeout) {
+                    clearTimeout(reconnectTimeout);
+               }
+               if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+                    ws.close();
+               }
+          };
+     }, [useWebSocket, autoRefresh, selectedAccountId, refreshInterval]);
+
+     // Auto-refresh (fallback when WebSocket is disabled)
+     useEffect(() => {
+          if (!autoRefresh || useWebSocket || !selectedAccountId) return; // Skip if WebSocket is enabled
 
           const interval = setInterval(() => {
                fetchOrders();
@@ -236,7 +650,7 @@ export default function TradingPage() {
           }, refreshInterval * 1000);
 
           return () => clearInterval(interval);
-     }, [autoRefresh, refreshInterval, selectedAccountId, fetchOrders, fetchPositions, fetchBalance, fetchTrades]);
+     }, [autoRefresh, useWebSocket, refreshInterval, selectedAccountId, fetchOrders, fetchPositions, fetchBalance, fetchTrades]);
 
      // Place order
      const handlePlaceOrder = async () => {
@@ -578,6 +992,7 @@ export default function TradingPage() {
                                         fontSize: "14px",
                                         cursor: "pointer",
                                         outline: "none",
+                                        marginBottom: "12px",
                                    }}
                                    onFocus={(e) => (e.target.style.borderColor = "#FFAE00")}
                                    onBlur={(e) => (e.target.style.borderColor = "rgba(255, 174, 0, 0.3)")}
@@ -595,6 +1010,118 @@ export default function TradingPage() {
                                         Every 1 minute
                                    </option>
                               </select>
+                         )}
+                         
+                         {/* WebSocket Toggle */}
+                         <label
+                              style={{
+                                   display: "flex",
+                                   alignItems: "center",
+                                   gap: "8px",
+                                   cursor: "pointer",
+                                   color: "#ededed",
+                                   fontSize: "14px",
+                                   marginBottom: "12px",
+                              }}
+                         >
+                              <input
+                                   type="checkbox"
+                                   checked={useWebSocket}
+                                   onChange={(e) => setUseWebSocket(e.target.checked)}
+                                   style={{
+                                        width: "18px",
+                                        height: "18px",
+                                        cursor: "pointer",
+                                        accentColor: "#FFAE00",
+                                   }}
+                              />
+                              <span>Use WebSocket (Real-time)</span>
+                         </label>
+                         
+                         {/* WebSocket Status */}
+                         {useWebSocket && autoRefresh && (
+                              <div
+                                   style={{
+                                        padding: "8px 12px",
+                                        borderRadius: "8px",
+                                        backgroundColor: wsConnectionStatus === "connected" ? "rgba(34, 197, 94, 0.1)" : wsConnectionStatus === "error" ? "rgba(239, 68, 68, 0.1)" : "rgba(107, 114, 128, 0.1)",
+                                        border: `1px solid ${wsConnectionStatus === "connected" ? "rgba(34, 197, 94, 0.3)" : wsConnectionStatus === "error" ? "rgba(239, 68, 68, 0.3)" : "rgba(107, 114, 128, 0.3)"}`,
+                                        color: wsConnectionStatus === "connected" ? "#22c55e" : wsConnectionStatus === "error" ? "#ef4444" : "#9ca3af",
+                                        fontSize: "12px",
+                                        marginBottom: "12px",
+                                   }}
+                              >
+                                   <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                        <span>
+                                             {wsConnectionStatus === "connected" ? "🟢" : wsConnectionStatus === "connecting" ? "🟡" : wsConnectionStatus === "error" ? "🔴" : "⚪"}
+                                        </span>
+                                        <span>
+                                             {wsConnectionStatus === "connected"
+                                                  ? "Connected (Real-time)"
+                                                  : wsConnectionStatus === "connecting"
+                                                  ? "Connecting..."
+                                                  : wsConnectionStatus === "error"
+                                                  ? `Error: ${wsError || "Connection failed"}`
+                                                  : "Disconnected"}
+                                        </span>
+                                   </div>
+                                   {wsReconnectAttempts > 0 && wsConnectionStatus !== "connected" && (
+                                        <div style={{ marginTop: "4px", fontSize: "11px", opacity: 0.8 }}>
+                                             Reconnecting... (attempt {wsReconnectAttempts}/10)
+                                        </div>
+                                   )}
+                              </div>
+                         )}
+                         
+                         {!useWebSocket && autoRefresh && (
+                              <div
+                                   style={{
+                                        padding: "8px 12px",
+                                        borderRadius: "8px",
+                                        backgroundColor: "rgba(107, 114, 128, 0.1)",
+                                        border: "1px solid rgba(107, 114, 128, 0.3)",
+                                        color: "#9ca3af",
+                                        fontSize: "12px",
+                                        marginBottom: "12px",
+                                   }}
+                              >
+                                   Using polling (every {refreshInterval}s)
+                              </div>
+                         )}
+                         
+                         {/* WebSocket Position Status */}
+                         {useWebSocket && autoRefresh && (
+                              <div
+                                   style={{
+                                        padding: "8px 12px",
+                                        borderRadius: "8px",
+                                        backgroundColor: wsPositionConnectionStatus === "connected" ? "rgba(34, 197, 94, 0.1)" : wsPositionConnectionStatus === "error" ? "rgba(239, 68, 68, 0.1)" : "rgba(107, 114, 128, 0.1)",
+                                        border: `1px solid ${wsPositionConnectionStatus === "connected" ? "rgba(34, 197, 94, 0.3)" : wsPositionConnectionStatus === "error" ? "rgba(239, 68, 68, 0.3)" : "rgba(107, 114, 128, 0.3)"}`,
+                                        color: wsPositionConnectionStatus === "connected" ? "#22c55e" : wsPositionConnectionStatus === "error" ? "#ef4444" : "#9ca3af",
+                                        fontSize: "12px",
+                                        marginBottom: "12px",
+                                   }}
+                              >
+                                   <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                        <span>
+                                             {wsPositionConnectionStatus === "connected" ? "🟢" : wsPositionConnectionStatus === "connecting" ? "🟡" : wsPositionConnectionStatus === "error" ? "🔴" : "⚪"}
+                                        </span>
+                                        <span>
+                                             Positions: {wsPositionConnectionStatus === "connected"
+                                                  ? "Real-time P&L"
+                                                  : wsPositionConnectionStatus === "connecting"
+                                                  ? "Connecting..."
+                                                  : wsPositionConnectionStatus === "error"
+                                                  ? `Error: ${wsPositionError || "Connection failed"}`
+                                                  : "Disconnected"}
+                                        </span>
+                                   </div>
+                                   {wsPositionReconnectAttempts > 0 && wsPositionConnectionStatus !== "connected" && (
+                                        <div style={{ marginTop: "4px", fontSize: "11px", opacity: 0.8 }}>
+                                             Reconnecting... (attempt {wsPositionReconnectAttempts}/10)
+                                        </div>
+                                   )}
+                              </div>
                          )}
                     </div>
 
@@ -879,7 +1406,30 @@ export default function TradingPage() {
                {/* Positions */}
                {selectedAccountId && (
                     <div style={{ marginBottom: "32px" }}>
-                         <h2 style={{ color: "#FFAE00", marginBottom: "20px", fontSize: "24px", fontWeight: "bold" }}>Open Positions</h2>
+                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+                              <h2 style={{ color: "#FFAE00", margin: 0, fontSize: "24px", fontWeight: "bold" }}>Open Positions</h2>
+                              <button
+                                   onClick={() => {
+                                        setShowClosedPositions(!showClosedPositions);
+                                        if (!showClosedPositions) {
+                                             fetchClosedPositions();
+                                        }
+                                   }}
+                                   style={{
+                                        padding: "10px 20px",
+                                        backgroundColor: showClosedPositions ? "#6b7280" : "#FFAE00",
+                                        color: showClosedPositions ? "#ededed" : "#1a1a1a",
+                                        border: "none",
+                                        borderRadius: "8px",
+                                        cursor: "pointer",
+                                        fontSize: "14px",
+                                        fontWeight: "600",
+                                        transition: "all 0.2s",
+                                   }}
+                              >
+                                   {showClosedPositions ? "Hide" : "Show"} Position History
+                              </button>
+                         </div>
                          {positionsLoading ? (
                               <div style={{ padding: "24px", textAlign: "center", color: "#888" }}>
                                    <p>Loading positions...</p>
@@ -954,30 +1504,60 @@ export default function TradingPage() {
                                                                  ${parseFloat(pos.realized_pnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                             </td>
                                                             <td style={{ padding: "12px" }}>
-                                                                 <button
-                                                                      onClick={() => handleClosePosition(pos.id)}
-                                                                      style={{
-                                                                           padding: "6px 12px",
-                                                                           backgroundColor: "#ef4444",
-                                                                           color: "white",
-                                                                           border: "none",
-                                                                           borderRadius: "6px",
-                                                                           cursor: "pointer",
-                                                                           fontSize: "12px",
-                                                                           fontWeight: "600",
-                                                                           transition: "all 0.2s ease",
-                                                                      }}
-                                                                      onMouseEnter={(e) => {
-                                                                           e.currentTarget.style.backgroundColor = "#dc2626";
-                                                                           e.currentTarget.style.transform = "translateY(-1px)";
-                                                                      }}
-                                                                      onMouseLeave={(e) => {
-                                                                           e.currentTarget.style.backgroundColor = "#ef4444";
-                                                                           e.currentTarget.style.transform = "translateY(0)";
-                                                                      }}
-                                                                 >
-                                                                      Close
-                                                                 </button>
+                                                                 <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
+                                                                      <button
+                                                                           onClick={() => {
+                                                                                setSelectedPosition(pos);
+                                                                                setShowPositionDetails(true);
+                                                                                fetchPositionTrades(pos.symbol);
+                                                                           }}
+                                                                           style={{
+                                                                                padding: "6px 12px",
+                                                                                backgroundColor: "#3b82f6",
+                                                                                color: "white",
+                                                                                border: "none",
+                                                                                borderRadius: "6px",
+                                                                                cursor: "pointer",
+                                                                                fontSize: "12px",
+                                                                                fontWeight: "600",
+                                                                                transition: "all 0.2s ease",
+                                                                           }}
+                                                                           onMouseEnter={(e) => {
+                                                                                e.currentTarget.style.backgroundColor = "#2563eb";
+                                                                                e.currentTarget.style.transform = "translateY(-1px)";
+                                                                           }}
+                                                                           onMouseLeave={(e) => {
+                                                                                e.currentTarget.style.backgroundColor = "#3b82f6";
+                                                                                e.currentTarget.style.transform = "translateY(0)";
+                                                                           }}
+                                                                      >
+                                                                           Details
+                                                                      </button>
+                                                                      <button
+                                                                           onClick={() => handleClosePosition(pos.id)}
+                                                                           style={{
+                                                                                padding: "6px 12px",
+                                                                                backgroundColor: "#ef4444",
+                                                                                color: "white",
+                                                                                border: "none",
+                                                                                borderRadius: "6px",
+                                                                                cursor: "pointer",
+                                                                                fontSize: "12px",
+                                                                                fontWeight: "600",
+                                                                                transition: "all 0.2s ease",
+                                                                           }}
+                                                                           onMouseEnter={(e) => {
+                                                                                e.currentTarget.style.backgroundColor = "#dc2626";
+                                                                                e.currentTarget.style.transform = "translateY(-1px)";
+                                                                           }}
+                                                                           onMouseLeave={(e) => {
+                                                                                e.currentTarget.style.backgroundColor = "#ef4444";
+                                                                                e.currentTarget.style.transform = "translateY(0)";
+                                                                           }}
+                                                                      >
+                                                                           Close
+                                                                      </button>
+                                                                 </div>
                                                             </td>
                                                        </tr>
                                                   );
@@ -1188,12 +1768,15 @@ export default function TradingPage() {
                                                             </td>
                                                             <td style={{ padding: "12px", fontSize: "12px", color: "#888" }}>{new Date(order.created_at).toLocaleString()}</td>
                                                             <td style={{ padding: "12px" }}>
-                                                                 {canCancel && (
+                                                                 <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
                                                                       <button
-                                                                           onClick={() => handleCancelOrder(order.id)}
+                                                                           onClick={() => {
+                                                                                setSelectedOrder(order);
+                                                                                setShowOrderDetails(true);
+                                                                           }}
                                                                            style={{
                                                                                 padding: "6px 12px",
-                                                                                backgroundColor: "#ef4444",
+                                                                                backgroundColor: "#3b82f6",
                                                                                 color: "white",
                                                                                 border: "none",
                                                                                 borderRadius: "6px",
@@ -1203,17 +1786,72 @@ export default function TradingPage() {
                                                                                 transition: "all 0.2s ease",
                                                                            }}
                                                                            onMouseEnter={(e) => {
-                                                                                e.currentTarget.style.backgroundColor = "#dc2626";
+                                                                                e.currentTarget.style.backgroundColor = "#2563eb";
                                                                                 e.currentTarget.style.transform = "translateY(-1px)";
                                                                            }}
                                                                            onMouseLeave={(e) => {
-                                                                                e.currentTarget.style.backgroundColor = "#ef4444";
+                                                                                e.currentTarget.style.backgroundColor = "#3b82f6";
                                                                                 e.currentTarget.style.transform = "translateY(0)";
                                                                            }}
                                                                       >
-                                                                           Cancel
+                                                                           Details
                                                                       </button>
-                                                                 )}
+                                                                      <button
+                                                                           onClick={() => refreshOrderStatus(order.id)}
+                                                                           disabled={refreshingOrderId === order.id}
+                                                                           style={{
+                                                                                padding: "6px 12px",
+                                                                                backgroundColor: refreshingOrderId === order.id ? "#6b7280" : "#FFAE00",
+                                                                                color: "white",
+                                                                                border: "none",
+                                                                                borderRadius: "6px",
+                                                                                cursor: refreshingOrderId === order.id ? "not-allowed" : "pointer",
+                                                                                fontSize: "12px",
+                                                                                fontWeight: "600",
+                                                                                transition: "all 0.2s ease",
+                                                                           }}
+                                                                           onMouseEnter={(e) => {
+                                                                                if (refreshingOrderId !== order.id) {
+                                                                                     e.currentTarget.style.backgroundColor = "#e6a000";
+                                                                                     e.currentTarget.style.transform = "translateY(-1px)";
+                                                                                }
+                                                                           }}
+                                                                           onMouseLeave={(e) => {
+                                                                                if (refreshingOrderId !== order.id) {
+                                                                                     e.currentTarget.style.backgroundColor = "#FFAE00";
+                                                                                     e.currentTarget.style.transform = "translateY(0)";
+                                                                                }
+                                                                           }}
+                                                                      >
+                                                                           {refreshingOrderId === order.id ? "..." : "🔄"}
+                                                                      </button>
+                                                                      {canCancel && (
+                                                                           <button
+                                                                                onClick={() => handleCancelOrder(order.id)}
+                                                                                style={{
+                                                                                     padding: "6px 12px",
+                                                                                     backgroundColor: "#ef4444",
+                                                                                     color: "white",
+                                                                                     border: "none",
+                                                                                     borderRadius: "6px",
+                                                                                     cursor: "pointer",
+                                                                                     fontSize: "12px",
+                                                                                     fontWeight: "600",
+                                                                                     transition: "all 0.2s ease",
+                                                                                }}
+                                                                                onMouseEnter={(e) => {
+                                                                                     e.currentTarget.style.backgroundColor = "#dc2626";
+                                                                                     e.currentTarget.style.transform = "translateY(-1px)";
+                                                                                }}
+                                                                                onMouseLeave={(e) => {
+                                                                                     e.currentTarget.style.backgroundColor = "#ef4444";
+                                                                                     e.currentTarget.style.transform = "translateY(0)";
+                                                                                }}
+                                                                           >
+                                                                                Cancel
+                                                                           </button>
+                                                                      )}
+                                                                 </div>
                                                                  {order.error_message && (
                                                                       <div
                                                                            style={{
@@ -1240,6 +1878,391 @@ export default function TradingPage() {
                                    <p>No orders found</p>
                               </div>
                          )}
+                    </div>
+               )}
+
+               {/* Order Details Modal */}
+               {showOrderDetails && selectedOrder && (
+                    <div
+                         style={{
+                              position: "fixed",
+                              inset: 0,
+                              backgroundColor: "rgba(0, 0, 0, 0.7)",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              zIndex: 1000,
+                              padding: "20px",
+                         }}
+                         onClick={() => setShowOrderDetails(false)}
+                    >
+                         <div
+                              style={{
+                                   backgroundColor: "#2a2a2a",
+                                   borderRadius: "12px",
+                                   border: "1px solid rgba(255, 174, 0, 0.3)",
+                                   padding: "24px",
+                                   maxWidth: "800px",
+                                   width: "100%",
+                                   maxHeight: "90vh",
+                                   overflowY: "auto",
+                              }}
+                              onClick={(e) => e.stopPropagation()}
+                         >
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
+                                   <h2 style={{ color: "#FFAE00", margin: 0, fontSize: "24px", fontWeight: "bold" }}>Order Details</h2>
+                                   <button
+                                        onClick={() => setShowOrderDetails(false)}
+                                        style={{
+                                             padding: "8px 16px",
+                                             backgroundColor: "#6b7280",
+                                             color: "white",
+                                             border: "none",
+                                             borderRadius: "8px",
+                                             cursor: "pointer",
+                                             fontSize: "14px",
+                                             fontWeight: "600",
+                                        }}
+                                   >
+                                        Close
+                                   </button>
+                              </div>
+
+                              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: "16px" }}>
+                                   <div>
+                                        <label style={{ display: "block", color: "#888", fontSize: "12px", marginBottom: "4px" }}>Order ID</label>
+                                        <div style={{ color: "#ededed", fontSize: "14px", fontFamily: "monospace" }}>{selectedOrder.id}</div>
+                                   </div>
+                                   <div>
+                                        <label style={{ display: "block", color: "#888", fontSize: "12px", marginBottom: "4px" }}>Symbol</label>
+                                        <div style={{ color: "#ededed", fontSize: "14px", fontWeight: "600" }}>{selectedOrder.symbol}</div>
+                                   </div>
+                                   <div>
+                                        <label style={{ display: "block", color: "#888", fontSize: "12px", marginBottom: "4px" }}>Side</label>
+                                        <div style={{ color: selectedOrder.side === "buy" ? "#22c55e" : "#ef4444", fontSize: "14px", fontWeight: "600" }}>
+                                             {selectedOrder.side.toUpperCase()}
+                                        </div>
+                                   </div>
+                                   <div>
+                                        <label style={{ display: "block", color: "#888", fontSize: "12px", marginBottom: "4px" }}>Order Type</label>
+                                        <div style={{ color: "#ededed", fontSize: "14px" }}>{selectedOrder.order_type.toUpperCase()}</div>
+                                   </div>
+                                   <div>
+                                        <label style={{ display: "block", color: "#888", fontSize: "12px", marginBottom: "4px" }}>Status</label>
+                                        <div style={{ color: "#ededed", fontSize: "14px", fontWeight: "600" }}>
+                                             {selectedOrder.status.toUpperCase().replace("_", " ")}
+                                        </div>
+                                   </div>
+                                   <div>
+                                        <label style={{ display: "block", color: "#888", fontSize: "12px", marginBottom: "4px" }}>Quantity</label>
+                                        <div style={{ color: "#ededed", fontSize: "14px", fontFamily: "monospace" }}>
+                                             {parseFloat(selectedOrder.quantity).toLocaleString(undefined, { maximumFractionDigits: 8 })}
+                                        </div>
+                                   </div>
+                                   <div>
+                                        <label style={{ display: "block", color: "#888", fontSize: "12px", marginBottom: "4px" }}>Price</label>
+                                        <div style={{ color: "#ededed", fontSize: "14px", fontFamily: "monospace" }}>
+                                             {selectedOrder.price
+                                                  ? `$${parseFloat(selectedOrder.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 8 })}`
+                                                  : "MARKET"}
+                                        </div>
+                                   </div>
+                                   <div>
+                                        <label style={{ display: "block", color: "#888", fontSize: "12px", marginBottom: "4px" }}>Filled Quantity</label>
+                                        <div style={{ color: "#ededed", fontSize: "14px", fontFamily: "monospace" }}>
+                                             {parseFloat(selectedOrder.filled_quantity).toLocaleString(undefined, { maximumFractionDigits: 8 })}
+                                        </div>
+                                   </div>
+                                   <div>
+                                        <label style={{ display: "block", color: "#888", fontSize: "12px", marginBottom: "4px" }}>Average Price</label>
+                                        <div style={{ color: "#ededed", fontSize: "14px", fontFamily: "monospace" }}>
+                                             {selectedOrder.average_price
+                                                  ? `$${parseFloat(selectedOrder.average_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 8 })}`
+                                                  : "N/A"}
+                                        </div>
+                                   </div>
+                                   <div>
+                                        <label style={{ display: "block", color: "#888", fontSize: "12px", marginBottom: "4px" }}>Fee</label>
+                                        <div style={{ color: "#ededed", fontSize: "14px", fontFamily: "monospace" }}>
+                                             {parseFloat(selectedOrder.fee).toLocaleString(undefined, { maximumFractionDigits: 8 })}{" "}
+                                             {selectedOrder.fee_currency || ""}
+                                        </div>
+                                   </div>
+                                   <div>
+                                        <label style={{ display: "block", color: "#888", fontSize: "12px", marginBottom: "4px" }}>Exchange Order ID</label>
+                                        <div style={{ color: "#ededed", fontSize: "14px", fontFamily: "monospace" }}>
+                                             {selectedOrder.exchange_order_id || "N/A"}
+                                        </div>
+                                   </div>
+                                   <div>
+                                        <label style={{ display: "block", color: "#888", fontSize: "12px", marginBottom: "4px" }}>Created At</label>
+                                        <div style={{ color: "#ededed", fontSize: "14px" }}>{new Date(selectedOrder.created_at).toLocaleString()}</div>
+                                   </div>
+                                   <div>
+                                        <label style={{ display: "block", color: "#888", fontSize: "12px", marginBottom: "4px" }}>Updated At</label>
+                                        <div style={{ color: "#ededed", fontSize: "14px" }}>{new Date(selectedOrder.updated_at).toLocaleString()}</div>
+                                   </div>
+                                   {selectedOrder.executed_at && (
+                                        <div>
+                                             <label style={{ display: "block", color: "#888", fontSize: "12px", marginBottom: "4px" }}>Executed At</label>
+                                             <div style={{ color: "#ededed", fontSize: "14px" }}>{new Date(selectedOrder.executed_at).toLocaleString()}</div>
+                                        </div>
+                                   )}
+                                   {selectedOrder.cancelled_at && (
+                                        <div>
+                                             <label style={{ display: "block", color: "#888", fontSize: "12px", marginBottom: "4px" }}>Cancelled At</label>
+                                             <div style={{ color: "#ededed", fontSize: "14px" }}>{new Date(selectedOrder.cancelled_at).toLocaleString()}</div>
+                                        </div>
+                                   )}
+                                   {selectedOrder.error_message && (
+                                        <div style={{ gridColumn: "1 / -1" }}>
+                                             <label style={{ display: "block", color: "#888", fontSize: "12px", marginBottom: "4px" }}>Error Message</label>
+                                             <div
+                                                  style={{
+                                                       color: "#ef4444",
+                                                       fontSize: "14px",
+                                                       padding: "12px",
+                                                       backgroundColor: "rgba(239, 68, 68, 0.1)",
+                                                       borderRadius: "8px",
+                                                       border: "1px solid rgba(239, 68, 68, 0.3)",
+                                                  }}
+                                             >
+                                                  {selectedOrder.error_message}
+                                             </div>
+                                        </div>
+                                   )}
+                              </div>
+
+                              <div style={{ marginTop: "24px", display: "flex", gap: "12px", justifyContent: "flex-end" }}>
+                                   <button
+                                        onClick={() => {
+                                             refreshOrderStatus(selectedOrder.id);
+                                        }}
+                                        disabled={refreshingOrderId === selectedOrder.id}
+                                        style={{
+                                             padding: "10px 20px",
+                                             backgroundColor: refreshingOrderId === selectedOrder.id ? "#6b7280" : "#FFAE00",
+                                             color: "#1a1a1a",
+                                             border: "none",
+                                             borderRadius: "8px",
+                                             cursor: refreshingOrderId === selectedOrder.id ? "not-allowed" : "pointer",
+                                             fontSize: "14px",
+                                             fontWeight: "600",
+                                        }}
+                                   >
+                                        {refreshingOrderId === selectedOrder.id ? "Refreshing..." : "🔄 Refresh Status"}
+                                   </button>
+                              </div>
+                         </div>
+                    </div>
+               )}
+
+               {/* Position Details Modal */}
+               {showPositionDetails && selectedPosition && (
+                    <div
+                         style={{
+                              position: "fixed",
+                              inset: 0,
+                              backgroundColor: "rgba(0, 0, 0, 0.7)",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              zIndex: 1000,
+                              padding: "20px",
+                         }}
+                         onClick={() => setShowPositionDetails(false)}
+                    >
+                         <div
+                              style={{
+                                   backgroundColor: "#2a2a2a",
+                                   borderRadius: "12px",
+                                   border: "1px solid rgba(255, 174, 0, 0.3)",
+                                   padding: "24px",
+                                   maxWidth: "1000px",
+                                   width: "100%",
+                                   maxHeight: "90vh",
+                                   overflowY: "auto",
+                              }}
+                              onClick={(e) => e.stopPropagation()}
+                         >
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
+                                   <h2 style={{ color: "#FFAE00", margin: 0, fontSize: "24px", fontWeight: "bold" }}>Position Details</h2>
+                                   <button
+                                        onClick={() => setShowPositionDetails(false)}
+                                        style={{
+                                             padding: "8px 16px",
+                                             backgroundColor: "#6b7280",
+                                             color: "white",
+                                             border: "none",
+                                             borderRadius: "8px",
+                                             cursor: "pointer",
+                                             fontSize: "14px",
+                                             fontWeight: "600",
+                                        }}
+                                   >
+                                        Close
+                                   </button>
+                              </div>
+
+                              {/* Position Info */}
+                              <div style={{ marginBottom: "32px" }}>
+                                   <h3 style={{ color: "#FFAE00", marginBottom: "16px", fontSize: "18px", fontWeight: "600" }}>Position Information</h3>
+                                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: "16px" }}>
+                                        <div>
+                                             <label style={{ display: "block", color: "#888", fontSize: "12px", marginBottom: "4px" }}>Position ID</label>
+                                             <div style={{ color: "#ededed", fontSize: "14px", fontFamily: "monospace" }}>{selectedPosition.id}</div>
+                                        </div>
+                                        <div>
+                                             <label style={{ display: "block", color: "#888", fontSize: "12px", marginBottom: "4px" }}>Symbol</label>
+                                             <div style={{ color: "#ededed", fontSize: "14px", fontWeight: "600" }}>{selectedPosition.symbol}</div>
+                                        </div>
+                                        <div>
+                                             <label style={{ display: "block", color: "#888", fontSize: "12px", marginBottom: "4px" }}>Side</label>
+                                             <div style={{ color: selectedPosition.side === "buy" ? "#22c55e" : "#ef4444", fontSize: "14px", fontWeight: "600" }}>
+                                                  {selectedPosition.side.toUpperCase()}
+                                             </div>
+                                        </div>
+                                        <div>
+                                             <label style={{ display: "block", color: "#888", fontSize: "12px", marginBottom: "4px" }}>Quantity</label>
+                                             <div style={{ color: "#ededed", fontSize: "14px", fontFamily: "monospace" }}>
+                                                  {parseFloat(selectedPosition.quantity).toLocaleString(undefined, { maximumFractionDigits: 8 })}
+                                             </div>
+                                        </div>
+                                        <div>
+                                             <label style={{ display: "block", color: "#888", fontSize: "12px", marginBottom: "4px" }}>Entry Price</label>
+                                             <div style={{ color: "#ededed", fontSize: "14px", fontFamily: "monospace" }}>
+                                                  ${parseFloat(selectedPosition.entry_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 8 })}
+                                             </div>
+                                        </div>
+                                        <div>
+                                             <label style={{ display: "block", color: "#888", fontSize: "12px", marginBottom: "4px" }}>Current Price</label>
+                                             <div style={{ color: "#ededed", fontSize: "14px", fontFamily: "monospace" }}>
+                                                  {selectedPosition.current_price
+                                                       ? `$${parseFloat(selectedPosition.current_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 8 })}`
+                                                       : "N/A"}
+                                             </div>
+                                        </div>
+                                        <div>
+                                             <label style={{ display: "block", color: "#888", fontSize: "12px", marginBottom: "4px" }}>Unrealized P&L</label>
+                                             <div
+                                                  style={{
+                                                       color: parseFloat(selectedPosition.unrealized_pnl) >= 0 ? "#22c55e" : "#ef4444",
+                                                       fontSize: "14px",
+                                                       fontFamily: "monospace",
+                                                       fontWeight: "600",
+                                                  }}
+                                             >
+                                                  {parseFloat(selectedPosition.unrealized_pnl) >= 0 ? "+" : ""}$
+                                                  {parseFloat(selectedPosition.unrealized_pnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                             </div>
+                                        </div>
+                                        <div>
+                                             <label style={{ display: "block", color: "#888", fontSize: "12px", marginBottom: "4px" }}>Realized P&L</label>
+                                             <div
+                                                  style={{
+                                                       color: parseFloat(selectedPosition.realized_pnl) >= 0 ? "#22c55e" : "#ef4444",
+                                                       fontSize: "14px",
+                                                       fontFamily: "monospace",
+                                                       fontWeight: "600",
+                                                  }}
+                                             >
+                                                  {parseFloat(selectedPosition.realized_pnl) >= 0 ? "+" : ""}$
+                                                  {parseFloat(selectedPosition.realized_pnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                             </div>
+                                        </div>
+                                        <div>
+                                             <label style={{ display: "block", color: "#888", fontSize: "12px", marginBottom: "4px" }}>Opened At</label>
+                                             <div style={{ color: "#ededed", fontSize: "14px" }}>{new Date(selectedPosition.opened_at).toLocaleString()}</div>
+                                        </div>
+                                        <div>
+                                             <label style={{ display: "block", color: "#888", fontSize: "12px", marginBottom: "4px" }}>Updated At</label>
+                                             <div style={{ color: "#ededed", fontSize: "14px" }}>{new Date(selectedPosition.updated_at).toLocaleString()}</div>
+                                        </div>
+                                        {selectedPosition.closed_at && (
+                                             <div>
+                                                  <label style={{ display: "block", color: "#888", fontSize: "12px", marginBottom: "4px" }}>Closed At</label>
+                                                  <div style={{ color: "#ededed", fontSize: "14px" }}>{new Date(selectedPosition.closed_at).toLocaleString()}</div>
+                                             </div>
+                                        )}
+                                   </div>
+                              </div>
+
+                              {/* Entry/Exit History */}
+                              <div>
+                                   <h3 style={{ color: "#FFAE00", marginBottom: "16px", fontSize: "18px", fontWeight: "600" }}>Entry/Exit History</h3>
+                                   {positionTradesLoading ? (
+                                        <div style={{ padding: "40px", textAlign: "center", color: "#888" }}>
+                                             <p>Loading trade history...</p>
+                                        </div>
+                                   ) : positionTrades.length > 0 ? (
+                                        <div style={{ overflowX: "auto" }}>
+                                             <table
+                                                  style={{
+                                                       width: "100%",
+                                                       borderCollapse: "collapse",
+                                                       backgroundColor: "#1a1a1a",
+                                                       borderRadius: "8px",
+                                                       border: "1px solid rgba(255, 174, 0, 0.2)",
+                                                  }}
+                                             >
+                                                  <thead>
+                                                       <tr style={{ backgroundColor: "#2a2a2a", borderBottom: "1px solid rgba(255, 174, 0, 0.2)" }}>
+                                                            <th style={{ padding: "12px", textAlign: "left", color: "#FFAE00", fontWeight: "600", fontSize: "14px" }}>Side</th>
+                                                            <th style={{ padding: "12px", textAlign: "right", color: "#FFAE00", fontWeight: "600", fontSize: "14px" }}>Quantity</th>
+                                                            <th style={{ padding: "12px", textAlign: "right", color: "#FFAE00", fontWeight: "600", fontSize: "14px" }}>Price</th>
+                                                            <th style={{ padding: "12px", textAlign: "right", color: "#FFAE00", fontWeight: "600", fontSize: "14px" }}>Fee</th>
+                                                            <th style={{ padding: "12px", textAlign: "left", color: "#FFAE00", fontWeight: "600", fontSize: "14px" }}>Order ID</th>
+                                                            <th style={{ padding: "12px", textAlign: "left", color: "#FFAE00", fontWeight: "600", fontSize: "14px" }}>Timestamp</th>
+                                                       </tr>
+                                                  </thead>
+                                                  <tbody>
+                                                       {positionTrades.map((trade, idx) => (
+                                                            <tr
+                                                                 key={trade.id}
+                                                                 style={{
+                                                                      borderBottom: idx < positionTrades.length - 1 ? "1px solid rgba(255, 174, 0, 0.1)" : "none",
+                                                                      backgroundColor: idx % 2 === 0 ? "#2a2a2a" : "#252525",
+                                                                 }}
+                                                            >
+                                                                 <td style={{ padding: "12px" }}>
+                                                                      <span
+                                                                           style={{
+                                                                                padding: "4px 10px",
+                                                                                borderRadius: "6px",
+                                                                                backgroundColor: trade.side === "buy" ? "rgba(34, 197, 94, 0.2)" : "rgba(239, 68, 68, 0.2)",
+                                                                                color: trade.side === "buy" ? "#22c55e" : "#ef4444",
+                                                                                fontSize: "12px",
+                                                                                fontWeight: "600",
+                                                                                border: `1px solid ${trade.side === "buy" ? "#22c55e" : "#ef4444"}`,
+                                                                           }}
+                                                                      >
+                                                                           {trade.side.toUpperCase()}
+                                                                      </span>
+                                                                 </td>
+                                                                 <td style={{ padding: "12px", textAlign: "right", fontFamily: "monospace", color: "#ededed", fontSize: "14px" }}>
+                                                                      {parseFloat(trade.quantity).toLocaleString(undefined, { maximumFractionDigits: 8 })}
+                                                                 </td>
+                                                                 <td style={{ padding: "12px", textAlign: "right", fontFamily: "monospace", color: "#ededed", fontSize: "14px" }}>
+                                                                      ${parseFloat(trade.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 8 })}
+                                                                 </td>
+                                                                 <td style={{ padding: "12px", textAlign: "right", fontFamily: "monospace", color: "#888", fontSize: "14px" }}>
+                                                                      {parseFloat(trade.fee).toLocaleString(undefined, { maximumFractionDigits: 8 })}{" "}
+                                                                      {trade.fee_currency || ""}
+                                                                 </td>
+                                                                 <td style={{ padding: "12px", fontFamily: "monospace", color: "#888", fontSize: "12px" }}>{trade.order_id}</td>
+                                                                 <td style={{ padding: "12px", color: "#888", fontSize: "12px" }}>{new Date(trade.timestamp).toLocaleString()}</td>
+                                                            </tr>
+                                                       ))}
+                                                  </tbody>
+                                             </table>
+                                        </div>
+                                   ) : (
+                                        <div style={{ padding: "40px", textAlign: "center", color: "#888" }}>
+                                             <p>No trade history found for this position.</p>
+                                        </div>
+                                   )}
+                              </div>
+                         </div>
                     </div>
                )}
           </div>

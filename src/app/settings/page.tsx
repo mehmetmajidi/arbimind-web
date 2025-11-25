@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { SymbolList } from "@/components/symbols";
 
 // Helper function to mask sensitive data (show first 4 and last 4 chars)
 // Currently unused but kept for potential future use
@@ -16,7 +17,7 @@ function maskSensitiveData(value: string): string {
 }
 
 export default function SettingsPage() {
-     const [activeTab, setActiveTab] = useState<"profile" | "exchange-accounts" | "exchanges" | "users">("profile");
+     const [activeTab, setActiveTab] = useState<"profile" | "exchange-accounts" | "exchanges" | "users" | "symbols">("profile");
      const [showAddForm, setShowAddForm] = useState(false);
      const [showAddExchangeForm, setShowAddExchangeForm] = useState(false);
      const [isAdmin, setIsAdmin] = useState(false);
@@ -45,6 +46,25 @@ export default function SettingsPage() {
      const [errors, setErrors] = useState<Record<string, string>>({});
      const [exchangeErrors, setExchangeErrors] = useState<Record<string, string>>({});
      const [jsonFileError, setJsonFileError] = useState<string | null>(null);
+     
+     // Symbols by Exchange state
+     const [selectedExchangeForSymbols, setSelectedExchangeForSymbols] = useState<string>("");
+     const [symbolsData, setSymbolsData] = useState<{
+          exchange?: string;
+          display_name?: string;
+          count?: number;
+          symbols?: Array<{
+               symbol: string;
+               base: string;
+               quote: string;
+               exchange_symbol: string;
+               active: boolean;
+               type: string;
+               last_synced: string | null;
+          }>;
+     } | null>(null);
+     const [symbolsLoading, setSymbolsLoading] = useState(false);
+     const [activeOnlyFilter, setActiveOnlyFilter] = useState(true);
 
      // Fetch supported exchanges via REST API
      interface ExchangeData {
@@ -64,6 +84,35 @@ export default function SettingsPage() {
      const [exchangesData, setExchangesData] = useState<ExchangeData | null>(null);
      const [accountsData, setAccountsData] = useState<AccountData | null>(null);
      const [loading, setLoading] = useState(true);
+
+     // Fetch symbols by exchange
+     const fetchSymbolsByExchange = async (exchangeName: string, activeOnly: boolean = true) => {
+          if (!exchangeName) return;
+          
+          setSymbolsLoading(true);
+          try {
+               const token = localStorage.getItem("auth_token") || "";
+               const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+               
+               const response = await fetch(`${apiUrl}/market/symbols/by-exchange/${encodeURIComponent(exchangeName)}?active_only=${activeOnly}`, {
+                    headers: { Authorization: `Bearer ${token}` },
+               });
+               
+               if (response.ok) {
+                    const data = await response.json();
+                    setSymbolsData(data);
+               } else {
+                    const errorData = await response.json().catch(() => ({}));
+                    console.error("Error fetching symbols:", errorData.detail || "Failed to fetch symbols");
+                    setSymbolsData(null);
+               }
+          } catch (error) {
+               console.error("Error fetching symbols:", error);
+               setSymbolsData(null);
+          } finally {
+               setSymbolsLoading(false);
+          }
+     };
 
      useEffect(() => {
           const fetchData = async () => {
@@ -386,6 +435,23 @@ export default function SettingsPage() {
                               }}
                          >
                               🏢 Exchanges
+                         </button>
+                         <button
+                              onClick={() => setActiveTab("symbols")}
+                              style={{
+                                   padding: "12px 16px",
+                                   backgroundColor: activeTab === "symbols" ? "#FFAE00" : "transparent",
+                                   color: activeTab === "symbols" ? "#1a1a1a" : "#ededed",
+                                   border: "none",
+                                   borderRadius: "8px",
+                                   cursor: "pointer",
+                                   textAlign: "left",
+                                   fontWeight: activeTab === "symbols" ? "600" : "400",
+                                   fontSize: "14px",
+                                   transition: "all 0.2s ease",
+                              }}
+                         >
+                              📊 Symbols by Exchange
                          </button>
                          {isAdmin && (
                               <button
@@ -748,6 +814,109 @@ export default function SettingsPage() {
                               ) : (
                                    <div style={{ padding: "24px", textAlign: "center", color: "#888", backgroundColor: "#1a1a1a", borderRadius: "12px", border: "1px solid rgba(255, 174, 0, 0.2)" }}>
                                         <p>No exchanges found.</p>
+                                   </div>
+                              )}
+                         </div>
+                    )}
+
+                    {activeTab === "symbols" && (
+                         <div>
+                              <h1 style={{ color: "#FFAE00", marginBottom: "24px" }}>Symbols by Exchange</h1>
+                              
+                              {/* Controls */}
+                              <div style={{ marginBottom: "24px", display: "flex", gap: "16px", alignItems: "center", flexWrap: "wrap" }}>
+                                   <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                        <label style={{ color: "#ededed", fontSize: "14px", whiteSpace: "nowrap" }}>Exchange:</label>
+                                        <select
+                                             value={selectedExchangeForSymbols}
+                                             onChange={(e) => {
+                                                  setSelectedExchangeForSymbols(e.target.value);
+                                                  if (e.target.value) {
+                                                       fetchSymbolsByExchange(e.target.value, activeOnlyFilter);
+                                                  } else {
+                                                       setSymbolsData(null);
+                                                  }
+                                             }}
+                                             style={{
+                                                  padding: "10px 16px",
+                                                  backgroundColor: "#1a1a1a",
+                                                  border: "1px solid rgba(255, 174, 0, 0.3)",
+                                                  borderRadius: "8px",
+                                                  color: "#ededed",
+                                                  fontSize: "14px",
+                                                  cursor: "pointer",
+                                                  outline: "none",
+                                                  minWidth: "200px",
+                                             }}
+                                        >
+                                             <option value="">Select Exchange...</option>
+                                             {allExchanges.map((ex) => (
+                                                  <option key={ex.id} value={ex.name}>
+                                                       {ex.display_name || ex.name}
+                                                  </option>
+                                             ))}
+                                        </select>
+                                   </div>
+                                   
+                                   <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
+                                        <input
+                                             type="checkbox"
+                                             checked={activeOnlyFilter}
+                                             onChange={(e) => {
+                                                  setActiveOnlyFilter(e.target.checked);
+                                                  if (selectedExchangeForSymbols) {
+                                                       fetchSymbolsByExchange(selectedExchangeForSymbols, e.target.checked);
+                                                  }
+                                             }}
+                                             style={{
+                                                  width: "18px",
+                                                  height: "18px",
+                                                  cursor: "pointer",
+                                                  accentColor: "#FFAE00",
+                                             }}
+                                        />
+                                        <span style={{ color: "#ededed", fontSize: "14px" }}>Active Only</span>
+                                   </label>
+                                   
+                                   {selectedExchangeForSymbols && (
+                                        <button
+                                             onClick={() => fetchSymbolsByExchange(selectedExchangeForSymbols, activeOnlyFilter)}
+                                             disabled={symbolsLoading}
+                                             style={{
+                                                  padding: "10px 20px",
+                                                  backgroundColor: symbolsLoading ? "#4b5563" : "#FFAE00",
+                                                  color: "#1a1a1a",
+                                                  border: "none",
+                                                  borderRadius: "8px",
+                                                  cursor: symbolsLoading ? "not-allowed" : "pointer",
+                                                  fontWeight: "600",
+                                                  fontSize: "14px",
+                                                  transition: "all 0.2s",
+                                             }}
+                                        >
+                                             {symbolsLoading ? "Loading..." : "🔄 Refresh"}
+                                        </button>
+                                   )}
+                              </div>
+                              
+                              {/* Symbols Table */}
+                              {symbolsData && symbolsData.symbols ? (
+                                   <SymbolList
+                                        symbols={symbolsData.symbols}
+                                        exchangeName={symbolsData.exchange}
+                                        displayName={symbolsData.display_name}
+                                        loading={symbolsLoading}
+                                        showSearch={true}
+                                        showFilters={true}
+                                        maxHeight="600px"
+                                   />
+                              ) : selectedExchangeForSymbols ? (
+                                   <div style={{ padding: "40px", textAlign: "center", color: "#888" }}>
+                                        <p>No symbols found for this exchange.</p>
+                                   </div>
+                              ) : (
+                                   <div style={{ padding: "40px", textAlign: "center", color: "#888" }}>
+                                        <p>Please select an exchange to view symbols.</p>
                                    </div>
                               )}
                          </div>

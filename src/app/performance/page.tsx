@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { ExportModal, ExportFormat } from "@/components/export";
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 
 interface TradeResult {
@@ -91,6 +92,8 @@ export default function PerformancePage() {
      const [loading, setLoading] = useState(true);
      const [error, setError] = useState<string | null>(null);
      const [exporting, setExporting] = useState<{ type: string; format: string } | null>(null);
+     const [showExportModal, setShowExportModal] = useState(false);
+     const [exportType, setExportType] = useState<"trades" | "stats">("trades");
 
      // Filters
      const [symbolFilter, setSymbolFilter] = useState<string>("");
@@ -383,7 +386,7 @@ export default function PerformancePage() {
           }
      }, [symbolFilter, startDate, endDate, winLossFilter, apiUrl]);
 
-     const exportTradeResults = async (format: "csv" | "json") => {
+     const exportTradeResults = async (format: ExportFormat) => {
           try {
                setExporting({ type: "trades", format });
                setError(null);
@@ -391,6 +394,43 @@ export default function PerformancePage() {
                const token = localStorage.getItem("auth_token");
                if (!token) {
                     setError("Not authenticated");
+                    setExporting(null);
+                    return;
+               }
+
+               // Handle Excel export in frontend
+               if (format === "xlsx") {
+                    // Use a library like xlsx or generate CSV and convert
+                    // For now, we'll use CSV as fallback or implement xlsx generation
+                    const csvData = tradeResults.map((tr) => ({
+                         id: tr.id,
+                         symbol: tr.symbol,
+                         side: tr.side,
+                         entry_price: tr.entry_price,
+                         exit_price: tr.exit_price,
+                         quantity: tr.quantity,
+                         pnl: tr.pnl,
+                         pnl_percent: tr.pnl_percent,
+                         win_loss: tr.win_loss ? "Win" : "Loss",
+                         prediction_accuracy: tr.prediction_accuracy || "N/A",
+                         entry_time: tr.entry_time,
+                         exit_time: tr.exit_time,
+                         duration_minutes: tr.duration_minutes,
+                    }));
+                    
+                    // Convert to CSV (Excel can open CSV)
+                    const headers = ["ID", "Symbol", "Side", "Entry Price", "Exit Price", "Quantity", "P&L", "P&L %", "Win/Loss", "Prediction Accuracy", "Entry Time", "Exit Time", "Duration (minutes)"];
+                    const rows = csvData.map((row) => Object.values(row));
+                    const csvContent = [headers, ...rows].map((row) => row.join(",")).join("\n");
+                    const blob = new Blob([csvContent], { type: "text/csv" });
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `trade_results_${new Date().toISOString().split("T")[0]}.csv`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
                     setExporting(null);
                     return;
                }
@@ -429,7 +469,7 @@ export default function PerformancePage() {
           }
      };
 
-     const exportPerformanceStats = async (format: "csv" | "json") => {
+     const exportPerformanceStats = async (format: ExportFormat) => {
           try {
                setExporting({ type: "stats", format });
                setError(null);
@@ -437,6 +477,29 @@ export default function PerformancePage() {
                const token = localStorage.getItem("auth_token");
                if (!token) {
                     setError("Not authenticated");
+                    setExporting(null);
+                    return;
+               }
+
+               // Handle Excel export in frontend
+               if (format === "xlsx") {
+                    if (!stats) {
+                         setError("No stats data to export");
+                         setExporting(null);
+                         return;
+                    }
+                    
+                    // Convert stats to CSV (Excel can open CSV)
+                    const csvContent = Object.entries(stats).map(([key, value]) => `${key},${value}`).join("\n");
+                    const blob = new Blob([csvContent], { type: "text/csv" });
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `performance_stats_${new Date().toISOString().split("T")[0]}.csv`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
                     setExporting(null);
                     return;
                }
@@ -760,38 +823,23 @@ export default function PerformancePage() {
                               </select>
                          )}
                          <button
-                              onClick={() => exportTradeResults("csv")}
-                              disabled={exporting?.type === "trades"}
+                              onClick={() => {
+                                   setExportType("trades");
+                                   setShowExportModal(true);
+                              }}
+                              disabled={tradeResults.length === 0}
                               style={{
                                    padding: "8px 16px",
-                                   backgroundColor: exporting?.type === "trades" && exporting?.format === "csv" ? "#6b7280" : "#0070f3",
-                                   color: "white",
+                                   backgroundColor: tradeResults.length === 0 ? "#6b7280" : "#FFAE00",
+                                   color: tradeResults.length === 0 ? "#888" : "#1a1a1a",
                                    border: "none",
                                    borderRadius: "4px",
-                                   cursor: exporting?.type === "trades" ? "not-allowed" : "pointer",
+                                   cursor: tradeResults.length === 0 ? "not-allowed" : "pointer",
                                    fontSize: "14px",
                                    fontWeight: "bold",
-                                   opacity: exporting?.type === "trades" && exporting?.format === "csv" ? 0.7 : 1,
                               }}
                          >
-                              {exporting?.type === "trades" && exporting?.format === "csv" ? "Exporting..." : "Export Trades (CSV)"}
-                         </button>
-                         <button
-                              onClick={() => exportTradeResults("json")}
-                              disabled={exporting?.type === "trades"}
-                              style={{
-                                   padding: "8px 16px",
-                                   backgroundColor: exporting?.type === "trades" && exporting?.format === "json" ? "#6b7280" : "#10b981",
-                                   color: "white",
-                                   border: "none",
-                                   borderRadius: "4px",
-                                   cursor: exporting?.type === "trades" ? "not-allowed" : "pointer",
-                                   fontSize: "14px",
-                                   fontWeight: "bold",
-                                   opacity: exporting?.type === "trades" && exporting?.format === "json" ? 0.7 : 1,
-                              }}
-                         >
-                              {exporting?.type === "trades" && exporting?.format === "json" ? "Exporting..." : "Export Trades (JSON)"}
+                              📥 Export Trades
                          </button>
                     </div>
                </div>
@@ -803,38 +851,23 @@ export default function PerformancePage() {
                               <h2 style={{ margin: 0, fontSize: "20px", fontWeight: "bold" }}>Performance Summary</h2>
                               <div style={{ display: "flex", gap: "8px" }}>
                                    <button
-                                        onClick={() => exportPerformanceStats("csv")}
-                                        disabled={exporting?.type === "stats"}
+                                        onClick={() => {
+                                             setExportType("stats");
+                                             setShowExportModal(true);
+                                        }}
+                                        disabled={!stats}
                                         style={{
                                              padding: "6px 12px",
-                                             backgroundColor: exporting?.type === "stats" && exporting?.format === "csv" ? "#6b7280" : "#0070f3",
-                                             color: "white",
+                                             backgroundColor: !stats ? "#6b7280" : "#FFAE00",
+                                             color: !stats ? "#888" : "#1a1a1a",
                                              border: "none",
                                              borderRadius: "4px",
-                                             cursor: exporting?.type === "stats" ? "not-allowed" : "pointer",
+                                             cursor: !stats ? "not-allowed" : "pointer",
                                              fontSize: "13px",
                                              fontWeight: "500",
-                                             opacity: exporting?.type === "stats" && exporting?.format === "csv" ? 0.7 : 1,
                                         }}
                                    >
-                                        {exporting?.type === "stats" && exporting?.format === "csv" ? "Exporting..." : "Export Stats (CSV)"}
-                                   </button>
-                                   <button
-                                        onClick={() => exportPerformanceStats("json")}
-                                        disabled={exporting?.type === "stats"}
-                                        style={{
-                                             padding: "6px 12px",
-                                             backgroundColor: exporting?.type === "stats" && exporting?.format === "json" ? "#6b7280" : "#10b981",
-                                             color: "white",
-                                             border: "none",
-                                             borderRadius: "4px",
-                                             cursor: exporting?.type === "stats" ? "not-allowed" : "pointer",
-                                             fontSize: "13px",
-                                             fontWeight: "500",
-                                             opacity: exporting?.type === "stats" && exporting?.format === "json" ? 0.7 : 1,
-                                        }}
-                                   >
-                                        {exporting?.type === "stats" && exporting?.format === "json" ? "Exporting..." : "Export Stats (JSON)"}
+                                        📥 Export Stats
                                    </button>
                               </div>
                          </div>
@@ -1874,6 +1907,17 @@ export default function PerformancePage() {
                          </div>
                     )}
                </div>
+
+               {/* Export Modal */}
+               <ExportModal
+                    isOpen={showExportModal}
+                    onClose={() => setShowExportModal(false)}
+                    onExport={exportType === "trades" ? exportTradeResults : exportPerformanceStats}
+                    data={exportType === "trades" ? tradeResults : (stats ? [stats] : [])}
+                    dataType={exportType}
+                    title={exportType === "trades" ? "Export Trade Results" : "Export Performance Stats"}
+                    loading={exporting !== null}
+               />
           </div>
      );
 }
