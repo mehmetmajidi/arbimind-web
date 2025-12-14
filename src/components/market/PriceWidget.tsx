@@ -1,14 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useExchange } from "@/contexts/ExchangeContext";
-
-interface Market {
-    symbol: string;
-    base: string;
-    quote: string;
-    active: boolean;
-}
+import SymbolSelector from "./SymbolSelector";
 
 interface PriceData {
     symbol: string;
@@ -25,11 +19,11 @@ interface PriceData {
 interface PriceWidgetProps {
     onSymbolChange?: (symbol: string) => void;
     onChartClick?: () => void;
+    onPriceUpdate?: (price: number | null, timestamp: number | null) => void;
 }
 
-export default function PriceWidget({ onSymbolChange, onChartClick }: PriceWidgetProps) {
+export default function PriceWidget({ onSymbolChange, onChartClick, onPriceUpdate }: PriceWidgetProps) {
     const { selectedAccountId, accounts } = useExchange();
-    const [markets, setMarkets] = useState<Market[]>([]);
     const [selectedSymbol, setSelectedSymbol] = useState<string>("");
     const [priceData, setPriceData] = useState<PriceData | null>(null);
     const [loading, setLoading] = useState(false);
@@ -38,7 +32,14 @@ export default function PriceWidget({ onSymbolChange, onChartClick }: PriceWidge
     const [isRealTime, setIsRealTime] = useState(true);
     const [wsConnection, setWsConnection] = useState<WebSocket | null>(null);
     const [wsStatus, setWsStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
-    const [currencyFilter, setCurrencyFilter] = useState<string>("");
+    const [reconnectTrigger, setReconnectTrigger] = useState(0);
+    const [reconnectAttempts, setReconnectAttempts] = useState(0);
+    
+    // Use refs to avoid stale closures
+    const wsRef = useRef<WebSocket | null>(null);
+    const reconnectAttemptsRef = useRef(0);
+    const shouldReconnectRef = useRef(true);
+    const pingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
     // Calculate 24h change from OHLCV data
     const calculate24hChange = useCallback(async () => {
@@ -77,50 +78,15 @@ export default function PriceWidget({ onSymbolChange, onChartClick }: PriceWidge
         }
     }, [selectedAccountId, selectedSymbol, priceData]);
 
-    // Fetch markets
+    // Reset selected symbol when account changes
     useEffect(() => {
         if (!selectedAccountId) {
-            setMarkets([]);
             setSelectedSymbol("");
-            return;
-        }
-
-        const fetchMarkets = async () => {
-            try {
-                const token = localStorage.getItem("auth_token") || "";
-                if (!token) {
-                    setError("Please login to view market data");
-                    return;
-                }
-
-                const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-                // Use /db endpoint to get symbols from database instead of exchange API
-                const response = await fetch(`${apiUrl}/market/pairs/${selectedAccountId}/db?active_only=true`, {
-                    headers: { Authorization: `Bearer ${token}` },
-                });
-
-                if (response.ok) {
-                    const data = await response.json();
-                    const marketsList = data.markets || [];
-                    setMarkets(marketsList);
-                    setError(null);
-
-                    // Auto-select first symbol if available
-                    if (marketsList.length > 0 && selectedSymbol === "") {
-                        setSelectedSymbol(marketsList[0].symbol);
-                    }
-                } else {
-                    const errorData = await response.json().catch(() => ({}));
-                    setError(errorData.detail || `Failed to load trading pairs (${response.status})`);
-                }
-            } catch (error) {
-                console.error("Error fetching markets:", error);
-                setError(`Failed to load trading pairs: ${error instanceof Error ? error.message : "Unknown error"}`);
+            if (onSymbolChange) {
+                onSymbolChange("");
             }
-        };
-
-        fetchMarkets();
-    }, [selectedAccountId, selectedSymbol]);
+        }
+    }, [selectedAccountId, onSymbolChange]);
 
     // Fetch price data
     const fetchPrice = async () => {
@@ -146,6 +112,10 @@ export default function PriceWidget({ onSymbolChange, onChartClick }: PriceWidge
                 const data = await response.json();
                 setPriceData(data);
                 setError(null);
+                // Notify parent component of price update
+                if (onPriceUpdate) {
+                    onPriceUpdate(data.price, data.timestamp || Date.now());
+                }
             } else {
                 const errorData = await response.json().catch(() => ({}));
                 setError(errorData.detail || `Failed to fetch price (${response.status})`);
@@ -179,11 +149,18 @@ export default function PriceWidget({ onSymbolChange, onChartClick }: PriceWidge
         }
     }, [priceData, selectedAccountId, selectedSymbol, calculate24hChange]);
 
-    // WebSocket for real-time updates
+    // WebSocket for real-time updates with improved connection handling
     useEffect(() => {
         if (!isRealTime || !selectedAccountId || !selectedSymbol) {
-            if (wsConnection) {
-                wsConnection.close();
+            // Clean up existing connection
+            if (wsRef.current) {
+                shouldReconnectRef.current = false;
+                if (pingIntervalRef.current) {
+                    clearInterval(pingIntervalRef.current);
+                    pingIntervalRef.current = null;
+                }
+                wsRef.current.close();
+                wsRef.current = null;
                 setWsConnection(null);
                 setWsStatus("disconnected");
             }
@@ -193,20 +170,97 @@ export default function PriceWidget({ onSymbolChange, onChartClick }: PriceWidge
         const token = localStorage.getItem("auth_token");
         if (!token) return;
 
+        // Close existing connection if symbol changed
+        if (wsRef.current) {
+            shouldReconnectRef.current = false;
+            if (pingIntervalRef.current) {
+                clearInterval(pingIntervalRef.current);
+                pingIntervalRef.current = null;
+            }
+            wsRef.current.close();
+            wsRef.current = null;
+        }
+
+        // Reset reconnection attempts when starting a new connection
+        reconnectAttemptsRef.current = 0;
+        setReconnectAttempts(0);
+        shouldReconnectRef.current = true;
+
         const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
         const encodedSymbol = encodeURIComponent(selectedSymbol);
         const wsUrl = apiUrl.replace("http://", "ws://").replace("https://", "wss://");
-        const wsEndpoint = `${wsUrl}/ws/price/${selectedAccountId}/${encodedSymbol}?token=${token}&interval=5`;
+        // Reduce interval to 3 seconds for faster updates
+        const wsEndpoint = `${wsUrl}/ws/price/${selectedAccountId}/${encodedSymbol}?token=${token}&interval=3`;
 
         setWsStatus("connecting");
+        console.log("🔌 Connecting to WebSocket:", wsEndpoint);
         const ws = new WebSocket(wsEndpoint);
+        wsRef.current = ws;
+        
+        let connectionTimeout: NodeJS.Timeout | null = null;
+        let reconnectTimeout: NodeJS.Timeout | null = null;
+        
+        // Set connection timeout
+        connectionTimeout = setTimeout(() => {
+            if (ws.readyState === WebSocket.CONNECTING) {
+                console.warn("⚠️ WebSocket connection timeout after 5 seconds");
+                ws.close();
+                setWsStatus("disconnected");
+                setError("Connection timeout - retrying...");
+                
+                // Trigger reconnection after timeout (max 10 attempts)
+                if (shouldReconnectRef.current && isRealTime && selectedAccountId && selectedSymbol && reconnectAttemptsRef.current < 10) {
+                    reconnectAttemptsRef.current += 1;
+                    reconnectTimeout = setTimeout(() => {
+                        if (shouldReconnectRef.current && isRealTime && selectedAccountId && selectedSymbol) {
+                            console.log(`🔄 Attempting to reconnect after timeout... (attempt ${reconnectAttemptsRef.current}/10)`);
+                            setReconnectAttempts(reconnectAttemptsRef.current);
+                            setReconnectTrigger(prev => prev + 1);
+                        }
+                    }, 2000);
+                } else if (reconnectAttemptsRef.current >= 10) {
+                    setError("Failed to connect after 10 attempts. Please refresh the page.");
+                }
+            }
+        }, 5000); // 5 second timeout
 
         ws.onopen = () => {
-            console.log("WebSocket connected for", selectedSymbol);
+            console.log("✅ WebSocket connected for", selectedSymbol, "Endpoint:", wsEndpoint);
+            if (connectionTimeout) {
+                clearTimeout(connectionTimeout);
+            }
             setWsStatus("connected");
             setWsConnection(ws);
             setLoading(false);
+            // Clear any error messages on successful connection
             setError(null);
+            reconnectAttemptsRef.current = 0; // Reset reconnection attempts on successful connection
+            setReconnectAttempts(0);
+            
+            // Start ping/pong to keep connection alive
+            if (pingIntervalRef.current) {
+                clearInterval(pingIntervalRef.current);
+            }
+            pingIntervalRef.current = setInterval(() => {
+                if (ws.readyState === WebSocket.OPEN) {
+                    try {
+                        ws.send("ping");
+                    } catch (error) {
+                        console.error("Error sending ping:", error);
+                        // If ping fails, connection might be dead - clear interval
+                        if (pingIntervalRef.current) {
+                            clearInterval(pingIntervalRef.current);
+                            pingIntervalRef.current = null;
+                        }
+                    }
+                } else {
+                    // Connection is not open, clear interval
+                    if (pingIntervalRef.current) {
+                        clearInterval(pingIntervalRef.current);
+                        pingIntervalRef.current = null;
+                    }
+                }
+            }, 30000); // Send ping every 30 seconds
         };
 
         ws.onmessage = (event) => {
@@ -214,49 +268,139 @@ export default function PriceWidget({ onSymbolChange, onChartClick }: PriceWidge
                 const data = JSON.parse(event.data);
                 console.log("WebSocket message received:", data);
                 if (data.type === "price_update" && data.data) {
+                    console.log("Price update received:", {
+                        symbol: data.symbol,
+                        price: data.data.price,
+                        timestamp: data.timestamp
+                    });
                     setPriceData(data.data);
                     setLoading(false);
                     setError(null);
+                    // Notify parent component of price update
+                    if (onPriceUpdate) {
+                        onPriceUpdate(data.data.price, data.data.timestamp || Date.now());
+                    }
+                } else if (data.type === "connected") {
+                    console.log("✅ WebSocket connection confirmed:", data.message);
+                    // Connection is confirmed, make sure status is set to connected
+                    setWsStatus("connected");
+                    setError(null);
+                } else if (data.type === "pong") {
+                    // Ping/pong response - connection is alive
+                    console.debug("WebSocket pong received");
                 } else if (data.type === "error") {
-                    setError(data.message || "WebSocket error");
-                    setWsStatus("disconnected");
+                    console.error("WebSocket error message:", data.message);
+                    // Don't disconnect on error - just show the error message
+                    // Connection will remain active and worker will retry
+                    const errorMsg = data.message || "WebSocket error";
+                    // Only show error if it's not a "not found" error (those are expected)
+                    if (!errorMsg.toLowerCase().includes("not found") && !errorMsg.toLowerCase().includes("ticker data not found")) {
+                        setError(errorMsg);
+                    } else {
+                        // For "not found" errors, just log and clear any previous errors
+                        console.warn("Symbol not found on exchange, but connection remains active");
+                        setError(null);
+                    }
+                    // Don't change status to disconnected - keep connection alive
+                } else {
+                    console.log("Unknown WebSocket message type:", data.type);
                 }
             } catch (error) {
-                console.error("Error parsing WebSocket message:", error);
+                console.error("Error parsing WebSocket message:", error, "Raw data:", event.data);
                 setError("Error parsing WebSocket message");
             }
         };
 
         ws.onerror = (error) => {
-            console.error("WebSocket error:", error);
-            setWsStatus("disconnected");
-            setError("WebSocket connection error");
-            setLoading(false);
+            console.error("❌ WebSocket error:", error);
+            if (connectionTimeout) {
+                clearTimeout(connectionTimeout);
+            }
+            // Don't set error message here - onclose will handle it
+            // The error event doesn't provide much info, wait for onclose
         };
 
         ws.onclose = (event) => {
-            console.log("WebSocket closed:", event.code, event.reason);
+            if (connectionTimeout) {
+                clearTimeout(connectionTimeout);
+            }
+            if (pingIntervalRef.current) {
+                clearInterval(pingIntervalRef.current);
+                pingIntervalRef.current = null;
+            }
+            console.log("🔌 WebSocket closed:", event.code, event.reason || "No reason provided");
             setWsStatus("disconnected");
             setWsConnection(null);
-            // If not a normal closure, try to reconnect after a delay
-            if (event.code !== 1000 && isRealTime) {
-                setTimeout(() => {
-                    if (isRealTime && selectedAccountId && selectedSymbol) {
-                        // Trigger reconnection by updating dependency
-                        setWsStatus("connecting");
+            wsRef.current = null;
+            
+            // Auto-reconnect if not a normal closure and still should be connected
+            // Code 1000 = normal closure (intentional disconnect)
+            // Code 1008 = policy violation (auth error, etc.)
+            // Code 1006 = abnormal closure (connection lost, no close frame)
+            if (shouldReconnectRef.current && event.code !== 1000 && isRealTime && selectedAccountId && selectedSymbol) {
+                // Don't reconnect on auth errors (1008) - user needs to fix auth
+                if (event.code === 1008) {
+                    setError(`Authentication failed: ${event.reason || "Invalid token"}`);
+                    reconnectAttemptsRef.current = 0;
+                    setReconnectAttempts(0);
+                    shouldReconnectRef.current = false; // Stop reconnecting
+                    return;
+                }
+                
+                // Wait a bit before reconnecting (max 10 attempts)
+                if (reconnectAttemptsRef.current < 10) {
+                    reconnectAttemptsRef.current += 1;
+                    // Only show error message if this is not the first reconnect attempt
+                    if (reconnectAttemptsRef.current > 1) {
+                        setError(`Connection lost. Reconnecting... (attempt ${reconnectAttemptsRef.current}/10)`);
                     }
-                }, 3000);
+                    // Exponential backoff: 2s, 4s, 8s, etc. (max 10s)
+                    const delay = Math.min(2000 * Math.pow(2, reconnectAttemptsRef.current - 1), 10000);
+                    reconnectTimeout = setTimeout(() => {
+                        // Check if we should still reconnect (conditions might have changed)
+                        if (shouldReconnectRef.current && isRealTime && selectedAccountId && selectedSymbol) {
+                            console.log(`🔄 Attempting to reconnect WebSocket... (attempt ${reconnectAttemptsRef.current}/10, delay: ${delay}ms)`);
+                            setReconnectAttempts(reconnectAttemptsRef.current);
+                            // Trigger reconnection by incrementing reconnectTrigger - this will cause useEffect to run again
+                            setReconnectTrigger(prev => prev + 1);
+                        }
+                    }, delay);
+                } else {
+                    setError("Failed to connect after 10 attempts. Please refresh the page or check your connection.");
+                    shouldReconnectRef.current = false; // Stop reconnecting after max attempts
+                }
+            } else if (event.code === 1000) {
+                // Normal closure - clear any errors and reset attempts
+                setError(null);
+                reconnectAttemptsRef.current = 0;
+                setReconnectAttempts(0);
+            } else if (!shouldReconnectRef.current) {
+                // Manual disconnect - clear errors
+                setError(null);
+                reconnectAttemptsRef.current = 0;
+                setReconnectAttempts(0);
             }
         };
 
-        setWsConnection(ws);
-
         return () => {
+            shouldReconnectRef.current = false; // Prevent reconnection on cleanup
+            if (connectionTimeout) {
+                clearTimeout(connectionTimeout);
+            }
+            if (reconnectTimeout) {
+                clearTimeout(reconnectTimeout);
+            }
+            if (pingIntervalRef.current) {
+                clearInterval(pingIntervalRef.current);
+                pingIntervalRef.current = null;
+            }
             if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
                 ws.close();
             }
+            wsRef.current = null;
+            setWsConnection(null);
         };
-    }, [isRealTime, selectedAccountId, selectedSymbol]);
+    }, [isRealTime, selectedAccountId, selectedSymbol, reconnectTrigger]);
 
     const handleSymbolChange = (symbol: string) => {
         setSelectedSymbol(symbol);
@@ -270,21 +414,6 @@ export default function PriceWidget({ onSymbolChange, onChartClick }: PriceWidge
 
     const isPositive = priceChange24h >= 0;
     const changeColor = isPositive ? "#22c55e" : "#ef4444";
-
-    // Get unique quote currencies from markets
-    const uniqueCurrencies = Array.from(new Set(markets.map((m) => m.quote).filter(Boolean))).sort();
-
-    // Filter markets by currency (quote currency)
-    const filteredMarkets = currencyFilter
-        ? markets.filter((market) => market.quote.toLowerCase() === currencyFilter.toLowerCase())
-        : markets;
-
-    // Reset selected symbol if it's not in filtered list
-    useEffect(() => {
-        if (selectedSymbol && !filteredMarkets.find((m) => m.symbol === selectedSymbol)) {
-            setSelectedSymbol("");
-        }
-    }, [currencyFilter, filteredMarkets, selectedSymbol]);
 
     return (
         <div
@@ -302,80 +431,12 @@ export default function PriceWidget({ onSymbolChange, onChartClick }: PriceWidge
         >
             {/* Left Side: Trading Pair and Account */}
             <div style={{ display: "flex", flexDirection: "column", gap: "8px", minWidth: "250px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                    <select
-                        value={selectedSymbol}
-                        onChange={(e) => handleSymbolChange(e.target.value)}
-                        disabled={!selectedAccountId || filteredMarkets.length === 0}
-                        style={{
-                            backgroundColor: "transparent",
-                            border: "none",
-                            color: "#ffffff",
-                            fontSize: "20px",
-                            fontWeight: "600",
-                            cursor: "pointer",
-                            outline: "none",
-                            padding: "4px 8px",
-                            borderRadius: "4px",
-                            flex: 1,
-                        }}
-                        onMouseEnter={(e) => {
-                            if (selectedAccountId && filteredMarkets.length > 0) {
-                                e.currentTarget.style.backgroundColor = "rgba(255, 174, 0, 0.1)";
-                            }
-                        }}
-                        onMouseLeave={(e) => {
-                            e.currentTarget.style.backgroundColor = "transparent";
-                        }}
-                    >
-                        {filteredMarkets.length === 0 ? (
-                            <option value="" style={{ backgroundColor: "#1a1a1a", color: "#888" }}>
-                                No symbols found
-                            </option>
-                        ) : (
-                            filteredMarkets.map((market) => (
-                                <option key={market.symbol} value={market.symbol} style={{ backgroundColor: "#1a1a1a", color: "#ffffff" }}>
-                                    {market.symbol}
-                                </option>
-                            ))
-                        )}
-                    </select>
-                    <span style={{ color: "#888", fontSize: "14px" }}>▼</span>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                    <select
-                        value={currencyFilter}
-                        onChange={(e) => {
-                            setCurrencyFilter(e.target.value);
-                        }}
-                        style={{
-                            backgroundColor: "#2a2a2a",
-                            border: "1px solid rgba(255, 174, 0, 0.3)",
-                            color: "#ffffff",
-                            fontSize: "14px",
-                            padding: "6px 12px",
-                            borderRadius: "6px",
-                            outline: "none",
-                            cursor: "pointer",
-                            flex: 1,
-                        }}
-                        onFocus={(e) => {
-                            e.currentTarget.style.borderColor = "#FFAE00";
-                        }}
-                        onBlur={(e) => {
-                            e.currentTarget.style.borderColor = "rgba(255, 174, 0, 0.3)";
-                        }}
-                    >
-                        <option value="" style={{ backgroundColor: "#1a1a1a", color: "#ffffff" }}>
-                            All Currencies
-                        </option>
-                        {uniqueCurrencies.map((currency) => (
-                            <option key={currency} value={currency} style={{ backgroundColor: "#1a1a1a", color: "#ffffff" }}>
-                                {currency}
-                            </option>
-                        ))}
-                    </select>
-                </div>
+                <SymbolSelector
+                    accountId={selectedAccountId}
+                    selectedSymbol={selectedSymbol}
+                    onSymbolChange={handleSymbolChange}
+                    disabled={!selectedAccountId}
+                />
                 <div style={{ color: "#888", fontSize: "12px" }}>{accountName}</div>
             </div>
 
@@ -479,28 +540,35 @@ export default function PriceWidget({ onSymbolChange, onChartClick }: PriceWidge
             </div>
 
             {/* Right Side: Real-time Connection Status */}
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: "150px" }}>
-                <div
-                    style={{
-                        width: "12px",
-                        height: "12px",
-                        borderRadius: "50%",
-                        backgroundColor: wsStatus === "connected" ? "#22c55e" : wsStatus === "connecting" ? "#FFAE00" : "#888",
-                        animation: wsStatus === "connecting" ? "pulse 2s infinite" : "none",
-                    }}
-                />
-                <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                    <div style={{ color: "#ffffff", fontSize: "12px", fontWeight: "500" }}>Real-time</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px", minWidth: "150px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                     <div
                         style={{
-                            color: wsStatus === "connected" ? "#22c55e" : wsStatus === "connecting" ? "#FFAE00" : "#888",
-                            fontSize: "12px",
-                            fontWeight: "500",
+                            width: "12px",
+                            height: "12px",
+                            borderRadius: "50%",
+                            backgroundColor: wsStatus === "connected" ? "#22c55e" : wsStatus === "connecting" ? "#FFAE00" : "#888",
+                            animation: wsStatus === "connecting" ? "pulse 2s infinite" : "none",
                         }}
-                    >
-                        {wsStatus === "connected" ? "Connected" : wsStatus === "connecting" ? "Connecting..." : "Disconnected"}
+                    />
+                    <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                        <div style={{ color: "#ffffff", fontSize: "12px", fontWeight: "500" }}>Real-time</div>
+                        <div
+                            style={{
+                                color: wsStatus === "connected" ? "#22c55e" : wsStatus === "connecting" ? "#FFAE00" : "#888",
+                                fontSize: "12px",
+                                fontWeight: "500",
+                            }}
+                        >
+                            {wsStatus === "connected" ? "Connected" : wsStatus === "connecting" ? "Connecting..." : "Disconnected"}
+                        </div>
                     </div>
                 </div>
+                {reconnectAttempts > 0 && wsStatus !== "connected" && (
+                    <div style={{ marginTop: "4px", fontSize: "11px", opacity: 0.8, color: "#888" }}>
+                        Reconnecting... (attempt {reconnectAttempts}/10)
+                    </div>
+                )}
             </div>
 
             {error && (

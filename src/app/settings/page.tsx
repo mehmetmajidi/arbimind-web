@@ -419,58 +419,60 @@ export default function SettingsPage() {
                          >
                               💼 Exchange Accounts
                          </button>
-                         <button
-                              onClick={() => setActiveTab("exchanges")}
-                              style={{
-                                   padding: "12px 16px",
-                                   backgroundColor: activeTab === "exchanges" ? "#FFAE00" : "transparent",
-                                   color: activeTab === "exchanges" ? "#1a1a1a" : "#ededed",
-                                   border: "none",
-                                   borderRadius: "8px",
-                                   cursor: "pointer",
-                                   textAlign: "left",
-                                   fontWeight: activeTab === "exchanges" ? "600" : "400",
-                                   fontSize: "14px",
-                                   transition: "all 0.2s ease",
-                              }}
-                         >
-                              🏢 Exchanges
-                         </button>
-                         <button
-                              onClick={() => setActiveTab("symbols")}
-                              style={{
-                                   padding: "12px 16px",
-                                   backgroundColor: activeTab === "symbols" ? "#FFAE00" : "transparent",
-                                   color: activeTab === "symbols" ? "#1a1a1a" : "#ededed",
-                                   border: "none",
-                                   borderRadius: "8px",
-                                   cursor: "pointer",
-                                   textAlign: "left",
-                                   fontWeight: activeTab === "symbols" ? "600" : "400",
-                                   fontSize: "14px",
-                                   transition: "all 0.2s ease",
-                              }}
-                         >
-                              📊 Symbols by Exchange
-                         </button>
                          {isAdmin && (
-                              <button
-                                   onClick={() => setActiveTab("users")}
-                                   style={{
-                                        padding: "12px 16px",
-                                        backgroundColor: activeTab === "users" ? "#FFAE00" : "transparent",
-                                        color: activeTab === "users" ? "#1a1a1a" : "#ededed",
-                                        border: "none",
-                                        borderRadius: "8px",
-                                        cursor: "pointer",
-                                        textAlign: "left",
-                                        fontWeight: activeTab === "users" ? "600" : "400",
-                                        fontSize: "14px",
-                                        transition: "all 0.2s ease",
-                                   }}
-                              >
-                                   👥 Users
-                              </button>
+                              <>
+                                   <button
+                                        onClick={() => setActiveTab("exchanges")}
+                                        style={{
+                                             padding: "12px 16px",
+                                             backgroundColor: activeTab === "exchanges" ? "#FFAE00" : "transparent",
+                                             color: activeTab === "exchanges" ? "#1a1a1a" : "#ededed",
+                                             border: "none",
+                                             borderRadius: "8px",
+                                             cursor: "pointer",
+                                             textAlign: "left",
+                                             fontWeight: activeTab === "exchanges" ? "600" : "400",
+                                             fontSize: "14px",
+                                             transition: "all 0.2s ease",
+                                        }}
+                                   >
+                                        🏢 Exchanges
+                                   </button>
+                                   <button
+                                        onClick={() => setActiveTab("symbols")}
+                                        style={{
+                                             padding: "12px 16px",
+                                             backgroundColor: activeTab === "symbols" ? "#FFAE00" : "transparent",
+                                             color: activeTab === "symbols" ? "#1a1a1a" : "#ededed",
+                                             border: "none",
+                                             borderRadius: "8px",
+                                             cursor: "pointer",
+                                             textAlign: "left",
+                                             fontWeight: activeTab === "symbols" ? "600" : "400",
+                                             fontSize: "14px",
+                                             transition: "all 0.2s ease",
+                                        }}
+                                   >
+                                        📊 Symbols by Exchange
+                                   </button>
+                                   <button
+                                        onClick={() => setActiveTab("users")}
+                                        style={{
+                                             padding: "12px 16px",
+                                             backgroundColor: activeTab === "users" ? "#FFAE00" : "transparent",
+                                             color: activeTab === "users" ? "#1a1a1a" : "#ededed",
+                                             border: "none",
+                                             borderRadius: "8px",
+                                             cursor: "pointer",
+                                             textAlign: "left",
+                                             fontWeight: activeTab === "users" ? "600" : "400",
+                                             fontSize: "14px",
+                                             transition: "all 0.2s ease",
+                                        }}
+                                   >
+                                        👥 Users
+                                   </button>
+                              </>
                          )}
                     </div>
                </div>
@@ -741,7 +743,7 @@ export default function SettingsPage() {
                          </div>
                     )}
 
-                    {activeTab === "exchanges" && (
+                    {activeTab === "exchanges" && isAdmin && (
                          <div>
                               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
                                    <h1 style={{ color: "#FFAE00", margin: 0 }}>Exchanges</h1>
@@ -819,7 +821,7 @@ export default function SettingsPage() {
                          </div>
                     )}
 
-                    {activeTab === "symbols" && (
+                    {activeTab === "symbols" && isAdmin && (
                          <div>
                               <h1 style={{ color: "#FFAE00", marginBottom: "24px" }}>Symbols by Exchange</h1>
                               

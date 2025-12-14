@@ -5,26 +5,50 @@ import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
-const menuItems = [
-     { name: "Market Data", path: "/market", icon: "📊" },
-     { name: "Trading", path: "/trading", icon: "💹" },
-     { name: "Bots", path: "/bots", icon: "🤖" },
-     { name: "Performance", path: "/performance", icon: "📈" },
-     { name: "Predictions", path: "/predictions", icon: "🔮" },
-     { name: "Monitoring", path: "/monitoring", icon: "🔔" },
-     { name: "Training", path: "/training", icon: "🎓" },
-     { name: "Backfill", path: "/backfill", icon: "📥" },
-     { name: "Settings", path: "/settings", icon: "⚙️" },
+// Base menu items available to all users
+const baseMenuItems = [
+     { name: "Market Data", path: "/market", icon: "📊", adminOnly: false },
+     { name: "Trading", path: "/trading", icon: "💹", adminOnly: false },
+     { name: "Bots", path: "/bots", icon: "🤖", adminOnly: false },
+     { name: "Performance", path: "/performance", icon: "📈", adminOnly: false },
+     { name: "Predictions", path: "/predictions", icon: "🔮", adminOnly: false },
+     { name: "Settings", path: "/settings", icon: "⚙️", adminOnly: false },
+];
+
+// Admin-only menu items
+const adminMenuItems = [
+     { name: "Monitoring", path: "/monitoring", icon: "🔔", adminOnly: true },
+     { name: "Training", path: "/training", icon: "🎓", adminOnly: true },
+     { name: "Backfill", path: "/backfill", icon: "📥", adminOnly: true },
 ];
 
 export default function Sidebar() {
      const pathname = usePathname();
      const [isAuthenticated, setIsAuthenticated] = useState(false);
+     const [isAdmin, setIsAdmin] = useState(false);
 
      useEffect(() => {
-          const checkAuth = () => {
+          const checkAuth = async () => {
                const token = localStorage.getItem("auth_token");
                setIsAuthenticated(!!token);
+
+               // Check if user is admin
+               if (token) {
+                    try {
+                         const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+                         const meRes = await fetch(`${apiUrl}/auth/me`, {
+                              headers: { Authorization: `Bearer ${token}` },
+                         });
+                         if (meRes.ok) {
+                              const meData = await meRes.json();
+                              const isUserAdmin = meData.username === "admin" || meData.role === "admin";
+                              setIsAdmin(isUserAdmin);
+                         }
+                    } catch (error) {
+                         console.warn("Failed to check admin status:", error);
+                         setIsAdmin(false);
+                    }
+               }
           };
           checkAuth();
      }, []);
@@ -94,7 +118,51 @@ export default function Sidebar() {
                          padding: "0 12px",
                     }}
                >
-                    {menuItems.map((item) => {
+                    {/* Base menu items (all users) */}
+                    {baseMenuItems.map((item) => {
+                         const isActive = pathname === item.path || pathname?.startsWith(item.path + "/");
+                         return (
+                              <Link
+                                   key={item.path}
+                                   href={item.path}
+                                   style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: "12px",
+                                        padding: "12px 16px",
+                                        borderRadius: "8px",
+                                        color: isActive ? "#FFAE00" : "#888888",
+                                        backgroundColor: isActive ? "rgba(255, 174, 0, 0.1)" : "transparent",
+                                        border: isActive ? "1px solid rgba(255, 174, 0, 0.3)" : "1px solid transparent",
+                                        textDecoration: "none",
+                                        transition: "all 0.2s ease",
+                                        fontSize: "15px",
+                                        fontWeight: isActive ? "600" : "400",
+                                        textShadow: isActive ? "0 0 8px rgba(255, 174, 0, 0.6)" : "none",
+                                   }}
+                                   onMouseEnter={(e) => {
+                                        if (!isActive) {
+                                             e.currentTarget.style.color = "#FFAE00";
+                                             e.currentTarget.style.backgroundColor = "rgba(255, 174, 0, 0.05)";
+                                             e.currentTarget.style.borderColor = "rgba(255, 174, 0, 0.2)";
+                                        }
+                                   }}
+                                   onMouseLeave={(e) => {
+                                        if (!isActive) {
+                                             e.currentTarget.style.color = "#888888";
+                                             e.currentTarget.style.backgroundColor = "transparent";
+                                             e.currentTarget.style.borderColor = "transparent";
+                                        }
+                                   }}
+                              >
+                                   <span style={{ fontSize: "20px" }}>{item.icon}</span>
+                                   <span>{item.name}</span>
+                              </Link>
+                         );
+                    })}
+
+                    {/* Admin-only menu items */}
+                    {isAdmin && adminMenuItems.map((item) => {
                          const isActive = pathname === item.path || pathname?.startsWith(item.path + "/");
                          return (
                               <Link

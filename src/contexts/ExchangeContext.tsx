@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from "react";
 
 interface ExchangeAccount {
     id: number;
@@ -24,9 +24,17 @@ export function ExchangeProvider({ children }: { children: ReactNode }) {
     const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const fetchingRef = useRef(false); // Prevent multiple simultaneous fetches
 
     const fetchAccounts = useCallback(async () => {
+        // Prevent multiple simultaneous fetches
+        if (fetchingRef.current) {
+            console.log("ExchangeContext: Fetch already in progress, skipping...");
+            return;
+        }
+
         try {
+            fetchingRef.current = true;
             setLoading(true);
             setError(null);
             
@@ -35,6 +43,7 @@ export function ExchangeProvider({ children }: { children: ReactNode }) {
                 console.warn("ExchangeContext: No auth token found");
                 setError("Please login to view exchange accounts");
                 setLoading(false);
+                fetchingRef.current = false;
                 return;
             }
 
@@ -43,12 +52,19 @@ export function ExchangeProvider({ children }: { children: ReactNode }) {
             
             console.log("ExchangeContext: Fetching accounts from:", url);
 
+            // Add timeout to prevent hanging
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
             const response = await fetch(url, {
                 headers: { 
                     Authorization: `Bearer ${token}`,
                     "Content-Type": "application/json",
                 },
+                signal: controller.signal,
             });
+
+            clearTimeout(timeoutId);
 
             console.log("ExchangeContext: Response status:", response.status, response.statusText);
 
@@ -59,6 +75,7 @@ export function ExchangeProvider({ children }: { children: ReactNode }) {
                 if (response.status === 401) {
                     setError("Please login to view exchange accounts");
                     setLoading(false);
+                    fetchingRef.current = false;
                     return;
                 }
                 throw new Error(`Failed to fetch accounts: ${response.status} ${response.statusText}`);
@@ -66,21 +83,10 @@ export function ExchangeProvider({ children }: { children: ReactNode }) {
 
             const data = await response.json();
             console.log("ExchangeContext: Received accounts data:", data);
-            console.log("ExchangeContext: Data type:", Array.isArray(data) ? "array" : typeof data);
             
             // Handle both array response and object with accounts property
             const accountsList = Array.isArray(data) ? data : (data.accounts || []);
-            console.log("ExchangeContext: Parsed accounts list:", accountsList);
             console.log("ExchangeContext: Total accounts:", accountsList.length);
-            
-            // Show ALL accounts (both active and inactive) - let user see all their accounts
-            // The backend returns all accounts, we should show them all
-            console.log("ExchangeContext: All accounts:", accountsList);
-            console.log("ExchangeContext: Account details:", accountsList.map((acc: ExchangeAccount) => ({
-                id: acc.id,
-                exchange_name: acc.exchange_name,
-                is_active: acc.is_active
-            })));
             
             // Show all accounts regardless of active status
             setAccounts(accountsList);
@@ -115,11 +121,17 @@ export function ExchangeProvider({ children }: { children: ReactNode }) {
                 return finalSelectedId;
             });
         } catch (err) {
-            console.error("ExchangeContext: Error fetching accounts:", err);
-            setError(err instanceof Error ? err.message : "Failed to fetch exchange accounts");
+            if (err instanceof Error && err.name === 'AbortError') {
+                console.error("ExchangeContext: Request timeout");
+                setError("Request timeout. Please check your connection and try again.");
+            } else {
+                console.error("ExchangeContext: Error fetching accounts:", err);
+                setError(err instanceof Error ? err.message : "Failed to fetch exchange accounts");
+            }
             setAccounts([]);
         } finally {
             setLoading(false);
+            fetchingRef.current = false;
         }
     }, []);
 
@@ -134,26 +146,32 @@ export function ExchangeProvider({ children }: { children: ReactNode }) {
         }
     }, []);
 
-    // Initial fetch on mount
+    // Initial fetch on mount - only once
     useEffect(() => {
-        fetchAccounts();
-    }, [fetchAccounts]);
+        const token = localStorage.getItem("auth_token");
+        if (token && accounts.length === 0 && !fetchingRef.current) {
+            fetchAccounts();
+        } else if (!token) {
+            setLoading(false);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []); // Only run once on mount
 
     // Listen for auth token changes and refetch accounts
     useEffect(() => {
         // Check if token exists, if not, set up a retry mechanism
         const token = localStorage.getItem("auth_token");
-        if (!token && accounts.length === 0) {
+        if (!token && accounts.length === 0 && !fetchingRef.current) {
             // If no token and no accounts, set up a short polling interval to check for token
             // This handles the case where login happens after context mounts
             const checkInterval = setInterval(() => {
                 const currentToken = localStorage.getItem("auth_token");
-                if (currentToken) {
+                if (currentToken && !fetchingRef.current) {
                     console.log("ExchangeContext: Token detected, fetching accounts");
                     fetchAccounts();
                     clearInterval(checkInterval);
                 }
-            }, 500); // Check every 500ms
+            }, 1000); // Check every 1 second (reduced frequency)
 
             // Clear interval after 10 seconds to avoid infinite polling
             const timeout = setTimeout(() => {
@@ -165,16 +183,17 @@ export function ExchangeProvider({ children }: { children: ReactNode }) {
                 clearTimeout(timeout);
             };
         }
-    }, [accounts.length, fetchAccounts]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [accounts.length]); // Remove fetchAccounts from dependencies
 
     // Listen for storage events (works across tabs/windows)
     useEffect(() => {
         const handleStorageChange = (e: StorageEvent) => {
             if (e.key === "auth_token") {
-                if (e.newValue) {
+                if (e.newValue && !fetchingRef.current) {
                     console.log("ExchangeContext: Auth token set, refetching accounts");
                     fetchAccounts();
-                } else {
+                } else if (!e.newValue) {
                     // Token was removed (logout)
                     console.log("ExchangeContext: Auth token removed, clearing accounts");
                     setAccounts([]);
@@ -187,13 +206,16 @@ export function ExchangeProvider({ children }: { children: ReactNode }) {
 
         window.addEventListener("storage", handleStorageChange);
         return () => window.removeEventListener("storage", handleStorageChange);
-    }, [fetchAccounts]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []); // Only set up listener once
 
     // Listen for custom auth events (for same-tab login/logout)
     useEffect(() => {
         const handleAuthTokenSet = () => {
-            console.log("ExchangeContext: Auth token set event received, refetching accounts");
-            fetchAccounts();
+            if (!fetchingRef.current) {
+                console.log("ExchangeContext: Auth token set event received, refetching accounts");
+                fetchAccounts();
+            }
         };
 
         const handleAuthTokenRemoved = () => {
@@ -210,13 +232,14 @@ export function ExchangeProvider({ children }: { children: ReactNode }) {
             window.removeEventListener("authTokenSet", handleAuthTokenSet);
             window.removeEventListener("authTokenRemoved", handleAuthTokenRemoved);
         };
-    }, [fetchAccounts]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []); // Only set up listener once
 
     // Refetch on window focus (in case user logged in in another tab)
     useEffect(() => {
         const handleFocus = () => {
             const token = localStorage.getItem("auth_token");
-            if (token && accounts.length === 0) {
+            if (token && accounts.length === 0 && !fetchingRef.current) {
                 console.log("ExchangeContext: Window focused with token, refetching accounts");
                 fetchAccounts();
             }
@@ -224,7 +247,8 @@ export function ExchangeProvider({ children }: { children: ReactNode }) {
 
         window.addEventListener("focus", handleFocus);
         return () => window.removeEventListener("focus", handleFocus);
-    }, [accounts.length, fetchAccounts]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [accounts.length]); // Remove fetchAccounts from dependencies
 
     // Save selected account to localStorage when it changes
     useEffect(() => {
