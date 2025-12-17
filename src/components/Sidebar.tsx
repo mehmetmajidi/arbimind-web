@@ -1,28 +1,46 @@
 "use client";
 
 import Link from "next/link";
-import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import { 
+     MdBarChart, 
+     MdTrendingUp, 
+     MdSmartToy, 
+     MdAssessment, 
+     MdAutoAwesome, 
+     MdSettings,
+     MdNotifications,
+     MdSchool,
+     MdDownload,
+     MdLogout,
+     MdChevronLeft,
+     MdChevronRight
+} from "react-icons/md";
 
 // Base menu items available to all users
 const baseMenuItems = [
-     { name: "Market Data", path: "/market", icon: "📊", adminOnly: false },
-     { name: "Trading", path: "/trading", icon: "💹", adminOnly: false },
-     { name: "Bots", path: "/bots", icon: "🤖", adminOnly: false },
-     { name: "Performance", path: "/performance", icon: "📈", adminOnly: false },
-     { name: "Predictions", path: "/predictions", icon: "🔮", adminOnly: false },
-     { name: "Settings", path: "/settings", icon: "⚙️", adminOnly: false },
+     { name: "Market Data", path: "/market", icon: MdBarChart, adminOnly: false },
+     { name: "Trading", path: "/trading", icon: MdTrendingUp, adminOnly: false },
+     { name: "Bots", path: "/bots", icon: MdSmartToy, adminOnly: false },
+     { name: "Performance", path: "/performance", icon: MdAssessment, adminOnly: false },
+     { name: "Predictions", path: "/predictions", icon: MdAutoAwesome, adminOnly: false },
+     { name: "Settings", path: "/settings", icon: MdSettings, adminOnly: false },
 ];
 
 // Admin-only menu items
 const adminMenuItems = [
-     { name: "Monitoring", path: "/monitoring", icon: "🔔", adminOnly: true },
-     { name: "Training", path: "/training", icon: "🎓", adminOnly: true },
-     { name: "Backfill", path: "/backfill", icon: "📥", adminOnly: true },
+     { name: "Monitoring", path: "/monitoring", icon: MdNotifications, adminOnly: true },
+     { name: "Training", path: "/training", icon: MdSchool, adminOnly: true },
+     { name: "Backfill", path: "/backfill", icon: MdDownload, adminOnly: true },
 ];
 
-export default function Sidebar() {
+interface SidebarProps {
+     isCollapsed: boolean;
+     onToggle: () => void;
+}
+
+export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
      const pathname = usePathname();
      const [isAuthenticated, setIsAuthenticated] = useState(false);
      const [isAdmin, setIsAdmin] = useState(false);
@@ -67,45 +85,62 @@ export default function Sidebar() {
           return null;
      }
 
+     const sidebarWidth = isCollapsed ? "65px" : "250px";
+
      return (
           <aside
                style={{
                     position: "fixed",
                     left: 0,
                     top: 0,
-                    width: "250px",
+                    width: sidebarWidth,
                     height: "100vh",
-                    backgroundColor: "#202020",
+                    backgroundColor: "#1a1a1a",
                     borderRight: "1px solid #2a2a2a",
                     padding: "24px 0",
                     display: "flex",
                     flexDirection: "column",
                     zIndex: 1000,
+                    transition: "width 0.3s ease",
                }}
           >
-               {/* Logo/Brand */}
+               {/* Toggle Button */}
                <div
                     style={{
-                         padding: "0 24px 32px 24px",
-                         borderBottom: "1px solid #2a2a2a",
-                         marginBottom: "24px",
+                         padding: "0 12px 16px 12px",
                          display: "flex",
+                         justifyContent: isCollapsed ? "center" : "flex-end",
                          alignItems: "center",
-                         justifyContent: "center",
                     }}
                >
-                    <Image
-                         src="/brandlogo/Logo_dark_mode.svg"
-                         alt="ArbiMind Logo"
-                         width={180}
-                         height={50}
-                         priority
-                         unoptimized
+                    <button
+                         onClick={onToggle}
                          style={{
-                              maxWidth: "100%",
-                              height: "auto",
+                              width: isCollapsed ? "40px" : "auto",
+                              height: "40px",
+                              padding: isCollapsed ? "0" : "8px 12px",
+                              backgroundColor: "rgba(255, 174, 0, 0.1)",
+                              color: "#FFAE00",
+                              border: "1px solid rgba(255, 174, 0, 0.3)",
+                              borderRadius: "8px",
+                              cursor: "pointer",
+                              fontSize: "18px",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              transition: "all 0.2s ease",
                          }}
-                    />
+                         onMouseEnter={(e) => {
+                              e.currentTarget.style.backgroundColor = "rgba(255, 174, 0, 0.2)";
+                              e.currentTarget.style.borderColor = "rgba(255, 174, 0, 0.5)";
+                         }}
+                         onMouseLeave={(e) => {
+                              e.currentTarget.style.backgroundColor = "rgba(255, 174, 0, 0.1)";
+                              e.currentTarget.style.borderColor = "rgba(255, 174, 0, 0.3)";
+                         }}
+                    >
+                         {isCollapsed ? <MdChevronRight size={24} /> : <MdChevronLeft size={24} />}
+                    </button>
                </div>
 
                {/* Navigation Items */}
@@ -125,20 +160,22 @@ export default function Sidebar() {
                               <Link
                                    key={item.path}
                                    href={item.path}
+                                   title={isCollapsed ? item.name : undefined}
                                    style={{
                                         display: "flex",
                                         alignItems: "center",
-                                        gap: "12px",
-                                        padding: "12px 16px",
+                                        gap: isCollapsed ? "0" : "12px",
+                                        padding: isCollapsed ? "12px" : "12px 16px",
                                         borderRadius: "8px",
                                         color: isActive ? "#FFAE00" : "#888888",
                                         backgroundColor: isActive ? "rgba(255, 174, 0, 0.1)" : "transparent",
                                         border: isActive ? "1px solid rgba(255, 174, 0, 0.3)" : "1px solid transparent",
                                         textDecoration: "none",
                                         transition: "all 0.2s ease",
-                                        fontSize: "15px",
+                                        fontSize: isCollapsed ? "20px" : "15px",
                                         fontWeight: isActive ? "600" : "400",
                                         textShadow: isActive ? "0 0 8px rgba(255, 174, 0, 0.6)" : "none",
+                                        justifyContent: isCollapsed ? "center" : "flex-start",
                                    }}
                                    onMouseEnter={(e) => {
                                         if (!isActive) {
@@ -155,8 +192,8 @@ export default function Sidebar() {
                                         }
                                    }}
                               >
-                                   <span style={{ fontSize: "20px" }}>{item.icon}</span>
-                                   <span>{item.name}</span>
+                                   <item.icon size={20} style={{ display: "flex", alignItems: "center", justifyContent: "center", color: "inherit" }} />
+                                   {!isCollapsed && <span>{item.name}</span>}
                               </Link>
                          );
                     })}
@@ -168,20 +205,22 @@ export default function Sidebar() {
                               <Link
                                    key={item.path}
                                    href={item.path}
+                                   title={isCollapsed ? item.name : undefined}
                                    style={{
                                         display: "flex",
                                         alignItems: "center",
-                                        gap: "12px",
-                                        padding: "12px 16px",
+                                        gap: isCollapsed ? "0" : "12px",
+                                        padding: isCollapsed ? "12px" : "12px 16px",
                                         borderRadius: "8px",
                                         color: isActive ? "#FFAE00" : "#888888",
                                         backgroundColor: isActive ? "rgba(255, 174, 0, 0.1)" : "transparent",
                                         border: isActive ? "1px solid rgba(255, 174, 0, 0.3)" : "1px solid transparent",
                                         textDecoration: "none",
                                         transition: "all 0.2s ease",
-                                        fontSize: "15px",
+                                        fontSize: isCollapsed ? "20px" : "15px",
                                         fontWeight: isActive ? "600" : "400",
                                         textShadow: isActive ? "0 0 8px rgba(255, 174, 0, 0.6)" : "none",
+                                        justifyContent: isCollapsed ? "center" : "flex-start",
                                    }}
                                    onMouseEnter={(e) => {
                                         if (!isActive) {
@@ -198,8 +237,8 @@ export default function Sidebar() {
                                         }
                                    }}
                               >
-                                   <span style={{ fontSize: "20px" }}>{item.icon}</span>
-                                   <span>{item.name}</span>
+                                   <item.icon size={20} style={{ display: "flex", alignItems: "center", justifyContent: "center", color: "inherit" }} />
+                                   {!isCollapsed && <span>{item.name}</span>}
                               </Link>
                          );
                     })}
@@ -214,17 +253,22 @@ export default function Sidebar() {
                >
                     <button
                          onClick={handleLogout}
+                         title={isCollapsed ? "Logout" : undefined}
                          style={{
                               width: "100%",
-                              padding: "12px 16px",
+                              padding: isCollapsed ? "12px" : "12px 16px",
                               backgroundColor: "rgba(255, 68, 68, 0.1)",
                               color: "#ff4444",
                               border: "1px solid rgba(255, 68, 68, 0.3)",
                               borderRadius: "8px",
                               cursor: "pointer",
-                              fontSize: "15px",
+                              fontSize: isCollapsed ? "20px" : "15px",
                               fontWeight: "500",
                               transition: "all 0.2s ease",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: isCollapsed ? "center" : "flex-start",
+                              gap: isCollapsed ? "0" : "8px",
                          }}
                          onMouseEnter={(e) => {
                               e.currentTarget.style.backgroundColor = "rgba(255, 68, 68, 0.2)";
@@ -235,7 +279,8 @@ export default function Sidebar() {
                               e.currentTarget.style.borderColor = "rgba(255, 68, 68, 0.3)";
                          }}
                     >
-                         Logout
+                         <MdLogout size={20} style={{ color: "inherit" }} />
+                         {!isCollapsed && <span>Logout</span>}
                     </button>
                </div>
           </aside>

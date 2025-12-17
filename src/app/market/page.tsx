@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { PriceWidget, MainChart, OrderPanel } from "@/components/market";
+import { PriceWidget, MainChart, OrderPanel, TradingPanel, PricePredictionsPanel } from "@/components/market";
 import { Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, ComposedChart, Area } from "recharts";
 import { useExchange } from "@/contexts/ExchangeContext";
 
@@ -75,6 +75,7 @@ export default function MarketPage() {
     const [error, setError] = useState<string | null>(null);
     const [currentPrice, setCurrentPrice] = useState<number | null>(null);
     const [currentPriceTime, setCurrentPriceTime] = useState<number | null>(null);
+    const [priceChange24h, setPriceChange24h] = useState<number | null>(null);
     const [oldestTimestamp, setOldestTimestamp] = useState<number | null>(null);
     const [loadingMore, setLoadingMore] = useState(false);
 
@@ -128,47 +129,137 @@ export default function MarketPage() {
             const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
             const encodedSymbol = encodeURIComponent(selectedSymbol);
 
-            // Load 100 candles initially - can load more on scroll
-            const response = await fetch(`${apiUrl}/market/ohlcv/${selectedAccountId}/${encodedSymbol}?timeframe=${timeframe}&limit=100`, {
-                headers: { Authorization: `Bearer ${token}` },
-                // Add cache control for faster subsequent loads
-                cache: "no-cache",
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                const candles = data.candles || [];
-                console.log("OHLCV data received:", {
+            // Load 500 candles total - make multiple requests if needed
+            // Coinbase max is 300 per request, so we need multiple requests
+            const targetCandles = 500;
+            const maxPerRequest = 300;
+            const allCandles: Array<{t: number; o: number; h: number; l: number; c: number; v: number}> = [];
+            
+            // Calculate timeframe duration in milliseconds
+            const timeframeMs: Record<string, number> = {
+                "1m": 60 * 1000,
+                "5m": 5 * 60 * 1000,
+                "15m": 15 * 60 * 1000,
+                "1h": 60 * 60 * 1000,
+                "4h": 4 * 60 * 60 * 1000,
+                "1d": 24 * 60 * 60 * 1000,
+            };
+            const timeframeDuration = timeframeMs[timeframe] || 60 * 60 * 1000;
+            
+            // First request: get most recent candles
+            let currentSince: number | null = null;
+            let fetchedCount = 0;
+            let attempts = 0;
+            const maxAttempts = 5; // Prevent infinite loops
+            
+            while (fetchedCount < targetCandles && attempts < maxAttempts) {
+                attempts++;
+                const remaining = targetCandles - fetchedCount;
+                const requestLimit = Math.min(remaining, maxPerRequest);
+                
+                const url: string = currentSince 
+                    ? `${apiUrl}/market/ohlcv-from-exchange/${selectedAccountId}/${encodedSymbol}?timeframe=${timeframe}&limit=${requestLimit}&since=${currentSince}`
+                    : `${apiUrl}/market/ohlcv-from-exchange/${selectedAccountId}/${encodedSymbol}?timeframe=${timeframe}&limit=${requestLimit}`;
+                
+                console.log(`Fetching batch ${attempts}: limit=${requestLimit}, since=${currentSince || 'null'}`);
+                
+                const response: Response = await fetch(url, {
+                    headers: { Authorization: `Bearer ${token}` },
+                    cache: "no-cache",
+                });
+                
+                if (!response.ok) {
+                    console.error(`Failed to fetch batch ${attempts}:`, response.status);
+                    break;
+                }
+                
+                const data: {candles?: Array<{t: number; o: number; h: number; l: number; c: number; v: number}>} = await response.json();
+                const candles: Array<{t: number; o: number; h: number; l: number; c: number; v: number}> = data.candles || [];
+                console.log(`Batch ${attempts} received:`, {
                     count: candles.length,
                     firstCandle: candles[0],
                     lastCandle: candles[candles.length - 1],
                 });
                 
-                // Sort candles by timestamp to ensure oldest is first
-                const sortedCandles = [...candles].sort((a, b) => {
+                if (candles.length === 0) {
+                    console.log("No more candles available");
+                    break;
+                }
+                
+                // Sort candles by timestamp
+                const sortedCandles: Array<{t: number; o: number; h: number; l: number; c: number; v: number}> = [...candles].sort((a, b) => {
                     const timeA = a.t > 1000000000000 ? a.t / 1000 : a.t;
                     const timeB = b.t > 1000000000000 ? b.t / 1000 : b.t;
                     return timeA - timeB;
                 });
                 
-                setOhlcvData(sortedCandles);
-                // Store oldest timestamp for pagination (first candle after sorting)
+                // Add to all candles (avoid duplicates)
+                for (const candle of sortedCandles) {
+                    const candleTime = candle.t > 1000000000000 ? candle.t / 1000 : candle.t;
+                    const exists = allCandles.some(c => {
+                        const cTime = c.t > 1000000000000 ? c.t / 1000 : c.t;
+                        return cTime === candleTime;
+                    });
+                    if (!exists) {
+                        allCandles.push(candle);
+                    }
+                }
+                
+                fetchedCount = allCandles.length;
+                
+                // If we got fewer candles than requested, we've reached the limit
+                if (candles.length < requestLimit) {
+                    console.log(`Received ${candles.length} candles (less than requested ${requestLimit}), stopping`);
+                    break;
+                }
+                
+                // Prepare for next request: go back from the oldest candle
                 if (sortedCandles.length > 0) {
-                    const oldest = sortedCandles[0].t;
-                    const oldestTime = oldest > 1000000000000 ? oldest / 1000 : oldest;
-                    setOldestTimestamp(oldestTime);
-                    console.log("Oldest timestamp set to:", oldestTime);
+                    const oldest: number = sortedCandles[0].t;
+                    const oldestTime: number = oldest > 1000000000000 ? oldest / 1000 : oldest;
+                    const oldestTimestampMs: number = oldestTime * 1000;
+                    currentSince = oldestTimestampMs - (requestLimit * timeframeDuration);
+                } else {
+                    break;
                 }
-                setError(null);
-            } else {
-                const errorData = await response.json().catch(() => ({}));
-                let errorMsg = errorData.detail || `Failed to fetch OHLCV data (${response.status})`;
-                if (response.status === 404) {
-                    errorMsg = `OHLCV data not available for ${selectedSymbol}. The symbol may not be supported by this exchange.`;
-                }
-                if (response.status !== 404) {
-                    setError(errorMsg);
-                }
+            }
+            
+            // Final sort and deduplicate
+            const finalCandles = allCandles.sort((a, b) => {
+                const timeA = a.t > 1000000000000 ? a.t / 1000 : a.t;
+                const timeB = b.t > 1000000000000 ? b.t / 1000 : b.t;
+                return timeA - timeB;
+            });
+            
+            // Remove duplicates
+            const uniqueCandles = finalCandles.filter((candle, index, self) => {
+                const time = candle.t > 1000000000000 ? candle.t / 1000 : candle.t;
+                return index === self.findIndex((c) => {
+                    const cTime = c.t > 1000000000000 ? c.t / 1000 : c.t;
+                    return cTime === time;
+                });
+            });
+            
+            console.log("Total candles loaded:", {
+                total: uniqueCandles.length,
+                attempts: attempts,
+            });
+            
+            setOhlcvData(uniqueCandles);
+            
+            // Store oldest timestamp for pagination
+            if (uniqueCandles.length > 0) {
+                const oldest = uniqueCandles[0].t;
+                const oldestTime = oldest > 1000000000000 ? oldest / 1000 : oldest;
+                setOldestTimestamp(oldestTime);
+                console.log("Oldest timestamp set to:", oldestTime);
+            }
+            
+            setError(null);
+            
+            // If we got no candles at all, show error
+            if (uniqueCandles.length === 0) {
+                setError(`No OHLCV data available for ${selectedSymbol}. The symbol may not be supported by this exchange.`);
             }
         } catch (error) {
             console.error("Error fetching OHLCV:", error);
@@ -177,6 +268,108 @@ export default function MarketPage() {
             setOhlcvLoading(false);
         }
     }, [selectedAccountId, selectedSymbol, timeframe]);
+
+    // Calculate 24h price change when ohlcvData or currentPrice changes
+    useEffect(() => {
+        if (ohlcvData.length > 0 && currentPrice) {
+            const now = Date.now() / 1000;
+            const twentyFourHoursAgo = now - (24 * 60 * 60);
+            
+            // Find the candle closest to 24 hours ago
+            let closestCandle = ohlcvData[0];
+            for (const candle of ohlcvData) {
+                const candleTime = candle.t > 1000000000000 ? candle.t / 1000 : candle.t;
+                if (candleTime <= twentyFourHoursAgo) {
+                    closestCandle = candle;
+                } else {
+                    break;
+                }
+            }
+            
+            const price24hAgo = closestCandle.c;
+            if (price24hAgo > 0) {
+                const change = ((currentPrice - price24hAgo) / price24hAgo) * 100;
+                setPriceChange24h(change);
+            }
+        }
+    }, [ohlcvData, currentPrice]);
+
+    // Fetch live price from exchange API
+    const fetchLivePrice = useCallback(async () => {
+        if (!selectedAccountId || !selectedSymbol) {
+            setCurrentPrice(null);
+            return;
+        }
+
+        try {
+            const token = localStorage.getItem("auth_token") || "";
+            if (!token) {
+                return;
+            }
+
+            const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+            const encodedSymbol = encodeURIComponent(selectedSymbol);
+
+            const response = await fetch(`${apiUrl}/market/price/${selectedAccountId}/${encodedSymbol}`, {
+                headers: { Authorization: `Bearer ${token}` },
+                cache: "no-cache",
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                const price = data.price || data.last || 0;
+                
+                if (price > 0) {
+                    setCurrentPrice(price);
+                    setCurrentPriceTime(Date.now());
+                } else {
+                    console.warn("Price is 0 or invalid:", data);
+                }
+            } else {
+                console.error("Failed to fetch live price:", response.status);
+            }
+        } catch (error) {
+            console.error("Error fetching live price:", error);
+        }
+    }, [selectedAccountId, selectedSymbol]);
+
+    // Fetch live price on mount and when symbol/account changes
+    useEffect(() => {
+        // Clear current price when account or symbol changes
+        setCurrentPrice(null);
+        setCurrentPriceTime(null);
+        
+        // Fetch immediately
+        fetchLivePrice();
+        
+        // Set up interval to fetch live price every 5 seconds (reduced frequency to avoid rate limits)
+        const interval = setInterval(fetchLivePrice, 5000);
+        
+        return () => clearInterval(interval);
+    }, [fetchLivePrice]);
+
+    // Calculate 24h price change when currentPrice or ohlcvData changes
+    useEffect(() => {
+        if (ohlcvData.length > 0 && currentPrice) {
+            const now = Date.now() / 1000;
+            const twentyFourHoursAgo = now - (24 * 60 * 60);
+            
+            // Find the candle closest to 24 hours ago
+            let closestCandle = ohlcvData[0];
+            for (const candle of ohlcvData) {
+                const candleTime = candle.t > 1000000000000 ? candle.t / 1000 : candle.t;
+                if (candleTime <= twentyFourHoursAgo) {
+                    closestCandle = candle;
+                } else {
+                    break;
+                }
+            }
+            
+            const price24hAgo = closestCandle.c;
+            const change = ((currentPrice - price24hAgo) / price24hAgo) * 100;
+            setPriceChange24h(change);
+        }
+    }, [ohlcvData, currentPrice]);
 
     // Removed auto-check to prevent rate limit issues
     // Users must click "Get Predict" button to fetch predictions
@@ -274,8 +467,8 @@ export default function MarketPage() {
             // Calculate start time: go back 100 candles from oldest timestamp
             // beforeTimestamp is in seconds, convert to milliseconds
             const beforeTimestampMs = beforeTimestamp > 1000000000000 ? beforeTimestamp : beforeTimestamp * 1000;
-            // Go back 100 candles worth of time
-            const sinceMs = beforeTimestampMs - (100 * timeframeDuration);
+            // Go back 300 candles worth of time (Coinbase max per request)
+            const sinceMs = beforeTimestampMs - (300 * timeframeDuration);
             
             console.log("FetchMore params:", {
                 beforeTimestamp,
@@ -285,7 +478,8 @@ export default function MarketPage() {
                 timeframe,
             });
 
-            const response = await fetch(`${apiUrl}/market/ohlcv/${selectedAccountId}/${encodedSymbol}?timeframe=${timeframe}&limit=100&since=${sinceMs}`, {
+            // Use new endpoint that gets candles directly from selected exchange (no prioritization)
+            const response = await fetch(`${apiUrl}/market/ohlcv-from-exchange/${selectedAccountId}/${encodedSymbol}?timeframe=${timeframe}&limit=300&since=${sinceMs}`, {
                 headers: { Authorization: `Bearer ${token}` },
                 cache: "no-cache",
             });
@@ -351,13 +545,27 @@ export default function MarketPage() {
         }
     }, [selectedAccountId, selectedSymbol, timeframe, loadingMore]);
 
-    // Fetch data when symbol or timeframe changes
+    // Fetch data when symbol, timeframe, or exchange account changes
     useEffect(() => {
         if (selectedAccountId && selectedSymbol) {
-            fetchOHLCV();
-            // Reset predictions state when symbol changes - don't auto-check, just show "Get Predict" button
+            // Clear all data when exchange account changes
+            setOhlcvData([]);
+            setCurrentPrice(null);
+            setCurrentPriceTime(null);
+            setPriceChange24h(null);
             setPredictions({});
             setError(null);
+            setOldestTimestamp(null);
+            
+            // Fetch fresh data from the new exchange
+            fetchOHLCV();
+        } else {
+            // Clear data if no account or symbol selected
+            setOhlcvData([]);
+            setCurrentPrice(null);
+            setCurrentPriceTime(null);
+            setPriceChange24h(null);
+            setPredictions({});
             setOldestTimestamp(null);
         }
     }, [selectedAccountId, selectedSymbol, timeframe, fetchOHLCV]);
@@ -412,15 +620,15 @@ export default function MarketPage() {
     }
 
     return (
-        <div style={{ padding: "0 16px", maxWidth: "1600px", margin: "0 auto", color: "#ededed" }}>
+        <div style={{ padding: "0 16px", maxWidth: "1870px", margin: "0 auto", color: "#ededed" }}>
 
             {error && (
                 <div
                     style={{
-                        padding: "16px",
+                        padding: "8px",
                         backgroundColor: "rgba(255, 68, 68, 0.15)",
                         border: "2px solid rgba(255, 68, 68, 0.5)",
-                        borderRadius: "8px",
+                        borderRadius: "5px",
                         marginBottom: "8px",
                         color: "#ff4444",
                         fontSize: "14px",
@@ -432,7 +640,7 @@ export default function MarketPage() {
             )}
 
             {/* Price Widget */}
-            <div style={{ marginBottom: "8px", marginTop: "16px" }}>
+            {/* <div style={{ marginBottom: "8px", marginTop: "16px" }}>
                 <PriceWidget
                     onSymbolChange={(symbol) => {
                         setSelectedSymbol(symbol);
@@ -544,12 +752,35 @@ export default function MarketPage() {
                         }
                     }}
                 />
-            </div>
+            </div> */}
 
-            {/* Main Chart and Predictions Side by Side */}
-            <div id="main-chart" style={{ marginBottom: "8px", display: "flex", gap: "12px", alignItems: "flex-start" }}>
-                {/* Main Chart - Left Side */}
-                <div style={{ flex: "1", minWidth: "0" }}>
+            {/* Trading Panel, Main Chart and Predictions Side by Side */}
+            <div id="main-chart" style={{marginTop: "8px", marginBottom: "8px", display: "flex", gap: "0.5rem", alignItems: "flex-start", height: "calc(100vh - 200px)", minHeight: "600px" }}>
+                {/* Trading Panel - Left Side */}
+                {selectedSymbol && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                        <TradingPanel
+                            selectedSymbol={selectedSymbol}
+                            onSymbolChange={setSelectedSymbol}
+                            currentPrice={currentPrice}
+                            priceChange24h={priceChange24h}
+                            predictions={predictions}
+                            onRefreshPredictions={fetchPredictions}
+                            predictionsLoading={predictionsLoading}
+                        />
+                        {/* Price Predictions Panel - Below TradingPanel */}
+                        {showPredictions && (
+                            <PricePredictionsPanel
+                                predictions={predictions}
+                                predictionsLoading={predictionsLoading}
+                                onRefreshPredictions={fetchPredictions}
+                            />
+                        )}
+                    </div>
+                )}
+
+                {/* Main Chart - Center */}
+                <div style={{ flex: "1", minWidth: "0", display: "flex", flexDirection: "column" }}>
                 {selectedSymbol ? (
                     <MainChart
                         ohlcvData={ohlcvData}
@@ -597,239 +828,45 @@ export default function MarketPage() {
                             currentPrice={currentPrice}
                         />
 
-                        {/* Predictions Table */}
-                        {showPredictions && (
-                            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                                {/* Predictions Table */}
-                                <div style={{ 
-                                    backgroundColor: "#1a1a1a", 
-                                    borderRadius: "12px", 
-                                    padding: "12px",
-                                    border: "1px solid rgba(255, 174, 0, 0.2)",
-                                }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                                <h3 style={{ color: "#FFAE00", margin: 0, fontSize: "14px", fontWeight: "600" }}>
-                                    Price Predictions
-                                </h3>
-                                <button
-                                    onClick={fetchPredictions}
-                                    disabled={predictionsLoading}
-                                    title="Refresh predictions"
-                                    style={{
-                                        padding: "4px 8px",
-                                        backgroundColor: "transparent",
-                                        color: "#FFAE00",
-                                        border: "1px solid rgba(255, 174, 0, 0.3)",
-                                        borderRadius: "6px",
-                                        fontSize: "12px",
-                                        cursor: predictionsLoading ? "not-allowed" : "pointer",
-                                        opacity: predictionsLoading ? 0.5 : 1,
-                                        transition: "all 0.2s ease",
-                                        display: "flex",
-                                        alignItems: "center",
-                                        gap: "4px",
-                                    }}
-                                    onMouseEnter={(e) => {
-                                        if (!predictionsLoading) {
-                                            e.currentTarget.style.backgroundColor = "rgba(255, 174, 0, 0.1)";
-                                            e.currentTarget.style.borderColor = "#FFAE00";
-                                        }
-                                    }}
-                                    onMouseLeave={(e) => {
-                                        if (!predictionsLoading) {
-                                            e.currentTarget.style.backgroundColor = "transparent";
-                                            e.currentTarget.style.borderColor = "rgba(255, 174, 0, 0.3)";
-                                        }
-                                    }}
-                                >
-                                    <span style={{ fontSize: "14px" }}>↻</span>
-                                </button>
-                            </div>
-                    {predictionsLoading ? (
-                                <div style={{ padding: "16px", textAlign: "center", color: "#888", fontSize: "12px" }}>
-                                    Loading...
-                        </div>
-                    ) : Object.keys(predictions).length > 0 ? (
-                                <div style={{ overflowX: "auto" }}>
-                                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "11px" }}>
-                                        <thead>
-                                            <tr style={{ borderBottom: "1px solid rgba(255, 174, 0, 0.2)" }}>
-                                                <th style={{ padding: "6px 4px", textAlign: "left", color: "#888", fontWeight: "600", fontSize: "10px" }}>Horizon</th>
-                                                <th style={{ padding: "6px 4px", textAlign: "right", color: "#888", fontWeight: "600", fontSize: "10px" }}>Price</th>
-                                                <th style={{ padding: "6px 4px", textAlign: "right", color: "#888", fontWeight: "600", fontSize: "10px" }}>Change</th>
-                                                <th style={{ padding: "6px 4px", textAlign: "right", color: "#888", fontWeight: "600", fontSize: "10px" }}>Conf</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {Object.entries(predictions)
-                                                .sort(([a], [b]) => {
-                                                    const order: Record<string, number> = { "10m": 1, "20m": 2, "30m": 3, "1h": 4, "4h": 5, "24h": 6 };
-                                                    return (order[a] || 99) - (order[b] || 99);
-                                                })
-                                                .map(([horizon, pred]) => {
-                                if (!pred) return null;
-                                const changePercent = pred.price_change_percent * 100;
-                                                    const changeColor = changePercent >= 0 ? "#22c55e" : "#ef4444";
-
-                                return (
-                                                        <tr 
-                                        key={horizon}
-                                                            style={{ 
-                                                                borderBottom: "1px solid rgba(255, 174, 0, 0.1)",
-                                                                transition: "background-color 0.2s",
-                                                            }}
-                                                            onMouseEnter={(e) => {
-                                                                e.currentTarget.style.backgroundColor = "rgba(255, 174, 0, 0.05)";
-                                                            }}
-                                                            onMouseLeave={(e) => {
-                                                                e.currentTarget.style.backgroundColor = "transparent";
-                                                            }}
-                                                        >
-                                                            <td style={{ padding: "8px 4px", color: "#FFAE00", fontWeight: "600", fontSize: "10px" }}>
-                                                                {horizon.toUpperCase()}
-                                                            </td>
-                                                            <td style={{ padding: "8px 4px", textAlign: "right", color: "#ededed", fontSize: "11px" }}>
-                                                                ${pred.predicted_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 10 })}
-                                                            </td>
-                                                            <td style={{ padding: "8px 4px", textAlign: "right", color: changeColor, fontWeight: "600", fontSize: "11px" }}>
-                                                                {changePercent >= 0 ? "↑" : "↓"} {changePercent >= 0 ? "+" : ""}{changePercent.toFixed(2)}%
-                                                            </td>
-                                                            <td style={{ padding: "8px 4px", textAlign: "right", color: "#888", fontSize: "10px" }}>
-                                                                {(pred.confidence * 100).toFixed(0)}%
-                                                            </td>
-                                                        </tr>
-                                                    );
-                                                })}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            ) : (
-                                <div style={{ padding: "16px", textAlign: "center" }}>
-                                    <p style={{ color: "#888", marginBottom: "12px", fontSize: "11px" }}>No predictions</p>
-                                    <button
-                                        onClick={fetchPredictions}
-                                        disabled={predictionsLoading}
-                                        style={{
-                                            padding: "8px 16px",
-                                            backgroundColor: "#FFAE00",
-                                            color: "#1a1a1a",
-                                            border: "none",
-                                            borderRadius: "6px",
-                                            fontSize: "12px",
-                                            fontWeight: "600",
-                                            cursor: predictionsLoading ? "not-allowed" : "pointer",
-                                            opacity: predictionsLoading ? 0.6 : 1,
-                                            transition: "all 0.2s ease",
-                                            width: "100%",
-                                        }}
-                                        onMouseEnter={(e) => {
-                                            if (!predictionsLoading) {
-                                                e.currentTarget.style.backgroundColor = "#ffb833";
-                                            }
-                                        }}
-                                        onMouseLeave={(e) => {
-                                            if (!predictionsLoading) {
-                                                e.currentTarget.style.backgroundColor = "#FFAE00";
-                                            }
-                                        }}
-                                    >
-                                        {predictionsLoading ? "Generating..." : "Get Predict"}
-                                    </button>
-                        </div>
-                    )}
-                                </div>
-
-                                {/* Horizon selector - Compact version */}
-                                {/* <div style={{ 
-                            padding: "12px",
-                            backgroundColor: "#1a1a1a",
-                            borderRadius: "12px",
-                            border: "1px solid rgba(255, 174, 0, 0.2)",
-                        }}>
-                            <div style={{ color: "#FFAE00", marginBottom: "8px", fontSize: "12px", fontWeight: "600" }}>
-                                AI Horizons:
-                            </div>
-                            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                            {["10m", "20m", "30m", "1h", "4h", "24h"].map((h) => (
-                                <label
-                                    key={h}
-                                    style={{
-                                        display: "flex",
-                                        alignItems: "center",
-                                            gap: "4px",
-                                        cursor: "pointer",
-                                            padding: "4px 8px",
-                                            backgroundColor: selectedHorizons.includes(h) ? "rgba(255, 174, 0, 0.15)" : "#2a2a2a",
-                                            border: `1px solid ${selectedHorizons.includes(h) ? "#FFAE00" : "rgba(255, 174, 0, 0.2)"}`,
-                                            borderRadius: "4px",
-                                        color: selectedHorizons.includes(h) ? "#FFAE00" : "#888",
-                                        fontWeight: selectedHorizons.includes(h) ? "600" : "400",
-                                            fontSize: "10px",
-                                        transition: "all 0.2s ease",
-                                    }}
-                                >
-                                    <input
-                                        type="checkbox"
-                                        checked={selectedHorizons.includes(h)}
-                                        onChange={(e) => {
-                                            if (e.target.checked) {
-                                                setSelectedHorizons([...selectedHorizons, h]);
-                                            } else {
-                                                setSelectedHorizons(selectedHorizons.filter((hor) => hor !== h));
-                                            }
-                                        }}
-                                        style={{
-                                                width: "12px",
-                                                height: "12px",
-                                            cursor: "pointer",
-                                            accentColor: "#FFAE00",
-                                        }}
-                                    />
-                                    <span>{h}</span>
-                                </label>
-                            ))}
-                        </div>
-                        </div> */}
-                                
-                                {/* Accuracy Stats - Below Predictions Table */}
-                                <div style={{ 
-                            marginTop: "12px",
-                            padding: "12px",
-                            backgroundColor: "#1a1a1a",
-                            borderRadius: "12px",
-                            border: "1px solid rgba(255, 174, 0, 0.2)",
-                        }}>
-                            <h4 style={{ color: "#FFAE00", margin: "0 0 12px 0", fontSize: "12px", fontWeight: "600" }}>
-                                Accuracy Stats (30d)
-                            </h4>
-                            {accuracyStats && accuracyStats.total_predictions > 0 ? (
+                        {/* Accuracy Stats */}
+                        {accuracyStats && accuracyStats.total_predictions > 0 && (
+                            <div style={{ 
+                                marginTop: "12px",
+                                padding: "12px",
+                                backgroundColor: "#1a1a1a",
+                                borderRadius: "12px",
+                                border: "1px solid rgba(255, 174, 0, 0.2)",
+                            }}>
+                                <h4 style={{ color: "#FFAE00", margin: "0 0 12px 0", fontSize: "12px", fontWeight: "600" }}>
+                                    Accuracy Stats (30d)
+                                </h4>
                                 <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid rgba(255, 174, 0, 0.1)" }}>
                                         <span style={{ fontSize: "10px", color: "#888" }}>Total</span>
                                         <span style={{ fontSize: "11px", fontWeight: "600", color: "#FFAE00" }}>{accuracyStats.total_predictions}</span>
-                    </div>
+                                    </div>
                                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid rgba(255, 174, 0, 0.1)" }}>
                                         <span style={{ fontSize: "10px", color: "#888" }}>Avg Error</span>
                                         <span
-                                    style={{
+                                            style={{
                                                 fontSize: "11px",
-                                        fontWeight: "600",
-                                            color: accuracyStats.avg_error_percent < 5 ? "#22c55e" : accuracyStats.avg_error_percent < 10 ? "#f59e0b" : "#ef4444",
-                                        }}
-                                    >
-                                        {accuracyStats.avg_error_percent.toFixed(2)}%
+                                                fontWeight: "600",
+                                                color: accuracyStats.avg_error_percent < 5 ? "#22c55e" : accuracyStats.avg_error_percent < 10 ? "#f59e0b" : "#ef4444",
+                                            }}
+                                        >
+                                            {accuracyStats.avg_error_percent.toFixed(2)}%
                                         </span>
                                     </div>
                                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid rgba(255, 174, 0, 0.1)" }}>
                                         <span style={{ fontSize: "10px", color: "#888" }}>In Confidence</span>
                                         <span
-                                        style={{
+                                            style={{
                                                 fontSize: "11px",
                                                 fontWeight: "600",
-                                            color: accuracyStats.accuracy_within_confidence > 70 ? "#22c55e" : accuracyStats.accuracy_within_confidence > 50 ? "#f59e0b" : "#ef4444",
-                                        }}
-                                    >
-                                        {accuracyStats.accuracy_within_confidence.toFixed(1)}%
+                                                color: accuracyStats.accuracy_within_confidence > 70 ? "#22c55e" : accuracyStats.accuracy_within_confidence > 50 ? "#f59e0b" : "#ef4444",
+                                            }}
+                                        >
+                                            {accuracyStats.accuracy_within_confidence.toFixed(1)}%
                                         </span>
                                     </div>
                                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0" }}>
@@ -838,12 +875,6 @@ export default function MarketPage() {
                                             {(accuracyStats.avg_confidence * 100).toFixed(0)}%
                                         </span>
                                     </div>
-                                </div>
-                            ) : (
-                                <div style={{ padding: "8px 0", textAlign: "center" }}>
-                                    <span style={{ fontSize: "10px", color: "#888" }}>No data available</span>
-                                </div>
-                            )}
                                 </div>
                             </div>
                         )}

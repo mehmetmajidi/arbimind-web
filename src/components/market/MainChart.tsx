@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { createChart, IChartApi, ISeriesApi, CandlestickData, Time, LineData, CandlestickSeries, LineSeries, UTCTimestamp, IRange, BusinessDay } from "lightweight-charts";
+import DrawingToolsToolbar, { DrawingTool } from "./DrawingToolsToolbar";
 
 interface OHLCVCandle {
     t: number;
@@ -54,6 +55,9 @@ export default function MainChart({
 }: MainChartProps) {
     const [refreshInterval, setRefreshInterval] = useState(5);
     const [chartReady, setChartReady] = useState(false);
+    const [activeDrawingTool, setActiveDrawingTool] = useState<DrawingTool>(null);
+    const [drawingsLocked, setDrawingsLocked] = useState(false);
+    const [drawingsVisible, setDrawingsVisible] = useState(true);
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const candlestickSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -62,6 +66,7 @@ export default function MainChart({
     const previousDataRef = useRef<CandlestickData[]>([]);
     const currentPriceLineRef = useRef<ISeriesApi<"Line"> | null>(null);
     const previousPriceRef = useRef<number | null>(null);
+    const drawingsRef = useRef<Array<{ id: string; primitive: unknown }>>([]);
     
     // Import series definitions dynamically
     const getSeriesDefinitions = () => {
@@ -82,6 +87,157 @@ export default function MainChart({
     ];
 
     const availableHorizons = ["10m", "30m", "1h", "4h", "24h", "1d"];
+
+    // Handle drawing tool activation and mouse events
+    useEffect(() => {
+        if (!chartRef.current || !chartReady || !candlestickSeriesRef.current) {
+            return;
+        }
+
+        if (!activeDrawingTool || (activeDrawingTool !== "trendline" && activeDrawingTool !== "horizontal" && activeDrawingTool !== "vertical" && activeDrawingTool !== "ray")) {
+            return;
+        }
+
+        const chart = chartRef.current;
+        const series = candlestickSeriesRef.current;
+        const container = chartContainerRef.current;
+        if (!container) return;
+
+        let isDrawing = false;
+        let startPoint: { time: Time; price: number } | null = null;
+        let currentLine: ISeriesApi<"Line"> | null = null;
+
+        const handleMouseDown = (event: MouseEvent) => {
+            if (!activeDrawingTool) return;
+            
+            const rect = container.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+
+            // Get time from x coordinate
+            const time = chart.timeScale().coordinateToTime(x);
+            if (time === null) return;
+
+            // Get price from y coordinate using series API
+            const priceCoordinate = series.coordinateToPrice(y);
+            if (priceCoordinate === null) return;
+
+            isDrawing = true;
+            startPoint = { time, price: Number(priceCoordinate) };
+
+            // Create a line series for drawing
+            currentLine = chart.addSeries(LineSeries, {
+                color: "#FFAE00",
+                lineWidth: 2,
+                lineStyle: 0, // Solid
+                priceLineVisible: false,
+                lastValueVisible: false,
+            }) as ISeriesApi<"Line">;
+
+            // Set initial point
+            currentLine.setData([{ time, value: Number(priceCoordinate) }]);
+        };
+
+        const handleMouseMove = (event: MouseEvent) => {
+            if (!isDrawing || !startPoint || !currentLine) return;
+
+            const rect = container.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+
+            // Get price from y coordinate using series API
+            const priceCoordinate = series.coordinateToPrice(y);
+            if (priceCoordinate === null) return;
+
+            const time = chart.timeScale().coordinateToTime(x);
+            if (time === null) return;
+
+            let endTime: Time = time;
+            let endPrice: number = Number(priceCoordinate);
+
+            // Handle different line types
+            const priceNum = Number(priceCoordinate);
+            if (activeDrawingTool === "horizontal") {
+                // Horizontal line: keep start time, use current price
+                endTime = startPoint.time;
+                endPrice = priceNum;
+                // For horizontal, we need to extend the line across visible range
+                const visibleRange = chart.timeScale().getVisibleRange();
+                if (visibleRange) {
+                    currentLine.setData([
+                        { time: visibleRange.from, value: priceNum },
+                        { time: visibleRange.to, value: priceNum }
+                    ]);
+                    return;
+                }
+            } else if (activeDrawingTool === "vertical") {
+                // Vertical line: use current time, keep start price
+                endTime = time;
+                endPrice = startPoint.price;
+                // For vertical, we need to extend the line across price range
+                // Use series to get price range
+                const priceRange = series.priceScale().getVisibleRange();
+                if (priceRange) {
+                    currentLine.setData([
+                        { time: time, value: Number(priceRange.from) },
+                        { time: time, value: Number(priceRange.to) }
+                    ]);
+                    return;
+                }
+            } else if (activeDrawingTool === "ray") {
+                // Ray: extends from start point to right edge
+                const visibleRange = chart.timeScale().getVisibleRange();
+                if (visibleRange) {
+                    endTime = visibleRange.to;
+                    // Calculate price based on line slope
+                    const timeDiff = Number(time) - Number(startPoint.time);
+                    const priceDiff = priceNum - startPoint.price;
+                    if (timeDiff !== 0) {
+                        const slope = priceDiff / timeDiff;
+                        const extendedTimeDiff = Number(endTime) - Number(startPoint.time);
+                        endPrice = startPoint.price + (slope * extendedTimeDiff);
+                    } else {
+                        endPrice = priceNum;
+                    }
+                }
+            }
+
+            // Update line data for trendline
+            currentLine.setData([
+                { time: startPoint.time, value: startPoint.price },
+                { time: endTime, value: endPrice }
+            ]);
+        };
+
+        const handleMouseUp = () => {
+            if (isDrawing && currentLine) {
+                // Save the drawing
+                drawingsRef.current.push({
+                    id: `drawing-${Date.now()}`,
+                    primitive: currentLine
+                });
+            }
+            isDrawing = false;
+            startPoint = null;
+            currentLine = null;
+            // Deactivate tool after drawing
+            setActiveDrawingTool(null);
+        };
+
+        container.addEventListener("mousedown", handleMouseDown);
+        container.addEventListener("mousemove", handleMouseMove);
+        container.addEventListener("mouseup", handleMouseUp);
+
+        // Change cursor when tool is active
+        container.style.cursor = "crosshair";
+
+        return () => {
+            container.removeEventListener("mousedown", handleMouseDown);
+            container.removeEventListener("mousemove", handleMouseMove);
+            container.removeEventListener("mouseup", handleMouseUp);
+            container.style.cursor = "default";
+        };
+    }, [activeDrawingTool, chartReady]);
 
     // Initialize chart when container becomes available
     useEffect(() => {
@@ -154,6 +310,8 @@ export default function MainChart({
                         secondsVisible: false,
                         rightOffset: 12,
                         barSpacing: 3,
+                        allowBoldLabels: true,
+                        rightBarStaysOnScroll: true,
                     },
                     rightPriceScale: {
                         borderColor: "#888",
@@ -994,78 +1152,162 @@ export default function MainChart({
             }}
         >
             {/* Top Control Bar */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                {/* Timeframe Selection */}
-                <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                    {timeframes.map((tf) => (
-                        <button
-                            key={tf.value}
-                            onClick={() => onTimeframeChange(tf.value)}
-                            style={{
-                                padding: "2px 4px",
-                                fontSize: "8px",
-                                backgroundColor: timeframe === tf.value ? "#FFAE00" : "#2a2a2a",
-                                color: timeframe === tf.value ? "#1a1a1a" : "#ffffff",
-                                border: `1px solid ${timeframe === tf.value ? "#FFAE00" : "rgba(255, 174, 0, 0.3)"}`,
-                                borderRadius: "4px",
-                                cursor: "pointer",
-                                fontWeight: timeframe === tf.value ? "600" : "400",
-                                transition: "all 0.2s ease",
-                            }}
-                            onMouseEnter={(e) => {
-                                if (timeframe !== tf.value) {
-                                    e.currentTarget.style.backgroundColor = "rgba(255, 174, 0, 0.1)";
-                                }
-                            }}
-                            onMouseLeave={(e) => {
-                                if (timeframe !== tf.value) {
-                                    e.currentTarget.style.backgroundColor = "#2a2a2a";
-                                }
-                            }}
-                        >
-                            {tf.label}
-                        </button>
-                    ))}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
+                {/* Left Side: Timeframe Selection and AI Horizons */}
+                <div style={{ display: "flex", gap: "16px", alignItems: "center", flexWrap: "wrap" }}>
+                    {/* Timeframe Selection */}
+                    <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                        {timeframes.map((tf) => (
+                            <button
+                                key={tf.value}
+                                onClick={() => onTimeframeChange(tf.value)}
+                                style={{
+                                    padding: "2px 4px",
+                                    fontSize: "8px",
+                                    backgroundColor: timeframe === tf.value ? "#FFAE00" : "#2a2a2a",
+                                    color: timeframe === tf.value ? "#1a1a1a" : "#ffffff",
+                                    border: `1px solid ${timeframe === tf.value ? "#FFAE00" : "rgba(255, 174, 0, 0.3)"}`,
+                                    borderRadius: "4px",
+                                    cursor: "pointer",
+                                    fontWeight: timeframe === tf.value ? "600" : "400",
+                                    transition: "all 0.2s ease",
+                                }}
+                                onMouseEnter={(e) => {
+                                    if (timeframe !== tf.value) {
+                                        e.currentTarget.style.backgroundColor = "rgba(255, 174, 0, 0.1)";
+                                    }
+                                }}
+                                onMouseLeave={(e) => {
+                                    if (timeframe !== tf.value) {
+                                        e.currentTarget.style.backgroundColor = "#2a2a2a";
+                                    }
+                                }}
+                            >
+                                {tf.label}
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* AI Horizons Selection */}
+                    <div style={{ 
+                        display: "flex", 
+                        alignItems: "center", 
+                        gap: "12px",
+                        padding: "4px 8px",
+                        backgroundColor: "#1a1a1a",
+                        borderRadius: "6px",
+                        border: "1px solid rgba(255, 174, 0, 0.2)"
+                    }}>
+                        <span style={{ color: "#ffffff", fontSize: "12px", fontWeight: "500" }}>AI Horizons:</span>
+                        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
+                            {availableHorizons.map((horizon) => (
+                                <label
+                                    key={horizon}
+                                    style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: "4px",
+                                        cursor: "pointer",
+                                        color: "#ffffff",
+                                        fontSize: "11px",
+                                    }}
+                                >
+                                    <input
+                                        type="checkbox"
+                                        checked={selectedHorizons.includes(horizon)}
+                                        onChange={() => onHorizonToggle(horizon)}
+                                        style={{
+                                            width: "14px",
+                                            height: "14px",
+                                            cursor: "pointer",
+                                            accentColor: "#8b5cf6",
+                                        }}
+                                    />
+                                    <span>[{horizon}]</span>
+                                </label>
+                            ))}
+                        </div>
+                    </div>
                 </div>
 
-                {/* Refresh Timer */}
+                {/* Right Side: Refresh Timer */}
                 <div style={{ display: "flex", alignItems: "center", gap: "8px", color: "#888", fontSize: "13px" }}>
                     <span>🕐</span>
                     <span>{refreshInterval}s</span>
                 </div>
             </div>
 
-            {/* Main Chart Area */}
+            {/* Main Chart Area with Toolbar */}
             <div
                 style={{
+                    display: "flex",
+                    gap: "4px",
                     backgroundColor: "#2a2a2a",
                     borderRadius: "8px",
-                    padding: "16px",
-                    minHeight: "400px",
-                    position: "relative",
+                    padding: "16px 16px 16px 8px",
+                    minHeight: "450px",
+                    alignItems: "flex-start",
                 }}
             >
-                <div style={{ color: "#ffffff", fontSize: "14px", marginBottom: "12px", fontWeight: "500" }}>
-                    Main Chart Area
-                </div>
-                {loading ? (
-                    <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "400px", color: "#888" }}>
-                        Loading chart data...
-                    </div>
-                ) : (
-                    <>
-                        <div 
-                            ref={chartContainerRef} 
-                            style={{ 
-                                width: "100%", 
-                                height: "400px",
-                                minWidth: "600px",
-                                position: "relative",
-                                zIndex: 1,
-                                display: "block",
-                                visibility: "visible",
-                            }} 
+                {/* Drawing Tools Toolbar - Left Side */}
+                {chartReady && (
+                    <div style={{ display: "flex", flexDirection: "column", height: "100%", alignItems: "flex-start" }}>
+                        <DrawingToolsToolbar
+                            activeTool={activeDrawingTool}
+                            onToolChange={setActiveDrawingTool}
+                            onLockAll={() => setDrawingsLocked(true)}
+                            onUnlockAll={() => setDrawingsLocked(false)}
+                            onToggleVisibility={() => setDrawingsVisible(!drawingsVisible)}
+                            onDeleteAll={() => {
+                                // Clear all drawings
+                                if (chartRef.current && candlestickSeriesRef.current) {
+                                    drawingsRef.current.forEach((drawing) => {
+                                        try {
+                                            candlestickSeriesRef.current?.detachPrimitive(drawing.primitive as any);
+                                        } catch (e) {
+                                            console.warn("Error removing drawing:", e);
+                                        }
+                                    });
+                                    drawingsRef.current = [];
+                                }
+                            }}
+                            isLocked={drawingsLocked}
+                            isVisible={drawingsVisible}
                         />
+                    </div>
+                )}
+
+                {/* Chart Container - Right Side */}
+                <div style={{
+                    flex: "1",
+                    position: "relative",
+                    minWidth: "600px",
+                    display: "flex",
+                    flexDirection: "column",
+                    height: "100%",
+                }}>
+                    <div style={{ color: "#ffffff", fontSize: "14px", marginBottom: "8px", fontWeight: "500" }}>
+                        Main Chart Area
+                    </div>
+                    {loading ? (
+                        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", flex: "1", minHeight: "450px", color: "#888" }}>
+                            Loading chart data...
+                        </div>
+                    ) : (
+                        <>
+                            <div 
+                                ref={chartContainerRef} 
+                                style={{ 
+                                    width: "100%", 
+                                    flex: "1",
+                                    minHeight: "450px",
+                                    minWidth: "600px",
+                                    position: "relative",
+                                    zIndex: 1,
+                                    display: "block",
+                                    visibility: "visible",
+                                }} 
+                            />
                         {loadingMore && (
                             <div style={{ 
                                 position: "absolute", 
@@ -1097,65 +1339,33 @@ export default function MainChart({
                                 No chart data available
                             </div>
                         )}
-                    </>
-                )}
-
-                {/* Prediction Labels */}
-                {predictionLabels.length > 0 && (
-                    <div style={{ marginTop: "12px", display: "flex", flexWrap: "wrap", gap: "8px" }}>
-                        {predictionLabels.map((label) => {
-                            const isPositive = label.change >= 0;
-                            return (
-                                <div
-                                    key={label.horizon}
-                                    style={{
-                                        backgroundColor: "#8b5cf6",
-                                        color: "#ffffff",
-                                        padding: "4px 8px",
-                                        borderRadius: "4px",
-                                        fontSize: "11px",
-                                        fontWeight: "500",
-                                    }}
-                                >
-                                    {label.horizon.toUpperCase()} Target: ${label.price.toFixed(4)} ({isPositive ? "+" : ""}
-                                    {label.change.toFixed(1)}%)
-                                </div>
-                            );
-                        })}
-                    </div>
-                )}
-            </div>
-
-            {/* AI Horizons Section */}
-            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                <span style={{ color: "#ffffff", fontSize: "14px", fontWeight: "500" }}>AI Horizons:</span>
-                <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
-                    {availableHorizons.map((horizon) => (
-                        <label
-                            key={horizon}
-                            style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: "6px",
-                                cursor: "pointer",
-                                color: "#ffffff",
-                                fontSize: "13px",
-                            }}
-                        >
-                            <input
-                                type="checkbox"
-                                checked={selectedHorizons.includes(horizon)}
-                                onChange={() => onHorizonToggle(horizon)}
-                                style={{
-                                    width: "16px",
-                                    height: "16px",
-                                    cursor: "pointer",
-                                    accentColor: "#8b5cf6",
-                                }}
-                            />
-                            <span>[{horizon}]</span>
-                        </label>
-                    ))}
+                        </>
+                    )}
+                    
+                    {/* Prediction Labels */}
+                    {predictionLabels.length > 0 && (
+                        <div style={{ marginTop: "12px", display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                            {predictionLabels.map((label) => {
+                                const isPositive = label.change >= 0;
+                                return (
+                                    <div
+                                        key={label.horizon}
+                                        style={{
+                                            backgroundColor: "#8b5cf6",
+                                            color: "#ffffff",
+                                            padding: "4px 8px",
+                                            borderRadius: "4px",
+                                            fontSize: "11px",
+                                            fontWeight: "500",
+                                        }}
+                                    >
+                                        {label.horizon.toUpperCase()} Target: ${label.price.toFixed(4)} ({isPositive ? "+" : ""}
+                                        {label.change.toFixed(1)}%)
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
                 </div>
             </div>
         </div>

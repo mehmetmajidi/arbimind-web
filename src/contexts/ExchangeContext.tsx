@@ -5,6 +5,7 @@ import { createContext, useContext, useState, useEffect, useCallback, useRef, Re
 interface ExchangeAccount {
     id: number;
     exchange_name: string;
+    exchange_id?: number | null;  // Exchange ID for fetching exchange-specific data
     is_active: boolean;
 }
 
