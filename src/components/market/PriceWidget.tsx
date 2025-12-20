@@ -20,9 +20,10 @@ interface PriceWidgetProps {
     onSymbolChange?: (symbol: string) => void;
     onChartClick?: () => void;
     onPriceUpdate?: (price: number | null, timestamp: number | null) => void;
+    onConnectionStatusChange?: (status: "disconnected" | "connecting" | "connected") => void;
 }
 
-export default function PriceWidget({ onSymbolChange, onChartClick, onPriceUpdate }: PriceWidgetProps) {
+export default function PriceWidget({ onSymbolChange, onChartClick, onPriceUpdate, onConnectionStatusChange }: PriceWidgetProps) {
     const { selectedAccountId, accounts } = useExchange();
     const [selectedSymbol, setSelectedSymbol] = useState<string>("");
     const [priceData, setPriceData] = useState<PriceData | null>(null);
@@ -40,6 +41,13 @@ export default function PriceWidget({ onSymbolChange, onChartClick, onPriceUpdat
     const reconnectAttemptsRef = useRef(0);
     const shouldReconnectRef = useRef(true);
     const pingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+    
+    // Notify parent of connection status changes
+    useEffect(() => {
+        if (onConnectionStatusChange) {
+            onConnectionStatusChange(wsStatus);
+        }
+    }, [wsStatus, onConnectionStatusChange]);
 
     // Calculate 24h change from OHLCV data
     const calculate24hChange = useCallback(async () => {

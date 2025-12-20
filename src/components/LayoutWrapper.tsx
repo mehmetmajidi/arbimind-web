@@ -36,7 +36,7 @@ export default function LayoutWrapper({ children }: { children: React.ReactNode 
     return (
         <>
             <Sidebar isCollapsed={isSidebarCollapsed} onToggle={toggleSidebar} />
-            <Header sidebarWidth={sidebarWidth} />
+            <Header sidebarWidth={sidebarWidth} onToggleSidebar={toggleSidebar} isSidebarCollapsed={isSidebarCollapsed} />
             <div
                 style={{
                     marginLeft: sidebarWidth,

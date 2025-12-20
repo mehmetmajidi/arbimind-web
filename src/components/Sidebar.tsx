@@ -13,9 +13,7 @@ import {
      MdNotifications,
      MdSchool,
      MdDownload,
-     MdLogout,
-     MdChevronLeft,
-     MdChevronRight
+     MdLogout
 } from "react-icons/md";
 
 // Base menu items available to all users
@@ -104,45 +102,6 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
                     transition: "width 0.3s ease",
                }}
           >
-               {/* Toggle Button */}
-               <div
-                    style={{
-                         padding: "0 12px 16px 12px",
-                         display: "flex",
-                         justifyContent: isCollapsed ? "center" : "flex-end",
-                         alignItems: "center",
-                    }}
-               >
-                    <button
-                         onClick={onToggle}
-                         style={{
-                              width: isCollapsed ? "40px" : "auto",
-                              height: "40px",
-                              padding: isCollapsed ? "0" : "8px 12px",
-                              backgroundColor: "rgba(255, 174, 0, 0.1)",
-                              color: "#FFAE00",
-                              border: "1px solid rgba(255, 174, 0, 0.3)",
-                              borderRadius: "8px",
-                              cursor: "pointer",
-                              fontSize: "18px",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              transition: "all 0.2s ease",
-                         }}
-                         onMouseEnter={(e) => {
-                              e.currentTarget.style.backgroundColor = "rgba(255, 174, 0, 0.2)";
-                              e.currentTarget.style.borderColor = "rgba(255, 174, 0, 0.5)";
-                         }}
-                         onMouseLeave={(e) => {
-                              e.currentTarget.style.backgroundColor = "rgba(255, 174, 0, 0.1)";
-                              e.currentTarget.style.borderColor = "rgba(255, 174, 0, 0.3)";
-                         }}
-                    >
-                         {isCollapsed ? <MdChevronRight size={24} /> : <MdChevronLeft size={24} />}
-                    </button>
-               </div>
-
                {/* Navigation Items */}
                <nav
                     style={{
@@ -151,6 +110,7 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
                          flexDirection: "column",
                          gap: "8px",
                          padding: "0 12px",
+                         justifyContent: "center",
                     }}
                >
                     {/* Base menu items (all users) */}

@@ -18,6 +18,7 @@ interface TradingPanelProps {
     } | null>;
     onRefreshPredictions: () => void;
     predictionsLoading: boolean;
+    connectionStatus?: "disconnected" | "connecting" | "connected";
 }
 
 interface TickerData {
@@ -61,11 +62,11 @@ export default function TradingPanel({
     predictions,
     onRefreshPredictions,
     predictionsLoading,
+    connectionStatus = "disconnected",
 }: TradingPanelProps) {
     const { selectedAccountId, accounts } = useExchange();
     const [balance, setBalance] = useState<Balance | null>(null);
     const [balanceLoading, setBalanceLoading] = useState(false);
-    const [isConnected, setIsConnected] = useState(true);
     const [baseCurrencies, setBaseCurrencies] = useState<string[]>([]);
     const [quoteCurrencies, setQuoteCurrencies] = useState<string[]>([]);
     const [availableSymbols, setAvailableSymbols] = useState<string[]>([]); // For Kraken: full symbols like "AAVE/USD"
@@ -665,7 +666,8 @@ export default function TradingPanel({
                 minWidth: "380px",
                 height: "100%",
                 backgroundColor: "#1a1a1a",
-                borderRight: "1px solid #2a2a2a",
+                borderRadius: "6px",
+                border: "1px solid rgba(255, 174, 0, 0.2)",
                 display: "flex",
                 flexDirection: "column",
                 padding: "20px",
@@ -842,7 +844,7 @@ export default function TradingPanel({
                                 display: "flex",
                                 alignItems: "center",
                                 gap: "4px",
-                                color: isConnected ? "#22c55e" : "#ef4444",
+                                color: connectionStatus === "connected" ? "#22c55e" : connectionStatus === "connecting" ? "#FFAE00" : "#ef4444",
                                 fontSize: "11px",
                             }}
                         >
@@ -851,10 +853,11 @@ export default function TradingPanel({
                                     width: "6px",
                                     height: "6px",
                                     borderRadius: "50%",
-                                    backgroundColor: isConnected ? "#22c55e" : "#ef4444",
+                                    backgroundColor: connectionStatus === "connected" ? "#22c55e" : connectionStatus === "connecting" ? "#FFAE00" : "#ef4444",
+                                    animation: connectionStatus === "connecting" ? "pulse 2s infinite" : "none",
                                 }}
                             />
-                            Connected
+                            {connectionStatus === "connected" ? "Connected" : connectionStatus === "connecting" ? "Connecting..." : "Disconnected"}
                         </div>
                     </div>
                 </div>

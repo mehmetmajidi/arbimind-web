@@ -86,7 +86,7 @@ export default function MainChart({
         { value: "1d", label: "1D" },
     ];
 
-    const availableHorizons = ["10m", "30m", "1h", "4h", "24h", "1d"];
+    const availableHorizons = ["10m", "30m", "1h", "4h", "24h"];
 
     // Handle drawing tool activation and mouse events
     useEffect(() => {
@@ -406,7 +406,11 @@ export default function MainChart({
                     }
                     // Calculate remaining time until candle closes
                     if (lastCandle && lastCandle.t) {
-                        candleTimeTitle = getCandleRemainingTime(timeframe, lastCandle.t);
+                        const remainingTime = getCandleRemainingTime(timeframe, lastCandle.t);
+                        // Format: Price on first line, timer on second line
+                        candleTimeTitle = `${currentPrice.toFixed(4)}\n${remainingTime}`;
+                    } else {
+                        candleTimeTitle = currentPrice.toFixed(4);
                     }
                 }
                 
@@ -416,7 +420,7 @@ export default function MainChart({
                     lineStyle: 1, // Dashed
                     title: candleTimeTitle,
                     priceLineVisible: true,
-                    lastValueVisible: true,
+                    lastValueVisible: false,
                 }) as ISeriesApi<"Line">;
                 currentPriceLineRef.current = currentPriceLine;
                 
@@ -688,7 +692,11 @@ export default function MainChart({
                             }
                             // Calculate remaining time until candle closes
                             if (lastCandle && lastCandle.t) {
-                                candleTimeTitle = getCandleRemainingTime(timeframe, lastCandle.t);
+                                const remainingTime = getCandleRemainingTime(timeframe, lastCandle.t);
+                                // Format: Price on first line, timer on second line
+                                candleTimeTitle = `${currentPrice.toFixed(4)}\n${remainingTime}`;
+                            } else {
+                                candleTimeTitle = currentPrice.toFixed(4);
                             }
                         }
                         
@@ -698,7 +706,7 @@ export default function MainChart({
                             lineStyle: 1, // Dashed
                             title: candleTimeTitle,
                             priceLineVisible: true,
-                            lastValueVisible: true,
+                            lastValueVisible: false,
                         }) as ISeriesApi<"Line">;
                         currentPriceLineRef.current = currentPriceLine;
                         
@@ -1237,11 +1245,15 @@ export default function MainChart({
         
         // Calculate remaining time until candle closes for title
         let candleTimeTitle = "Current Price";
-        if (lastCandle && lastCandle.t) {
-            candleTimeTitle = getCandleRemainingTime(timeframe, lastCandle.t);
+        if (lastCandle && lastCandle.t && currentPrice !== null) {
+            const remainingTime = getCandleRemainingTime(timeframe, lastCandle.t);
+            // Format: Price on first line, timer on second line
+            candleTimeTitle = `${currentPrice.toFixed(4)}\n${remainingTime}`;
+        } else if (currentPrice !== null) {
+            candleTimeTitle = currentPrice.toFixed(8);
         }
         
-        // Update title with candle time
+        // Update title with candle time - put timer under price using newline
         try {
             currentPriceLine.applyOptions({
                 title: candleTimeTitle,
@@ -1330,12 +1342,26 @@ export default function MainChart({
             return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
         };
         
-        // Update title every second
+        // Update title every second - put timer under price using newline
         const interval = setInterval(() => {
             try {
                 const remainingTime = getCandleRemainingTime(timeframe, lastCandle.t);
+                // Get current price from the line data
+                const lineData = currentPriceLine.data();
+                const currentPriceValue = lineData && lineData.length > 0 
+                    ? (lineData[lineData.length - 1] as LineData).value 
+                    : null;
+                
+                // Format: Price on first line, timer on second line
+                const priceFormatted = currentPriceValue !== null 
+                    ? currentPriceValue.toFixed(4) 
+                    : "";
+                const titleWithTimer = priceFormatted 
+                    ? `${priceFormatted}\n${remainingTime}`
+                    : remainingTime;
+                
                 currentPriceLine.applyOptions({
-                    title: remainingTime,
+                    title: titleWithTimer,
                 });
             } catch (error) {
                 console.error("Error updating candle remaining time:", error);
@@ -1418,8 +1444,8 @@ export default function MainChart({
                         gap: "12px",
                         padding: "4px 8px",
                         backgroundColor: "#1a1a1a",
-                        borderRadius: "6px",
-                        border: "1px solid rgba(255, 174, 0, 0.2)"
+                       /*  borderRadius: "6px",
+                        border: "1px solid rgba(255, 174, 0, 0.2)" */
                     }}>
                         <span style={{ color: "#ffffff", fontSize: "12px", fontWeight: "500" }}>AI Horizons:</span>
                         <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>

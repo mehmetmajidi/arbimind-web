@@ -78,6 +78,7 @@ export default function MarketPage() {
     const [priceChange24h, setPriceChange24h] = useState<number | null>(null);
     const [oldestTimestamp, setOldestTimestamp] = useState<number | null>(null);
     const [loadingMore, setLoadingMore] = useState(false);
+    const [connectionStatus, setConnectionStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
 
     // Prediction state
     const [predictions, setPredictions] = useState<Record<string, PredictionData | null>>({});
@@ -964,6 +965,9 @@ export default function MarketPage() {
                             chartElement.scrollIntoView({ behavior: "smooth", block: "start" });
                         }
                     }}
+                    onConnectionStatusChange={(status) => {
+                        setConnectionStatus(status);
+                    }}
                     onPriceUpdate={(price, timestamp) => {
                         console.log("💰 Price update received:", { price, timestamp, ohlcvDataLength: ohlcvData.length });
                         setCurrentPrice(price);
@@ -1079,6 +1083,7 @@ export default function MarketPage() {
                             predictions={predictions}
                             onRefreshPredictions={fetchPredictions}
                             predictionsLoading={predictionsLoading}
+                            connectionStatus={connectionStatus}
                         />
                         {/* Price Predictions Panel - Below TradingPanel */}
                     {selectedSymbol && showPredictions && (
