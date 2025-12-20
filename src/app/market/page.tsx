@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { PriceWidget, MainChart, OrderPanel, TradingPanel, PricePredictionsPanel } from "@/components/market";
+import { PriceWidget, MainChart, OrderPanel, TradingPanel, PricePredictionsPanel, ActiveOrders, ArbitragePanel } from "@/components/market";
 import { Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, ComposedChart, Area } from "recharts";
 import { useExchange } from "@/contexts/ExchangeContext";
 
@@ -91,6 +91,22 @@ export default function MarketPage() {
         avg_confidence: number;
     } | null>(null);
     const [showAccuracyHistory, setShowAccuracyHistory] = useState(false);
+    
+    // Reset symbol and clear data when exchange account changes
+    useEffect(() => {
+        if (selectedAccountId) {
+            // Clear symbol when exchange changes - wait for new symbols to load
+            setSelectedSymbol("");
+            setOhlcvData([]);
+            setCurrentPrice(null);
+            setCurrentPriceTime(null);
+            setPriceChange24h(null);
+            setPredictions({});
+            if (typeof window !== "undefined") {
+                localStorage.removeItem("market_selectedSymbol");
+            }
+        }
+    }, [selectedAccountId]);
     
     // Save to localStorage when values change
     useEffect(() => {
@@ -317,36 +333,332 @@ export default function MarketPage() {
 
             if (response.ok) {
                 const data = await response.json();
-                const price = data.price || data.last || 0;
+                // Try multiple fields for price
+                const price = data.price || data.last || data.close || 0;
                 
                 if (price > 0) {
                     setCurrentPrice(price);
                     setCurrentPriceTime(Date.now());
                 } else {
                     console.warn("Price is 0 or invalid:", data);
+                    // Log full response for debugging
+                    console.warn("Full price response:", JSON.stringify(data, null, 2));
                 }
             } else {
-                console.error("Failed to fetch live price:", response.status);
+                const errorData = await response.json().catch(() => ({}));
+                console.error("Failed to fetch live price:", response.status, errorData);
             }
         } catch (error) {
             console.error("Error fetching live price:", error);
         }
     }, [selectedAccountId, selectedSymbol]);
 
-    // Fetch live price on mount and when symbol/account changes
+    // Fetch live price on mount and when symbol changes (NOT when account changes - wait for symbol)
     useEffect(() => {
-        // Clear current price when account or symbol changes
+        if (!selectedAccountId || !selectedSymbol) {
+            // Clear current price if no account or symbol
+            setCurrentPrice(null);
+            setCurrentPriceTime(null);
+            return;
+        }
+        
+        // Clear current price when symbol changes
         setCurrentPrice(null);
         setCurrentPriceTime(null);
         
         // Fetch immediately
         fetchLivePrice();
         
-        // Set up interval to fetch live price every 5 seconds (reduced frequency to avoid rate limits)
-        const interval = setInterval(fetchLivePrice, 5000);
+        // Set up interval to fetch live price every 10 seconds (reduced frequency to save resources)
+        const interval = setInterval(fetchLivePrice, 10000);
         
         return () => clearInterval(interval);
-    }, [fetchLivePrice]);
+    }, [selectedAccountId, selectedSymbol, fetchLivePrice]);
+
+    // Create new candle exactly when timer reaches 00:00
+    useEffect(() => {
+        if (!ohlcvData.length || !timeframe) return;
+        
+        // Calculate timeframe duration in seconds
+        const timeframeSeconds: Record<string, number> = {
+            "1m": 60,
+            "5m": 300,
+            "15m": 900,
+            "1h": 3600,
+            "4h": 14400,
+            "1d": 86400,
+        };
+        const timeframeDuration = timeframeSeconds[timeframe] || 3600;
+        
+        // Get last candle
+        const sortedData = [...ohlcvData].sort((a, b) => {
+            const timeA = a.t > 1000000000000 ? a.t / 1000 : a.t;
+            const timeB = b.t > 1000000000000 ? b.t / 1000 : b.t;
+            return timeA - timeB;
+        });
+        const lastCandle = sortedData[sortedData.length - 1];
+        const lastCandleTime = lastCandle.t > 1000000000000 ? lastCandle.t / 1000 : lastCandle.t;
+        const lastCandleStartTime = Math.floor(lastCandleTime / timeframeDuration) * timeframeDuration;
+        const lastCandleEndTime = lastCandleStartTime + timeframeDuration;
+        
+        // Calculate time until candle closes
+        const now = Math.floor(Date.now() / 1000);
+        const timeUntilClose = lastCandleEndTime - now;
+        
+        if (timeUntilClose <= 0) {
+            // Candle should have already closed - create new one immediately if we have current price
+            if (currentPrice) {
+                const currentCandleStartTime = Math.floor(now / timeframeDuration) * timeframeDuration;
+                if (currentCandleStartTime > lastCandleStartTime) {
+                    // Create new candle immediately
+                    setOhlcvData((prevData) => {
+                        const sorted = [...prevData].sort((a, b) => {
+                            const timeA = a.t > 1000000000000 ? a.t / 1000 : a.t;
+                            const timeB = b.t > 1000000000000 ? b.t / 1000 : b.t;
+                            return timeA - timeB;
+                        });
+                        const last = sorted[sorted.length - 1];
+                        const newCandleTimestamp = currentCandleStartTime * 1000;
+                        
+                        // Check if candle already exists
+                        const exists = sorted.some(c => {
+                            const cTime = c.t > 1000000000000 ? c.t / 1000 : c.t;
+                            const cStart = Math.floor(cTime / timeframeDuration) * timeframeDuration;
+                            return cStart === currentCandleStartTime;
+                        });
+                        
+                        if (!exists) {
+                            const newCandle: OHLCVCandle = {
+                                t: newCandleTimestamp,
+                                o: last.c,
+                                h: currentPrice,
+                                l: currentPrice,
+                                c: currentPrice,
+                                v: 0,
+                            };
+                            return [...sorted, newCandle].sort((a, b) => {
+                                const timeA = a.t > 1000000000000 ? a.t / 1000 : a.t;
+                                const timeB = b.t > 1000000000000 ? b.t / 1000 : b.t;
+                                return timeA - timeB;
+                            });
+                        }
+                        return prevData;
+                    });
+                }
+            }
+            return;
+        }
+        
+        // Set timeout to create new candle exactly when timer reaches 00:00
+        const timeout = setTimeout(() => {
+            if (currentPrice) {
+                const nowAtClose = Math.floor(Date.now() / 1000);
+                const currentCandleStartTime = Math.floor(nowAtClose / timeframeDuration) * timeframeDuration;
+                
+                setOhlcvData((prevData) => {
+                    const sorted = [...prevData].sort((a, b) => {
+                        const timeA = a.t > 1000000000000 ? a.t / 1000 : a.t;
+                        const timeB = b.t > 1000000000000 ? b.t / 1000 : b.t;
+                        return timeA - timeB;
+                    });
+                    const last = sorted[sorted.length - 1];
+                    const lastTime = last.t > 1000000000000 ? last.t / 1000 : last.t;
+                    const lastStart = Math.floor(lastTime / timeframeDuration) * timeframeDuration;
+                    
+                    if (currentCandleStartTime > lastStart) {
+                        const newCandleTimestamp = currentCandleStartTime * 1000;
+                        
+                        // Check if candle already exists
+                        const exists = sorted.some(c => {
+                            const cTime = c.t > 1000000000000 ? c.t / 1000 : c.t;
+                            const cStart = Math.floor(cTime / timeframeDuration) * timeframeDuration;
+                            return cStart === currentCandleStartTime;
+                        });
+                        
+                        if (!exists) {
+                            const newCandle: OHLCVCandle = {
+                                t: newCandleTimestamp,
+                                o: last.c,
+                                h: currentPrice,
+                                l: currentPrice,
+                                c: currentPrice,
+                                v: 0,
+                            };
+                            console.log("⏰ Timer reached 00:00, creating new candle:", {
+                                timestamp: new Date(newCandleTimestamp).toISOString(),
+                                price: currentPrice,
+                            });
+                            return [...sorted, newCandle].sort((a, b) => {
+                                const timeA = a.t > 1000000000000 ? a.t / 1000 : a.t;
+                                const timeB = b.t > 1000000000000 ? b.t / 1000 : b.t;
+                                return timeA - timeB;
+                            });
+                        }
+                    }
+                    return prevData;
+                });
+            }
+        }, timeUntilClose * 1000);
+        
+        return () => clearTimeout(timeout);
+    }, [ohlcvData, timeframe, currentPrice]);
+    
+    // Update last candle with current price (real-time update)
+    // Use throttling to prevent excessive updates
+    useEffect(() => {
+        if (!currentPrice || !currentPriceTime) return;
+        
+        // Throttle updates to max once per second
+        const updateTimeout = setTimeout(() => {
+            setOhlcvData((prevData) => {
+            if (prevData.length === 0) return prevData;
+            
+            const now = currentPriceTime > 1000000000000 ? currentPriceTime / 1000 : currentPriceTime;
+            
+            // Calculate timeframe duration in seconds
+            const timeframeSeconds: Record<string, number> = {
+                "1m": 60,
+                "5m": 300,
+                "15m": 900,
+                "1h": 3600,
+                "4h": 14400,
+                "1d": 86400,
+            };
+            const timeframeDuration = timeframeSeconds[timeframe] || 3600;
+            
+            // Calculate the start time of the candle that should contain now
+            const currentCandleStartTime = Math.floor(now / timeframeDuration) * timeframeDuration;
+            const currentCandleEndTime = currentCandleStartTime + timeframeDuration;
+            
+            // Sort data to ensure last candle is actually the latest
+            const sortedData = [...prevData].sort((a, b) => {
+                const timeA = a.t > 1000000000000 ? a.t / 1000 : a.t;
+                const timeB = b.t > 1000000000000 ? b.t / 1000 : b.t;
+                return timeA - timeB;
+            });
+            
+            const lastCandle = sortedData[sortedData.length - 1];
+            const lastCandleTime = lastCandle.t > 1000000000000 ? lastCandle.t / 1000 : lastCandle.t;
+            const lastCandleStartTime = Math.floor(lastCandleTime / timeframeDuration) * timeframeDuration;
+            
+            console.log("🕯️ Candle update check:", {
+                now: new Date(now * 1000).toISOString(),
+                lastCandleTime: new Date(lastCandleTime * 1000).toISOString(),
+                lastCandleStartTime: new Date(lastCandleStartTime * 1000).toISOString(),
+                currentCandleStartTime: new Date(currentCandleStartTime * 1000).toISOString(),
+                timeframe,
+                timeframeDuration,
+                isNewTimeframe: currentCandleStartTime > lastCandleStartTime,
+            });
+            
+            const updated = [...sortedData];
+            
+            // Check if we need to create a new candle for the current timeframe
+            if (currentCandleStartTime > lastCandleStartTime) {
+                console.log("🆕 Creating new candle for timeframe:", new Date(currentCandleStartTime * 1000).toISOString());
+                // New timeframe started - create new candle with current price
+                const newCandleTimestamp = currentCandleStartTime * 1000; // Convert to milliseconds
+                
+                // Check if candle for this timeframe already exists
+                const existingIndex = updated.findIndex(c => {
+                    const cTime = c.t > 1000000000000 ? c.t / 1000 : c.t;
+                    const cStartTime = Math.floor(cTime / timeframeDuration) * timeframeDuration;
+                    return cStartTime === currentCandleStartTime;
+                });
+                
+                if (existingIndex >= 0) {
+                    // Update existing candle for current timeframe
+                    const existingCandle = updated[existingIndex];
+                    updated[existingIndex] = {
+                        ...existingCandle,
+                        c: currentPrice,
+                        h: Math.max(existingCandle.h, currentPrice),
+                        l: Math.min(existingCandle.l, currentPrice),
+                    };
+                } else {
+                    // Create new candle for current timeframe
+                    // If there's a gap (e.g., overnight), use current price as open to avoid huge gaps
+                    // Otherwise, use last candle's close as open
+                    const timeGap = currentCandleStartTime - lastCandleStartTime;
+                    const maxGapForContinuity = timeframeDuration * 2; // Allow up to 2 timeframes gap
+                    
+                    let openPrice: number;
+                    if (timeGap > maxGapForContinuity) {
+                        // Large gap (e.g., overnight, weekend) - use current price as open (gap up/down)
+                        openPrice = currentPrice;
+                        console.log("📊 Large time gap detected, using current price as open:", {
+                            gap: timeGap,
+                            maxGap: maxGapForContinuity,
+                            lastClose: lastCandle.c,
+                            currentPrice: currentPrice,
+                        });
+                    } else {
+                        // Small gap - use last candle's close as open (continuous)
+                        openPrice = lastCandle.c;
+                    }
+                    
+                    const newCandle: OHLCVCandle = {
+                        t: newCandleTimestamp,
+                        o: openPrice,
+                        h: Math.max(openPrice, currentPrice), // High should be >= open and close
+                        l: Math.min(openPrice, currentPrice), // Low should be <= open and close
+                        c: currentPrice,
+                        v: 0, // Volume starts at 0
+                    };
+                    updated.push(newCandle);
+                    console.log("✅ New candle created:", {
+                        timestamp: new Date(newCandleTimestamp).toISOString(),
+                        open: openPrice,
+                        close: currentPrice,
+                        high: newCandle.h,
+                        low: newCandle.l,
+                    });
+                }
+            } else if (lastCandleStartTime === currentCandleStartTime) {
+                // Same timeframe - update the last candle
+                console.log("🔄 Updating existing candle for timeframe:", new Date(lastCandleStartTime * 1000).toISOString());
+                const lastCandleIndex = updated.length - 1;
+                
+                // Only update if price actually changed (avoid unnecessary updates)
+                if (lastCandle.c !== currentPrice || 
+                    lastCandle.h < currentPrice || 
+                    lastCandle.l > currentPrice) {
+                    // Update close, high, and low with current price
+                    const updatedLastCandle: OHLCVCandle = {
+                        ...lastCandle,
+                        c: currentPrice, // Update close price (real-time)
+                        h: Math.max(lastCandle.h, currentPrice), // Update high if needed
+                        l: Math.min(lastCandle.l, currentPrice), // Update low if needed
+                        // Open (o) remains unchanged - it's the opening price of the candle
+                    };
+                    
+                    updated[lastCandleIndex] = updatedLastCandle;
+                    console.log("✅ Candle updated:", {
+                        old: { c: lastCandle.c, h: lastCandle.h, l: lastCandle.l },
+                        new: { c: updatedLastCandle.c, h: updatedLastCandle.h, l: updatedLastCandle.l },
+                    });
+                }
+            } else {
+                // Current timeframe is before last candle - shouldn't happen, but log it
+                console.warn("⚠️ Current timeframe is before last candle:", {
+                    currentCandleStartTime: new Date(currentCandleStartTime * 1000).toISOString(),
+                    lastCandleStartTime: new Date(lastCandleStartTime * 1000).toISOString(),
+                });
+            }
+            // If currentCandleStartTime < lastCandleStartTime, it means we're updating an old candle
+            // This shouldn't happen in normal flow, but we'll handle it by updating the last candle anyway
+            
+            // Sort by timestamp to ensure correct order
+            return updated.sort((a, b) => {
+                const timeA = a.t > 1000000000000 ? a.t / 1000 : a.t;
+                const timeB = b.t > 1000000000000 ? b.t / 1000 : b.t;
+                return timeA - timeB;
+            });
+        });
+        }, 1000); // Throttle to max 1 update per second
+        
+        return () => clearTimeout(updateTimeout);
+    }, [currentPrice, currentPriceTime, timeframe]);
 
     // Calculate 24h price change when currentPrice or ohlcvData changes
     useEffect(() => {
@@ -545,10 +857,10 @@ export default function MarketPage() {
         }
     }, [selectedAccountId, selectedSymbol, timeframe, loadingMore]);
 
-    // Fetch data when symbol, timeframe, or exchange account changes
+    // Fetch data when symbol or timeframe changes (NOT when account changes - wait for symbol to be selected first)
     useEffect(() => {
         if (selectedAccountId && selectedSymbol) {
-            // Clear all data when exchange account changes
+            // Clear all data when symbol or timeframe changes
             setOhlcvData([]);
             setCurrentPrice(null);
             setCurrentPriceTime(null);
@@ -557,10 +869,10 @@ export default function MarketPage() {
             setError(null);
             setOldestTimestamp(null);
             
-            // Fetch fresh data from the new exchange
+            // Fetch fresh data from the exchange
             fetchOHLCV();
-        } else {
-            // Clear data if no account or symbol selected
+        } else if (!selectedSymbol) {
+            // Clear data if no symbol selected (waiting for symbol to load)
             setOhlcvData([]);
             setCurrentPrice(null);
             setCurrentPriceTime(null);
@@ -568,7 +880,7 @@ export default function MarketPage() {
             setPredictions({});
             setOldestTimestamp(null);
         }
-    }, [selectedAccountId, selectedSymbol, timeframe, fetchOHLCV]);
+    }, [selectedSymbol, timeframe, fetchOHLCV]); // Removed selectedAccountId - only fetch when symbol is selected
 
     // When horizons change, clear predictions if we have any
     useEffect(() => {
@@ -757,10 +1069,10 @@ export default function MarketPage() {
             {/* Trading Panel, Main Chart and Predictions Side by Side */}
             <div id="main-chart" style={{marginTop: "8px", marginBottom: "8px", display: "flex", gap: "0.5rem", alignItems: "flex-start", height: "calc(100vh - 200px)", minHeight: "600px" }}>
                 {/* Trading Panel - Left Side */}
-                {selectedSymbol && (
+                {/* Always render TradingPanel so it can fetch currencies and auto-select symbol */}
                     <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                         <TradingPanel
-                            selectedSymbol={selectedSymbol}
+                        selectedSymbol={selectedSymbol || ""}
                             onSymbolChange={setSelectedSymbol}
                             currentPrice={currentPrice}
                             priceChange24h={priceChange24h}
@@ -769,7 +1081,7 @@ export default function MarketPage() {
                             predictionsLoading={predictionsLoading}
                         />
                         {/* Price Predictions Panel - Below TradingPanel */}
-                        {showPredictions && (
+                    {selectedSymbol && showPredictions && (
                             <PricePredictionsPanel
                                 predictions={predictions}
                                 predictionsLoading={predictionsLoading}
@@ -777,10 +1089,9 @@ export default function MarketPage() {
                             />
                         )}
                     </div>
-                )}
 
                 {/* Main Chart - Center */}
-                <div style={{ flex: "1", minWidth: "0", display: "flex", flexDirection: "column" }}>
+                <div style={{ flex: "1", minWidth: "0", display: "flex", flexDirection: "column", gap: "12px" }}>
                 {selectedSymbol ? (
                     <MainChart
                         ohlcvData={ohlcvData}
@@ -817,6 +1128,10 @@ export default function MarketPage() {
                         <p>Select a trading pair from the widget above to view the chart.</p>
                     </div>
                 )}
+                {/* Arbitrage Panel - Always show when symbol is selected */}
+                {selectedSymbol && (
+                    <ArbitragePanel selectedSymbol={selectedSymbol} />
+                )}
             </div>
 
                 {/* Right Side Panel */}
@@ -828,8 +1143,13 @@ export default function MarketPage() {
                             currentPrice={currentPrice}
                         />
 
+                        {/* Active Orders */}
+                        <ActiveOrders 
+                            selectedSymbol={selectedSymbol}
+                        />
+
                         {/* Accuracy Stats */}
-                        {accuracyStats && accuracyStats.total_predictions > 0 && (
+                      {/*   {accuracyStats && accuracyStats.total_predictions > 0 && (
                             <div style={{ 
                                 marginTop: "12px",
                                 padding: "12px",
@@ -877,7 +1197,7 @@ export default function MarketPage() {
                                     </div>
                                 </div>
                             </div>
-                        )}
+                        )} */}
                         </div>
                     )}
                 </div>

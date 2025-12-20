@@ -311,7 +311,10 @@ export default function MainChart({
                         rightOffset: 12,
                         barSpacing: 3,
                         allowBoldLabels: true,
-                        rightBarStaysOnScroll: true,
+                        rightBarStaysOnScroll: false, // Disable - prevents last candle from sticking to right
+                        fixLeftEdge: false, // Allow scrolling left
+                        fixRightEdge: false, // Allow scrolling right
+                        lockVisibleTimeRangeOnResize: true, // Lock visible range when chart resizes
                     },
                     rightPriceScale: {
                         borderColor: "#888",
@@ -320,6 +323,7 @@ export default function MainChart({
                             top: 0.1,
                             bottom: 0.1,
                         },
+                        autoScale: false, // Disable auto-scaling - user controls zoom
                     },
                 });
                 
@@ -357,9 +361,40 @@ export default function MainChart({
                 }) as ISeriesApi<"Candlestick">;
                 candlestickSeriesRef.current = candlestick;
                 
+                // Helper function to calculate remaining time until candle closes
+                const getCandleRemainingTime = (timeframe: string, candleTimestamp: number): string => {
+                    // Parse timeframe to seconds
+                    let timeframeSeconds = 60; // Default 1 minute
+                    if (timeframe.endsWith('m')) {
+                        timeframeSeconds = parseInt(timeframe.replace('m', '')) * 60;
+                    } else if (timeframe.endsWith('h')) {
+                        timeframeSeconds = parseInt(timeframe.replace('h', '')) * 3600;
+                    } else if (timeframe.endsWith('d')) {
+                        timeframeSeconds = parseInt(timeframe.replace('d', '')) * 86400;
+                    } else if (timeframe.endsWith('w')) {
+                        timeframeSeconds = parseInt(timeframe.replace('w', '')) * 604800;
+                    }
+                    
+                    // Get current time and candle start time
+                    const now = Math.floor(Date.now() / 1000);
+                    const candleStart = candleTimestamp > 1000000000000 ? Math.floor(candleTimestamp / 1000) : candleTimestamp;
+                    
+                    // Calculate elapsed time
+                    const elapsed = now - candleStart;
+                    
+                    // Calculate remaining time
+                    const remaining = Math.max(0, timeframeSeconds - elapsed);
+                    
+                    // Format as MM:SS
+                    const minutes = Math.floor(remaining / 60);
+                    const seconds = Math.floor(remaining % 60);
+                    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+                };
+                
                 // Create current price line (color will be updated based on price changes)
                 // Initial color: compare with last candle's close price if available
                 let initialColor = "#ef4444"; // Default red
+                let candleTimeTitle = "Current Price"; // Default title
                 if (ohlcvData && ohlcvData.length > 0 && currentPrice !== null) {
                     const lastCandle = ohlcvData[ohlcvData.length - 1];
                     if (lastCandle && typeof lastCandle.c === 'number' && isFinite(lastCandle.c)) {
@@ -369,13 +404,17 @@ export default function MainChart({
                             initialColor = "#ef4444"; // Red if current price is lower than last close
                         }
                     }
+                    // Calculate remaining time until candle closes
+                    if (lastCandle && lastCandle.t) {
+                        candleTimeTitle = getCandleRemainingTime(timeframe, lastCandle.t);
+                    }
                 }
                 
                 const currentPriceLine = chart.addSeries(LineSeries, {
                     color: initialColor,
                     lineWidth: 2,
                     lineStyle: 1, // Dashed
-                    title: "Current Price",
+                    title: candleTimeTitle,
                     priceLineVisible: true,
                     lastValueVisible: true,
                 }) as ISeriesApi<"Line">;
@@ -575,6 +614,8 @@ export default function MainChart({
                                 secondsVisible: false,
                                 rightOffset: 12,
                                 barSpacing: 3,
+                                rightBarStaysOnScroll: false, // Disable - prevents last candle from sticking to right
+                                lockVisibleTimeRangeOnResize: true, // Lock visible range when chart resizes
                             },
                             rightPriceScale: {
                                 borderColor: "#888",
@@ -602,9 +643,40 @@ export default function MainChart({
                         }) as ISeriesApi<"Candlestick">;
                         candlestickSeriesRef.current = candlestick;
                         
+                        // Helper function to calculate remaining time until candle closes
+                        const getCandleRemainingTime = (timeframe: string, candleTimestamp: number): string => {
+                            // Parse timeframe to seconds
+                            let timeframeSeconds = 60; // Default 1 minute
+                            if (timeframe.endsWith('m')) {
+                                timeframeSeconds = parseInt(timeframe.replace('m', '')) * 60;
+                            } else if (timeframe.endsWith('h')) {
+                                timeframeSeconds = parseInt(timeframe.replace('h', '')) * 3600;
+                            } else if (timeframe.endsWith('d')) {
+                                timeframeSeconds = parseInt(timeframe.replace('d', '')) * 86400;
+                            } else if (timeframe.endsWith('w')) {
+                                timeframeSeconds = parseInt(timeframe.replace('w', '')) * 604800;
+                            }
+                            
+                            // Get current time and candle start time
+                            const now = Math.floor(Date.now() / 1000);
+                            const candleStart = candleTimestamp > 1000000000000 ? Math.floor(candleTimestamp / 1000) : candleTimestamp;
+                            
+                            // Calculate elapsed time
+                            const elapsed = now - candleStart;
+                            
+                            // Calculate remaining time
+                            const remaining = Math.max(0, timeframeSeconds - elapsed);
+                            
+                            // Format as MM:SS
+                            const minutes = Math.floor(remaining / 60);
+                            const seconds = Math.floor(remaining % 60);
+                            return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+                        };
+                        
                         // Recreate current price line (color will be updated based on price changes)
                         // Initial color: compare with last candle's close price if available
                         let initialColor = "#ef4444"; // Default red
+                        let candleTimeTitle = "Current Price"; // Default title
                         if (ohlcvData && ohlcvData.length > 0 && currentPrice !== null) {
                             const lastCandle = ohlcvData[ohlcvData.length - 1];
                             if (lastCandle && typeof lastCandle.c === 'number' && isFinite(lastCandle.c)) {
@@ -614,13 +686,17 @@ export default function MainChart({
                                     initialColor = "#ef4444"; // Red if current price is lower than last close
                                 }
                             }
+                            // Calculate remaining time until candle closes
+                            if (lastCandle && lastCandle.t) {
+                                candleTimeTitle = getCandleRemainingTime(timeframe, lastCandle.t);
+                            }
                         }
                         
                         const currentPriceLine = chart.addSeries(LineSeries, {
                             color: initialColor,
                             lineWidth: 2,
                             lineStyle: 1, // Dashed
-                            title: "Current Price",
+                            title: candleTimeTitle,
                             priceLineVisible: true,
                             lastValueVisible: true,
                         }) as ISeriesApi<"Line">;
@@ -675,8 +751,8 @@ export default function MainChart({
                 // Quick validation - check if values exist and are numbers
                 const t = candle.t;
                 const o = candle.o;
-                const h = candle.h;
-                const l = candle.l;
+                let h = candle.h;
+                let l = candle.l;
                 const c = candle.c;
                 
                 // Single validation check
@@ -686,9 +762,22 @@ export default function MainChart({
                     continue;
                 }
                 
-                // Basic logical check
-                if (h < l || h < o || h < c || l > o || l > c) {
-                    continue;
+                // Basic logical check - ensure high >= low
+                if (h < l) {
+                    console.warn("Invalid candle: high < low, fixing...", { t, o, h, l, c });
+                    // Fix invalid candle by swapping if needed
+                    const temp = h;
+                    h = l;
+                    l = temp;
+                }
+                
+                // Ensure high >= open and close, low <= open and close
+                // For real-time candles, high/low might not be fully formed yet, so be lenient
+                if (h < Math.max(o, c)) {
+                    h = Math.max(o, c, h);
+                }
+                if (l > Math.min(o, c)) {
+                    l = Math.min(o, c, l);
                 }
                 
                 // Convert timestamp to seconds if needed
@@ -701,12 +790,12 @@ export default function MainChart({
                     continue;
                 }
                 
-                // Create clean candle object
+                // Create clean candle object with corrected values
                 validatedData.push({
                     time: timestamp as UTCTimestamp,
                     open: o,
-                    high: h,
-                    low: l,
+                    high: h, // Already corrected above
+                    low: l,  // Already corrected above
                     close: c,
                 });
             }
@@ -726,36 +815,54 @@ export default function MainChart({
                     // Check if only the last candle was updated (real-time update)
                     const previousData = previousDataRef.current;
                     const hasPreviousData = previousData.length > 0;
-                    const sameLength = validatedData.length === previousData.length;
                     const hasData = validatedData.length > 0;
-                    const sameTime = hasData && hasPreviousData && 
-                        Number(validatedData[validatedData.length - 1].time) === Number(previousData[previousData.length - 1].time);
-                    const priceChanged = hasData && hasPreviousData && sameTime &&
-                        (validatedData[validatedData.length - 1].close !== previousData[previousData.length - 1].close ||
-                         validatedData[validatedData.length - 1].high !== previousData[previousData.length - 1].high ||
-                         validatedData[validatedData.length - 1].low !== previousData[previousData.length - 1].low ||
-                         validatedData[validatedData.length - 1].open !== previousData[previousData.length - 1].open);
                     
-                    const isRealTimeUpdate = hasPreviousData && sameLength && hasData && sameTime && priceChanged;
+                    // Determine update strategy
+                    let isRealTimeUpdate = false;
+                    let isNewCandle = false;
                     
                     if (hasPreviousData && hasData) {
+                        const sameLength = validatedData.length === previousData.length;
                         const lastPrev = previousData[previousData.length - 1];
                         const lastCurr = validatedData[validatedData.length - 1];
-                        console.log("Real-time update check:", {
+                        const sameTime = Number(lastCurr.time) === Number(lastPrev.time);
+                        
+                        // Check if a new candle was added (different time or different length)
+                        if (!sameTime || !sameLength) {
+                            // Different time = new candle added OR length changed
+                            isNewCandle = true;
+                            isRealTimeUpdate = false; // Force full update when new candle exists
+                        } else if (sameLength && sameTime) {
+                            // Same candle, check if price changed
+                            const priceChanged = 
+                                lastCurr.close !== lastPrev.close ||
+                                lastCurr.high !== lastPrev.high ||
+                                lastCurr.low !== lastPrev.low ||
+                                lastCurr.open !== lastPrev.open;
+                            
+                            isRealTimeUpdate = priceChanged;
+                        }
+                        
+                        console.log("Update strategy check:", {
                             sameLength,
                             sameTime,
-                            priceChanged,
                             isRealTimeUpdate,
+                            isNewCandle,
+                            prevTime: lastPrev.time,
+                            currTime: lastCurr.time,
                             prevClose: lastPrev.close,
                             currClose: lastCurr.close,
-                            prevHigh: lastPrev.high,
-                            currHigh: lastCurr.high,
-                            prevLow: lastPrev.low,
-                            currLow: lastCurr.low,
+                            prevLength: previousData.length,
+                            currLength: validatedData.length,
                         });
+                    } else if (!hasPreviousData && hasData) {
+                        // First time loading data
+                        console.log("First time loading data");
                     }
                     
-                    if (isRealTimeUpdate) {
+                    // Always ensure the last candle is rendered
+                    // IMPORTANT: If new candle exists, use setData() to add it properly
+                    if (isRealTimeUpdate && !isNewCandle) {
                         // Real-time update: only update the last candle using update() method
                         // This is more efficient and doesn't require re-rendering the entire chart
                         const lastCandle = validatedData[validatedData.length - 1];
@@ -777,6 +884,21 @@ export default function MainChart({
                         };
                         
                         try {
+                            // Get current visible range BEFORE update to preserve scroll position
+                            // Even though update() shouldn't change position, lightweight-charts may auto-scroll
+                            let savedVisibleRange: IRange<Time> | null = null;
+                            
+                            if (chartRef.current) {
+                                const visibleRange = chartRef.current.timeScale().getVisibleRange();
+                                if (visibleRange) {
+                                    // Save the current visible range to restore after update
+                                    savedVisibleRange = {
+                                        from: visibleRange.from,
+                                        to: visibleRange.to,
+                                    };
+                                }
+                            }
+                            
                             // Use update() method for real-time updates - this is more efficient
                             // The time must exactly match an existing candle in the series
                             candlestickSeriesRef.current.update(updateData);
@@ -785,49 +907,52 @@ export default function MainChart({
                             // Store current data for next comparison
                             previousDataRef.current = validatedData;
                             
-                            // Ensure chart is visible and scrolled to latest if user is viewing recent data
-                            if (chartRef.current) {
-                                const visibleRange = chartRef.current.timeScale().getVisibleRange();
-                                if (visibleRange && visibleRange.to) {
-                                    const lastTime = Number(lastCandle.time);
-                                    const visibleEnd = typeof visibleRange.to === 'number' 
-                                        ? visibleRange.to 
-                                        : new Date(visibleRange.to as string).getTime() / 1000;
-                                    
-                                    // If we're near the end (within 5% of visible range), auto-scroll to latest
-                                    const range = visibleRange.to && visibleRange.from
-                                        ? (typeof visibleRange.to === 'number' ? visibleRange.to : new Date(visibleRange.to as string).getTime() / 1000) -
-                                          (typeof visibleRange.from === 'number' ? visibleRange.from : new Date(visibleRange.from as string).getTime() / 1000)
-                                        : 0;
-                                    
-                                    const threshold = visibleEnd - (range * 0.05);
-                                    if (lastTime >= threshold) {
-                                        // User is viewing recent data, scroll to latest
-                                        chartRef.current.timeScale().scrollToPosition(validatedData.length - 1, false);
-                                    }
-                                }
-                            }
+                            // IMPORTANT: Do NOT restore position after update() - it may cause the chart to stick to right
+                            // update() should NOT change scroll position with rightBarStaysOnScroll: false
+                            // Restoring position with setVisibleRange() may actually cause the problem
                         } catch (updateError) {
                             console.error("❌ Error updating real-time candle:", updateError);
                             console.log("Error details:", updateError instanceof Error ? updateError.message : String(updateError));
-                            // Fallback: update last few candles instead of full dataset for better performance
-                            console.log("Falling back to partial data update (last 5 candles)");
+                            // Fallback: preserve position and use setData() with saved range
+                            console.log("Falling back to setData() with position preservation");
                             try {
-                                // Update last 5 candles to ensure the latest is included
-                                const lastCandles = validatedData.slice(-5);
-                                const beforeLast = previousData.slice(0, -5);
-                                candlestickSeriesRef.current.setData([...beforeLast, ...lastCandles]);
-                                previousDataRef.current = validatedData;
-                                console.log("✅ Fallback update successful");
-                            } catch (fallbackError) {
-                                console.error("Fallback update also failed, using full update:", fallbackError);
+                                // Get current visible range before setData()
+                                let savedRange: IRange<Time> | null = null;
+                                if (chartRef.current) {
+                                    const currentRange = chartRef.current.timeScale().getVisibleRange();
+                                    if (currentRange) {
+                                        savedRange = {
+                                            from: currentRange.from,
+                                            to: currentRange.to,
+                                        };
+                                    }
+                                }
+                                
+                                // Use setData() as fallback
                                 candlestickSeriesRef.current.setData(validatedData);
                                 previousDataRef.current = validatedData;
+                                
+                                // IMPORTANT: Do NOT restore position after setData() - it may cause the chart to stick to right
+                                // With rightBarStaysOnScroll: false, the chart should NOT auto-scroll
+                                console.log("✅ Fallback update successful");
+                            } catch (fallbackError) {
+                                console.error("Fallback update also failed:", fallbackError);
+                                // Last resort: just set data without position preservation
+                                try {
+                                    candlestickSeriesRef.current.setData(validatedData);
+                                    previousDataRef.current = validatedData;
+                                } catch (finalError) {
+                                    console.error("Final fallback also failed:", finalError);
+                                }
                             }
                         }
                     } else {
-                        // Full data update: new candles added or structure changed
-                        console.log("📊 Full data update: setting all candles");
+                        // Full data update: new candles added, structure changed, or first load
+                        console.log("📊 Full data update: setting all candles", {
+                            isNewCandle,
+                            hasPreviousData,
+                            dataLength: validatedData.length,
+                        });
                         
                         // Ensure chart is properly sized before setting data
                         if (chartRef.current && chartContainerRef.current) {
@@ -835,6 +960,20 @@ export default function MainChart({
                             const height = chartContainerRef.current.clientHeight;
                             if (width > 0 && height > 0) {
                                 chartRef.current.applyOptions({ width: width, height: height });
+                            }
+                        }
+                        
+                        // Get current visible time range BEFORE setting data to preserve scroll position
+                        let savedVisibleRange: IRange<Time> | null = null;
+                        
+                        if (chartRef.current) {
+                            const currentRange = chartRef.current.timeScale().getVisibleRange();
+                            if (currentRange) {
+                                // Save the current visible range to restore it after setData()
+                                savedVisibleRange = {
+                                    from: currentRange.from,
+                                    to: currentRange.to,
+                                };
                             }
                         }
                         
@@ -848,41 +987,9 @@ export default function MainChart({
                             lastValueVisible: false,
                         });
                         
-                        // Force chart to fit content and update
-                        if (chartRef.current) {
-                            // Get current visible time range to preserve scroll position
-                            const currentRange = chartRef.current.timeScale().getVisibleRange();
-                            const wasScrolledLeft = currentRange && currentRange.from && 
-                                validatedData.length > 0 && 
-                                Number(currentRange.from) < Number(validatedData[validatedData.length - 1].time);
-                            
-                            // Only auto-scroll to latest if user hasn't scrolled left (for pagination)
-                            if (!wasScrolledLeft) {
-                                // Fit content to show all data
-                                chartRef.current.timeScale().fitContent();
-                                
-                                // Scroll to latest price
-                                const lastPrice = validatedData[validatedData.length - 1].close;
-                                if (lastPrice && isFinite(lastPrice)) {
-                                    chartRef.current.timeScale().scrollToPosition(validatedData.length - 1, false);
-                                }
-                            }
-                            
-                            // Force a resize to ensure chart renders (only if needed)
-                            setTimeout(() => {
-                                if (chartRef.current && chartContainerRef.current) {
-                                    const width = chartContainerRef.current.clientWidth;
-                                    const height = chartContainerRef.current.clientHeight;
-                                    if (width > 0 && height > 0) {
-                                        chartRef.current.applyOptions({ width: width, height: height });
-                                        // Only fit content if not scrolled left
-                                        if (!wasScrolledLeft) {
-                                            chartRef.current.timeScale().fitContent();
-                                        }
-                                    }
-                                }
-                            }, 50);
-                        }
+                        // IMPORTANT: Do NOT restore position after setData() - it may cause the chart to stick to right
+                        // With rightBarStaysOnScroll: false, the chart should NOT auto-scroll
+                        // Restoring position with setVisibleRange() may actually cause the problem
                     }
                     
                     console.log("✅ Chart data updated successfully");
@@ -1033,7 +1140,7 @@ export default function MainChart({
         // Subscribe to time range changes
         chart.timeScale().subscribeVisibleTimeRangeChange(listener);
         
-        // Also set up a periodic check as fallback (every 500ms)
+        // Also set up a periodic check as fallback (every 2 seconds - reduced frequency)
         const intervalId = setInterval(() => {
             if (!chartRef.current || loadingMore || isLoading) return;
             
@@ -1046,7 +1153,7 @@ export default function MainChart({
                 // Chart might be destroyed
                 clearInterval(intervalId);
             }
-        }, 500);
+        }, 2000); // Reduced from 500ms to 2000ms to save resources
         
         // Store cleanup function
         paginationListenerRef.current = () => {
@@ -1091,12 +1198,69 @@ export default function MainChart({
             }
         }
         
+        // Helper function to calculate remaining time until candle closes
+        const getCandleRemainingTime = (timeframe: string, candleTimestamp: number): string => {
+            // Parse timeframe to seconds
+            let timeframeSeconds = 60; // Default 1 minute
+            if (timeframe.endsWith('m')) {
+                timeframeSeconds = parseInt(timeframe.replace('m', '')) * 60;
+            } else if (timeframe.endsWith('h')) {
+                timeframeSeconds = parseInt(timeframe.replace('h', '')) * 3600;
+            } else if (timeframe.endsWith('d')) {
+                timeframeSeconds = parseInt(timeframe.replace('d', '')) * 86400;
+            } else if (timeframe.endsWith('w')) {
+                timeframeSeconds = parseInt(timeframe.replace('w', '')) * 604800;
+            }
+            
+            // Get current time and candle start time
+            const now = Math.floor(Date.now() / 1000);
+            const candleStart = candleTimestamp > 1000000000000 ? Math.floor(candleTimestamp / 1000) : candleTimestamp;
+            
+            // Calculate elapsed time
+            const elapsed = now - candleStart;
+            
+            // Calculate remaining time
+            const remaining = Math.max(0, timeframeSeconds - elapsed);
+            
+            // Format as MM:SS
+            const minutes = Math.floor(remaining / 60);
+            const seconds = Math.floor(remaining % 60);
+            return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+        };
+        
         // Get the first and last timestamps from ohlcvData to create a horizontal line across the entire chart
         const firstCandle = ohlcvData[0];
         const lastCandle = ohlcvData[ohlcvData.length - 1];
         
         const firstTimestamp = firstCandle.t > 1000000000000 ? Math.floor(firstCandle.t / 1000) : firstCandle.t;
         const lastTimestamp = lastCandle.t > 1000000000000 ? Math.floor(lastCandle.t / 1000) : lastCandle.t;
+        
+        // Calculate remaining time until candle closes for title
+        let candleTimeTitle = "Current Price";
+        if (lastCandle && lastCandle.t) {
+            candleTimeTitle = getCandleRemainingTime(timeframe, lastCandle.t);
+        }
+        
+        // Update title with candle time
+        try {
+            currentPriceLine.applyOptions({
+                title: candleTimeTitle,
+            });
+        } catch (error) {
+            console.error("Error updating current price line title:", error);
+        }
+        
+        // Get current visible range BEFORE updating price line to preserve scroll position
+        let savedVisibleRange: IRange<Time> | null = null;
+        if (chartRef.current) {
+            const visibleRange = chartRef.current.timeScale().getVisibleRange();
+            if (visibleRange) {
+                savedVisibleRange = {
+                    from: visibleRange.from,
+                    to: visibleRange.to,
+                };
+            }
+        }
         
         // Create a horizontal line by setting the same price at both start and end timestamps
         try {
@@ -1114,16 +1278,75 @@ export default function MainChart({
                 price: currentPrice, 
                 previousPrice: previousPrice,
                 color: lineColor,
+                title: candleTimeTitle,
                 from: firstTimestamp, 
                 to: lastTimestamp 
             });
+            
+            // IMPORTANT: Do NOT restore position after currentPriceLine.setData() - it may cause the chart to stick to right
+            // Restoring position with setVisibleRange() may actually cause the problem
+            // With rightBarStaysOnScroll: false, the chart should NOT auto-scroll
         } catch (error) {
             console.error("Error updating current price line:", error);
         }
         
         // Update previous price reference
         previousPriceRef.current = currentPrice;
-    }, [currentPrice, currentPriceTime, ohlcvData]);
+    }, [currentPrice, currentPriceTime, ohlcvData, timeframe]);
+    
+    // Update candle remaining time every second
+    useEffect(() => {
+        if (!chartRef.current || !currentPriceLineRef.current || ohlcvData.length === 0) {
+            return;
+        }
+        
+        const currentPriceLine = currentPriceLineRef.current;
+        const lastCandle = ohlcvData[ohlcvData.length - 1];
+        
+        if (!lastCandle || !lastCandle.t) {
+            return;
+        }
+        
+        // Helper function to calculate remaining time
+        const getCandleRemainingTime = (timeframe: string, candleTimestamp: number): string => {
+            let timeframeSeconds = 60;
+            if (timeframe.endsWith('m')) {
+                timeframeSeconds = parseInt(timeframe.replace('m', '')) * 60;
+            } else if (timeframe.endsWith('h')) {
+                timeframeSeconds = parseInt(timeframe.replace('h', '')) * 3600;
+            } else if (timeframe.endsWith('d')) {
+                timeframeSeconds = parseInt(timeframe.replace('d', '')) * 86400;
+            } else if (timeframe.endsWith('w')) {
+                timeframeSeconds = parseInt(timeframe.replace('w', '')) * 604800;
+            }
+            
+            const now = Math.floor(Date.now() / 1000);
+            const candleStart = candleTimestamp > 1000000000000 ? Math.floor(candleTimestamp / 1000) : candleTimestamp;
+            const elapsed = now - candleStart;
+            const remaining = Math.max(0, timeframeSeconds - elapsed);
+            
+            const minutes = Math.floor(remaining / 60);
+            const seconds = Math.floor(remaining % 60);
+            return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+        };
+        
+        // Update title every second
+        const interval = setInterval(() => {
+            try {
+                const remainingTime = getCandleRemainingTime(timeframe, lastCandle.t);
+                currentPriceLine.applyOptions({
+                    title: remainingTime,
+                });
+            } catch (error) {
+                console.error("Error updating candle remaining time:", error);
+            }
+        }, 1000);
+        
+        return () => clearInterval(interval);
+    }, [ohlcvData, timeframe]);
+    
+    // REMOVED: Auto-scroll to new candle - user should control chart position manually
+    // This was causing the chart to jump around when candles were updated
 
     // Get prediction labels for display
     const predictionLabels = selectedHorizons
@@ -1155,38 +1378,38 @@ export default function MainChart({
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
                 {/* Left Side: Timeframe Selection and AI Horizons */}
                 <div style={{ display: "flex", gap: "16px", alignItems: "center", flexWrap: "wrap" }}>
-                    {/* Timeframe Selection */}
-                    <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                        {timeframes.map((tf) => (
-                            <button
-                                key={tf.value}
-                                onClick={() => onTimeframeChange(tf.value)}
-                                style={{
-                                    padding: "2px 4px",
-                                    fontSize: "8px",
-                                    backgroundColor: timeframe === tf.value ? "#FFAE00" : "#2a2a2a",
-                                    color: timeframe === tf.value ? "#1a1a1a" : "#ffffff",
-                                    border: `1px solid ${timeframe === tf.value ? "#FFAE00" : "rgba(255, 174, 0, 0.3)"}`,
-                                    borderRadius: "4px",
-                                    cursor: "pointer",
-                                    fontWeight: timeframe === tf.value ? "600" : "400",
-                                    transition: "all 0.2s ease",
-                                }}
-                                onMouseEnter={(e) => {
-                                    if (timeframe !== tf.value) {
-                                        e.currentTarget.style.backgroundColor = "rgba(255, 174, 0, 0.1)";
-                                    }
-                                }}
-                                onMouseLeave={(e) => {
-                                    if (timeframe !== tf.value) {
-                                        e.currentTarget.style.backgroundColor = "#2a2a2a";
-                                    }
-                                }}
-                            >
-                                {tf.label}
-                            </button>
-                        ))}
-                    </div>
+                {/* Timeframe Selection */}
+                <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                    {timeframes.map((tf) => (
+                        <button
+                            key={tf.value}
+                            onClick={() => onTimeframeChange(tf.value)}
+                            style={{
+                                padding: "2px 4px",
+                                fontSize: "8px",
+                                backgroundColor: timeframe === tf.value ? "#FFAE00" : "#2a2a2a",
+                                color: timeframe === tf.value ? "#1a1a1a" : "#ffffff",
+                                border: `1px solid ${timeframe === tf.value ? "#FFAE00" : "rgba(255, 174, 0, 0.3)"}`,
+                                borderRadius: "4px",
+                                cursor: "pointer",
+                                fontWeight: timeframe === tf.value ? "600" : "400",
+                                transition: "all 0.2s ease",
+                            }}
+                            onMouseEnter={(e) => {
+                                if (timeframe !== tf.value) {
+                                    e.currentTarget.style.backgroundColor = "rgba(255, 174, 0, 0.1)";
+                                }
+                            }}
+                            onMouseLeave={(e) => {
+                                if (timeframe !== tf.value) {
+                                    e.currentTarget.style.backgroundColor = "#2a2a2a";
+                                }
+                            }}
+                        >
+                            {tf.label}
+                        </button>
+                    ))}
+                </div>
 
                     {/* AI Horizons Selection */}
                     <div style={{ 
@@ -1287,27 +1510,27 @@ export default function MainChart({
                     height: "100%",
                 }}>
                     <div style={{ color: "#ffffff", fontSize: "14px", marginBottom: "8px", fontWeight: "500" }}>
-                        Main Chart Area
-                    </div>
-                    {loading ? (
+                    Main Chart Area
+                </div>
+                {loading ? (
                         <div style={{ display: "flex", justifyContent: "center", alignItems: "center", flex: "1", minHeight: "450px", color: "#888" }}>
-                            Loading chart data...
-                        </div>
-                    ) : (
-                        <>
-                            <div 
-                                ref={chartContainerRef} 
-                                style={{ 
-                                    width: "100%", 
+                        Loading chart data...
+                    </div>
+                ) : (
+                    <>
+                        <div 
+                            ref={chartContainerRef} 
+                            style={{ 
+                                width: "100%", 
                                     flex: "1",
                                     minHeight: "450px",
-                                    minWidth: "600px",
-                                    position: "relative",
-                                    zIndex: 1,
-                                    display: "block",
-                                    visibility: "visible",
-                                }} 
-                            />
+                                minWidth: "600px",
+                                position: "relative",
+                                zIndex: 1,
+                                display: "block",
+                                visibility: "visible",
+                            }} 
+                        />
                         {loadingMore && (
                             <div style={{ 
                                 position: "absolute", 
@@ -1339,33 +1562,33 @@ export default function MainChart({
                                 No chart data available
                             </div>
                         )}
-                        </>
-                    )}
-                    
-                    {/* Prediction Labels */}
-                    {predictionLabels.length > 0 && (
-                        <div style={{ marginTop: "12px", display: "flex", flexWrap: "wrap", gap: "8px" }}>
-                            {predictionLabels.map((label) => {
-                                const isPositive = label.change >= 0;
-                                return (
-                                    <div
-                                        key={label.horizon}
-                                        style={{
-                                            backgroundColor: "#8b5cf6",
-                                            color: "#ffffff",
-                                            padding: "4px 8px",
-                                            borderRadius: "4px",
-                                            fontSize: "11px",
-                                            fontWeight: "500",
-                                        }}
-                                    >
-                                        {label.horizon.toUpperCase()} Target: ${label.price.toFixed(4)} ({isPositive ? "+" : ""}
-                                        {label.change.toFixed(1)}%)
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    )}
+                    </>
+                )}
+
+                {/* Prediction Labels */}
+                {predictionLabels.length > 0 && (
+                    <div style={{ marginTop: "12px", display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                        {predictionLabels.map((label) => {
+                            const isPositive = label.change >= 0;
+                            return (
+                                <div
+                                    key={label.horizon}
+                                    style={{
+                                        backgroundColor: "#8b5cf6",
+                                        color: "#ffffff",
+                                        padding: "4px 8px",
+                                        borderRadius: "4px",
+                                        fontSize: "11px",
+                                        fontWeight: "500",
+                                    }}
+                                >
+                                    {label.horizon.toUpperCase()} Target: ${label.price.toFixed(4)} ({isPositive ? "+" : ""}
+                                    {label.change.toFixed(1)}%)
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
                 </div>
             </div>
         </div>

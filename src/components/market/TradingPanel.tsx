@@ -68,11 +68,13 @@ export default function TradingPanel({
     const [isConnected, setIsConnected] = useState(true);
     const [baseCurrencies, setBaseCurrencies] = useState<string[]>([]);
     const [quoteCurrencies, setQuoteCurrencies] = useState<string[]>([]);
+    const [availableSymbols, setAvailableSymbols] = useState<string[]>([]); // For Kraken: full symbols like "AAVE/USD"
     const [currenciesLoading, setCurrenciesLoading] = useState(false);
     const [tickerData, setTickerData] = useState<TickerData | null>(null);
     const [tickerLoading, setTickerLoading] = useState(false);
 
     const selectedAccount = accounts.find(acc => acc.id === selectedAccountId);
+    const isKraken = selectedAccount?.exchange_name?.toLowerCase() === "kraken";
     const [base, quote] = selectedSymbol ? selectedSymbol.split("/") : ["", ""];
 
     // Get balance for base coin (free)
@@ -168,11 +170,14 @@ export default function TradingPanel({
     // Fetch currencies from database - optimized for speed
     const fetchCurrencies = useCallback(async () => {
         if (!selectedAccountId) {
+            console.log("⚠️ No selectedAccountId, clearing currencies");
             setBaseCurrencies([]);
             setQuoteCurrencies([]);
+            setAvailableSymbols([]);
             return;
         }
 
+        console.log("🔄 Fetching currencies for account:", selectedAccountId);
         setCurrenciesLoading(true);
         try {
             const token = localStorage.getItem("auth_token") || "";
@@ -184,12 +189,104 @@ export default function TradingPanel({
             const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
             const selectedAccount = accounts.find(acc => acc.id === selectedAccountId);
             const exchangeId = selectedAccount?.exchange_id;
+            const exchangeName = selectedAccount?.exchange_name?.toLowerCase();
+
+            // Strategy 0: For Kraken, fetch markets directly from exchange API
+            if (exchangeName === "kraken") {
+                try {
+                    const marketsResponse = await fetch(`${apiUrl}/market/pairs/${selectedAccountId}`, {
+                        headers: { Authorization: `Bearer ${token}` },
+                    });
+
+                    if (marketsResponse.ok) {
+                        const marketsData = await marketsResponse.json();
+                        const markets = marketsData.markets || [];
+                        
+                        if (markets.length > 0) {
+                            // Extract full symbols (e.g., "AAVE/USD") from active markets
+                            const symbols = markets
+                                .filter((market: { symbol: string; base: string; quote: string; active?: boolean }) => {
+                                    // Only include active markets with valid base and quote
+                                    return market.active !== false && market.base && market.quote && market.symbol;
+                                })
+                                .map((market: { symbol: string }) => market.symbol.toUpperCase())
+                                .sort();
+                        
+                            console.log("✅ Fetched Kraken symbols:", { symbols: symbols.length, markets: markets.length });
+                            setAvailableSymbols(symbols);
+                            setBaseCurrencies([]); // Clear base/quote for Kraken
+                            setQuoteCurrencies([]);
+                            setCurrenciesLoading(false);
+                            return;
+                        }
+                    }
+                } catch (krakenError) {
+                    console.warn("Error fetching Kraken markets:", krakenError);
+                }
+            }
+
+            // Strategy 0.5: For all exchanges, fetch full symbols from database via /market/symbols/by-account
+            // This ensures we only get symbols for the selected exchange
+            try {
+                const symbolsResponse = await fetch(`${apiUrl}/market/symbols/by-account/${selectedAccountId}?active_only=true`, {
+                    headers: { Authorization: `Bearer ${token}` },
+                });
+                
+                if (symbolsResponse.ok) {
+                    const symbolsData = await symbolsResponse.json();
+                    const symbols = symbolsData.symbols || [];
+                    
+                    if (symbols.length > 0) {
+                        // Extract full symbols (e.g., "BTC/USDT") from symbols
+                        // Use a Set to remove duplicates, then convert back to array
+                        const symbolSet = new Set<string>();
+                        
+                        symbols
+                            .filter((symbol: { base: string; quote: string; active?: boolean }) => {
+                                // Only include active symbols with valid base and quote
+                                return symbol.active !== false && symbol.base && symbol.quote;
+                            })
+                            .forEach((symbol: { base: string; quote: string }) => {
+                                const fullSymbol = `${symbol.base}/${symbol.quote}`.toUpperCase();
+                                symbolSet.add(fullSymbol); // Set automatically handles duplicates
+                            });
+                        
+                        // Convert Set to sorted array
+                        const fullSymbols = Array.from(symbolSet).sort();
+                        
+                        console.log("✅ Fetched symbols from database for exchange:", { 
+                            symbols: fullSymbols.length, 
+                            exchange: exchangeName,
+                            accountId: selectedAccountId,
+                            rawCount: symbols.length,
+                            uniqueCount: fullSymbols.length
+                        });
+                        
+                        setAvailableSymbols(fullSymbols);
+                        setBaseCurrencies([]); // Clear base/quote
+                        setQuoteCurrencies([]);
+                        setCurrenciesLoading(false);
+                        return;
+                    } else {
+                        console.warn("No symbols found in database for exchange:", { exchange: exchangeName, accountId: selectedAccountId });
+                    }
+                } else {
+                    const errorData = await symbolsResponse.json().catch(() => ({}));
+                    console.warn("Failed to fetch symbols from database:", { 
+                        status: symbolsResponse.status, 
+                        error: errorData,
+                        accountId: selectedAccountId 
+                    });
+                }
+            } catch (symbolsError) {
+                console.error("Error fetching symbols from database:", symbolsError);
+            }
 
             // Strategy 1: If we have exchange_id, use the new endpoint to get both assets and quote currencies
             if (exchangeId) {
                 try {
                     const currenciesResponse = await fetch(`${apiUrl}/exchange/exchanges/${exchangeId}/currencies`, {
-                        headers: { Authorization: `Bearer ${token}` },
+                            headers: { Authorization: `Bearer ${token}` },
                     });
 
                     if (currenciesResponse.ok) {
@@ -202,56 +299,20 @@ export default function TradingPanel({
                         const quotes = currenciesData.quote_currencies?.map((qc: { currency_code: string }) => qc.currency_code) || [];
                         
                         if (assets.length > 0 || quotes.length > 0) {
+                            console.log("✅ Fetched currencies:", { bases: assets.length, quotes: quotes.length });
                             setBaseCurrencies(assets.sort());
                             setQuoteCurrencies(quotes.sort());
                             setCurrenciesLoading(false);
-                            return;
-                        }
+                        return;
                     }
+                }
                 } catch (exchangeError) {
                     console.warn("Error fetching currencies by exchange_id:", exchangeError);
                 }
             }
 
-            // Strategy 2: Fallback to old method (fetch from symbols first)
-            try {
-                const symbolsResponse = await fetch(`${apiUrl}/market/symbols/by-account/${selectedAccountId}?active_only=true`, {
-                    headers: { Authorization: `Bearer ${token}` },
-                });
-                
-                if (symbolsResponse.ok) {
-                    const symbolsData = await symbolsResponse.json();
-                    const symbols = symbolsData.symbols || [];
-                    
-                    if (symbols.length > 0) {
-                        // Extract unique base and quote currencies from symbols
-                        const baseSet = new Set<string>();
-                        const quoteSet = new Set<string>();
-                        
-                        symbols.forEach((symbol: { base: string; quote: string }) => {
-                            if (symbol.base) baseSet.add(symbol.base.toUpperCase());
-                            if (symbol.quote) quoteSet.add(symbol.quote.toUpperCase());
-                        });
-                        
-                        const bases = Array.from(baseSet).sort();
-                        const quotes = Array.from(quoteSet).sort();
-                        
-                        setBaseCurrencies(bases);
-                        setQuoteCurrencies(quotes);
-                        setCurrenciesLoading(false);
-                        
-                        // Sync currencies in background (don't wait for it)
-                        fetch(`${apiUrl}/exchange/accounts/${selectedAccountId}/sync-currencies`, {
-                            method: "POST",
-                            headers: { Authorization: `Bearer ${token}` },
-                        }).catch(err => console.warn("Background currency sync failed:", err));
-                        
-                        return;
-                    }
-                }
-            } catch (symbolsError) {
-                console.warn("Error fetching symbols:", symbolsError);
-            }
+            // Strategy 2: Fallback - extract base/quote from currencies (only if symbols failed)
+            // This is now a fallback, as we prefer full symbols
 
             // Strategy 3: Try currencies from database (if symbols failed)
             try {
@@ -272,6 +333,7 @@ export default function TradingPanel({
                     const quotes = quoteData.currencies?.map((c: { currency_code: string }) => c.currency_code) || [];
                     
                     if (bases.length > 0 && quotes.length > 0) {
+                        console.log("✅ Fetched currencies from database:", { bases: bases.length, quotes: quotes.length });
                         setBaseCurrencies(bases);
                         setQuoteCurrencies(quotes);
                         setCurrenciesLoading(false);
@@ -285,10 +347,12 @@ export default function TradingPanel({
             // If all failed, set empty arrays
             setBaseCurrencies([]);
             setQuoteCurrencies([]);
+            setAvailableSymbols([]);
         } catch (error) {
             console.error("Error fetching currencies:", error);
             setBaseCurrencies([]);
             setQuoteCurrencies([]);
+            setAvailableSymbols([]);
         } finally {
             setCurrenciesLoading(false);
         }
@@ -297,6 +361,34 @@ export default function TradingPanel({
     useEffect(() => {
         fetchCurrencies();
     }, [fetchCurrencies]);
+
+    // Auto-select first symbol when currencies/symbols are loaded and no symbol is selected
+    // This ensures we wait for symbols to load before selecting
+    useEffect(() => {
+        // Only auto-select if:
+        // 1. No symbol is currently selected
+        // 2. Loading is complete
+        // 3. We have symbols available
+        if (!selectedSymbol && !currenciesLoading && selectedAccountId) {
+            if (availableSymbols.length > 0) {
+                // For all exchanges: select first available symbol
+                const firstSymbol = availableSymbols[0];
+                if (firstSymbol) {
+                    console.log("🔄 Auto-selecting first symbol after exchange change:", firstSymbol);
+                    onSymbolChange(firstSymbol);
+                }
+            } else if (baseCurrencies.length > 0 && quoteCurrencies.length > 0) {
+                // Fallback: if no symbols available, use base/quote combination
+                const firstBase = baseCurrencies[0];
+                const firstQuote = quoteCurrencies[0];
+                if (firstBase && firstQuote) {
+                    const newSymbol = `${firstBase}/${firstQuote}`;
+                    console.log("🔄 Auto-selecting first symbol (fallback):", newSymbol);
+                    onSymbolChange(newSymbol);
+                }
+            }
+        }
+    }, [availableSymbols, baseCurrencies, quoteCurrencies, currenciesLoading, selectedSymbol, selectedAccountId, onSymbolChange]);
 
     // Fetch ticker data (24h High, Low, Bid, Ask)
     const fetchTickerData = useCallback(async () => {
@@ -583,7 +675,50 @@ export default function TradingPanel({
         >
             {/* Asset Selection and Current Price */}
             <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                {/* Symbol Selectors */}
+                {/* Symbol Selector - Single dropdown for all exchanges */}
+                {availableSymbols.length > 0 ? (
+                    <select
+                        value={selectedSymbol || ""}
+                        onChange={(e) => {
+                            onSymbolChange(e.target.value);
+                        }}
+                        disabled={currenciesLoading || availableSymbols.length === 0}
+                        style={{
+                            width: "100%",
+                            padding: "8px 12px",
+                            backgroundColor: "#2a2a2a",
+                            border: "1px solid rgba(255, 174, 0, 0.2)",
+                            borderRadius: "6px",
+                            color: "#ffffff",
+                            fontSize: "14px",
+                            fontWeight: "500",
+                            outline: "none",
+                            cursor: currenciesLoading || availableSymbols.length === 0 ? "not-allowed" : "pointer",
+                        }}
+                        onFocus={(e) => (e.target.style.borderColor = "#FFAE00")}
+                        onBlur={(e) => (e.target.style.borderColor = "rgba(255, 174, 0, 0.2)")}
+                    >
+                        {currenciesLoading ? (
+                            <option value="">Loading...</option>
+                        ) : availableSymbols.length === 0 ? (
+                            <option value="">No symbols available</option>
+                        ) : (
+                            <>
+                                {!availableSymbols.includes(selectedSymbol) && selectedSymbol && (
+                                    <option value={selectedSymbol} style={{ backgroundColor: "#1a1a1a", color: "#ffffff" }}>
+                                        {selectedSymbol}
+                                    </option>
+                                )}
+                                {availableSymbols.map((symbol) => (
+                                    <option key={symbol} value={symbol} style={{ backgroundColor: "#1a1a1a", color: "#ffffff" }}>
+                                        {symbol}
+                                    </option>
+                                ))}
+                            </>
+                        )}
+                    </select>
+                ) : (
+                    // Fallback: Show two dropdowns only if symbols are not available
                 <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
                     <select
                         value={base || ""}
@@ -673,6 +808,7 @@ export default function TradingPanel({
                         )}
                     </select>
                 </div>
+                )}
 
                 {/* Current Price Display */}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>

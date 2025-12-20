@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useExchange } from "@/contexts/ExchangeContext";
 
 interface OrderPanelProps {
@@ -26,13 +26,30 @@ export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced
     const [placingOrder, setPlacingOrder] = useState(false);
     const [balance, setBalance] = useState<Balance | null>(null);
     const [balanceLoading, setBalanceLoading] = useState(false);
+    const userEditedPriceRef = useRef(false);
 
-    // Update price when currentPrice changes
+    // Update price when currentPrice or selectedSymbol changes
     useEffect(() => {
-        if (currentPrice && !price) {
-            setPrice(currentPrice.toFixed(2));
+        if (currentPrice) {
+            // Always update price when currentPrice changes, unless user manually edited it
+            // Reset the flag when symbol changes
+            if (!userEditedPriceRef.current) {
+                setPrice(currentPrice.toFixed(2));
+            }
+        } else {
+            setPrice("");
         }
-    }, [currentPrice, price]);
+    }, [currentPrice, selectedSymbol]);
+
+    // Reset user edited flag when symbol changes
+    useEffect(() => {
+        userEditedPriceRef.current = false;
+        if (currentPrice) {
+            setPrice(currentPrice.toFixed(2));
+        } else {
+            setPrice("");
+        }
+    }, [selectedSymbol, currentPrice]);
 
     // Reset percentage when side changes
     useEffect(() => {
@@ -255,6 +272,7 @@ export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced
     // Refresh price button
     const handleRefreshPrice = () => {
         if (currentPrice) {
+            userEditedPriceRef.current = false; // Reset flag when user clicks refresh
             setPrice(currentPrice.toFixed(2));
         }
     };
@@ -383,7 +401,10 @@ export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced
                         <input
                             type="number"
                             value={price}
-                            onChange={(e) => setPrice(e.target.value)}
+                            onChange={(e) => {
+                                userEditedPriceRef.current = true;
+                                setPrice(e.target.value);
+                            }}
                             placeholder="0.00"
                             style={{
                                 flex: 1,
