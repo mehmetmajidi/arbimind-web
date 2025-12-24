@@ -142,7 +142,7 @@ export default function LoginPage() {
                style={{
                     minHeight: "100vh",
                     display: "flex",
-                    backgroundColor: "#1a1a1a",
+                    backgroundColor: "#2a2a2a",
                     padding: "24px",
                     gap: "24px",
                }}
@@ -215,13 +215,13 @@ export default function LoginPage() {
                          display: "flex",
                          alignItems: "center",
                          justifyContent: "center",
-                         padding: "60px",
+                         padding: "40px",
                     }}
                >
                     <div
                          style={{
                               width: "100%",
-                              maxWidth: "400px",
+                              maxWidth: "360px",
                          }}
                     >
                          {/* Welcome Text */}
@@ -374,7 +374,7 @@ export default function LoginPage() {
                               {/* Forgot Password Link */}
                               <div style={{ marginBottom: "24px", textAlign: "right" }}>
                                    <Link
-                                        href="#"
+                                        href="/forgot-password"
                                         style={{
                                              color: "#888",
                                              fontSize: "14px",

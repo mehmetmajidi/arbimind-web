@@ -67,15 +67,8 @@ export default function MainChart({
     const currentPriceLineRef = useRef<ISeriesApi<"Line"> | null>(null);
     const previousPriceRef = useRef<number | null>(null);
     const drawingsRef = useRef<Array<{ id: string; primitive: unknown }>>([]);
-    
-    // Import series definitions dynamically
-    const getSeriesDefinitions = () => {
-        // These are available as constants in the library
-        return {
-            candlestick: "Candlestick" as const,
-            line: "Line" as const,
-        };
-    };
+    const oldestTimestampRef = useRef<number | null>(null);
+    const isLoadingRef = useRef<boolean>(false);
 
     const timeframes = [
         { value: "1m", label: "1M" },
@@ -1065,6 +1058,11 @@ export default function MainChart({
         });
     }, [selectedHorizons, predictions, ohlcvData]);
 
+    // Update ref when oldestTimestamp changes
+    useEffect(() => {
+        oldestTimestampRef.current = oldestTimestamp;
+    }, [oldestTimestamp]);
+
     // Update pagination listener when oldestTimestamp changes
     useEffect(() => {
         if (!chartRef.current || !onLoadMore) {
@@ -1074,17 +1072,13 @@ export default function MainChart({
         const chart = chartRef.current;
         let lastLoadTime = 0;
         const loadCooldown = 1000; // 1 second cooldown
-        let isLoading = false;
         
-        // Store current oldestTimestamp in closure
-        const currentOldestTimestamp = oldestTimestamp;
-        
-        if (!currentOldestTimestamp) {
+        if (!oldestTimestamp) {
             console.log("Pagination listener: No oldestTimestamp yet");
             return;
         }
         
-        console.log("Setting up pagination listener with oldestTimestamp:", currentOldestTimestamp);
+        console.log("Setting up pagination listener with oldestTimestamp:", oldestTimestamp);
         
         // Helper function to convert Time to number
         const timeToNumber = (time: Time): number => {
@@ -1107,12 +1101,14 @@ export default function MainChart({
                 return;
             }
             
-            if (loadingMore || isLoading) {
+            if (loadingMore || isLoadingRef.current) {
                 return;
             }
             
-            // Use the current oldestTimestamp from closure
-            if (!currentOldestTimestamp) {
+            // Get current oldestTimestamp from ref to ensure we have the latest value
+            // This avoids closure issues when oldestTimestamp changes
+            const currentOldest = oldestTimestampRef.current;
+            if (!currentOldest) {
                 return;
             }
             
@@ -1123,45 +1119,77 @@ export default function MainChart({
             
             const visibleStart = timeToNumber(timeRange.from);
             const visibleEnd = timeToNumber(timeRange.to);
-            const oldestVisible = currentOldestTimestamp;
+            const oldestVisible = currentOldest;
             const visibleRange = visibleEnd - visibleStart;
             
-            // Calculate threshold: trigger when user scrolls within 50% of the oldest data
-            // This makes it more sensitive to scrolling left
-            const threshold = oldestVisible - (visibleRange * 0.5);
+            // Normalize all timestamps to seconds
+            const oldestVisibleSeconds = oldestVisible > 1000000000000 ? oldestVisible / 1000 : oldestVisible;
+            const visibleStartSeconds = visibleStart > 1000000000000 ? visibleStart / 1000 : visibleStart;
+            const visibleRangeSeconds = visibleRange > 1000000000000 ? visibleRange / 1000 : visibleRange;
             
-            // Also check if visible start is very close to oldest (within 5% of range)
-            const closeThreshold = oldestVisible - (visibleRange * 0.05);
+            // Calculate threshold: trigger when user scrolls within 90% of the visible range from oldest data
+            // Very sensitive threshold to trigger loading early
+            const thresholdPercent = 0.9;
+            const thresholdSeconds = oldestVisibleSeconds - (visibleRangeSeconds * thresholdPercent);
             
-            // Trigger loading when visible start is before or near the oldest timestamp
-            if (visibleStart <= threshold || visibleStart <= closeThreshold) {
-                isLoading = true;
+            // Also trigger if user is very close to the oldest data (within 30% of range)
+            const closeThresholdPercent = 0.3;
+            const closeThresholdSeconds = oldestVisibleSeconds - (visibleRangeSeconds * closeThresholdPercent);
+            
+            // Debug logging
+            const distanceFromOldest = oldestVisibleSeconds - visibleStartSeconds;
+            const percentFromOldest = visibleRangeSeconds > 0 ? (distanceFromOldest / visibleRangeSeconds) * 100 : 0;
+            const shouldTrigger = visibleStartSeconds <= thresholdSeconds || visibleStartSeconds <= closeThresholdSeconds;
+            
+            // Only log when close to threshold to reduce console spam
+            if (percentFromOldest < 100 || shouldTrigger) {
+                console.log("Pagination check:", {
+                    visibleStart: visibleStartSeconds,
+                    oldest: oldestVisibleSeconds,
+                    distance: distanceFromOldest,
+                    percent: percentFromOldest.toFixed(1) + "%",
+                    threshold: thresholdSeconds,
+                    closeThreshold: closeThresholdSeconds,
+                    shouldTrigger: shouldTrigger,
+                    loadingMore: loadingMore,
+                    isLoading: isLoadingRef.current
+                });
+            }
+            
+            // Trigger loading when visible start is at or before the threshold
+            // This will trigger when user scrolls left or zooms out
+            if (shouldTrigger) {
+                isLoadingRef.current = true;
                 lastLoadTime = now;
-                console.log("🚀 Triggering load more. Visible start:", visibleStart, "Oldest:", oldestVisible, "Threshold:", threshold);
-                onLoadMore(currentOldestTimestamp);
+                console.log("🚀 Triggering load more. Visible start:", visibleStartSeconds, "Oldest:", oldestVisibleSeconds, "Threshold:", thresholdSeconds, "Close threshold:", closeThresholdSeconds, "Range:", visibleRangeSeconds);
+                // onLoadMore expects milliseconds
+                onLoadMore(Math.floor(oldestVisibleSeconds * 1000));
                 setTimeout(() => {
-                    isLoading = false;
+                    isLoadingRef.current = false;
                 }, 2000);
             }
         };
         
         // Subscribe to time range changes
+        // Note: subscribeVisibleTimeRangeChange returns void, not an unsubscribe function
+        // The listener will be cleaned up when the chart is destroyed or the effect re-runs
         chart.timeScale().subscribeVisibleTimeRangeChange(listener);
         
-        // Also set up a periodic check as fallback (every 2 seconds - reduced frequency)
+        // Also set up a periodic check as fallback (every 1 second for better responsiveness)
         const intervalId = setInterval(() => {
-            if (!chartRef.current || loadingMore || isLoading) return;
+            if (!chartRef.current || loadingMore || isLoadingRef.current) return;
             
             try {
                 const timeRange = chartRef.current.timeScale().getVisibleRange();
-                if (timeRange && timeRange.from && timeRange.to && currentOldestTimestamp) {
+                // Use ref to get latest oldestTimestamp
+                if (timeRange && timeRange.from && timeRange.to && oldestTimestampRef.current) {
                     listener(timeRange);
                 }
             } catch (e) {
                 // Chart might be destroyed
                 clearInterval(intervalId);
             }
-        }, 2000); // Reduced from 500ms to 2000ms to save resources
+        }, 1000); // Increased frequency to 1 second for better responsiveness
         
         // Store cleanup function
         paginationListenerRef.current = () => {
@@ -1172,6 +1200,8 @@ export default function MainChart({
         return () => {
             clearInterval(intervalId);
             paginationListenerRef.current = null;
+            // Note: subscribeVisibleTimeRangeChange doesn't return an unsubscribe function
+            // The listener will be cleaned up when the chart is destroyed
         };
     }, [oldestTimestamp, onLoadMore, loadingMore]);
 
@@ -1393,7 +1423,7 @@ export default function MainChart({
                 width: "100%",
                 backgroundColor: "#1a1a1a",
                 borderRadius: "12px",
-                padding: "20px",
+                padding: "13px",
                 border: "1px solid rgba(255, 174, 0, 0.2)",
                 display: "flex",
                 flexDirection: "column",
@@ -1403,7 +1433,7 @@ export default function MainChart({
             {/* Top Control Bar */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
                 {/* Left Side: Timeframe Selection and AI Horizons */}
-                <div style={{ display: "flex", gap: "16px", alignItems: "center", flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
                 {/* Timeframe Selection */}
                 <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
                     {timeframes.map((tf) => (

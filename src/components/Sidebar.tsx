@@ -78,8 +78,8 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
           window.location.href = "/";
      };
 
-     // Don't show sidebar on login/register pages
-     if (pathname === "/login" || pathname === "/register" || !isAuthenticated) {
+     // Don't show sidebar on login/register/forgot-password/reset-password pages
+     if (pathname === "/login" || pathname === "/register" || pathname === "/forgot-password" || pathname === "/reset-password" || !isAuthenticated) {
           return null;
      }
 

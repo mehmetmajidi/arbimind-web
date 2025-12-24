@@ -15,7 +15,7 @@ interface Balance {
 }
 
 export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced }: OrderPanelProps) {
-    const { selectedAccountId } = useExchange();
+    const { selectedAccountId, accounts } = useExchange();
     const [orderType, setOrderType] = useState<"market" | "limit" | "stop">("limit");
     const [side, setSide] = useState<"buy" | "sell">("buy");
     const [price, setPrice] = useState<string>("");
@@ -26,6 +26,13 @@ export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced
     const [placingOrder, setPlacingOrder] = useState(false);
     const [balance, setBalance] = useState<Balance | null>(null);
     const [balanceLoading, setBalanceLoading] = useState(false);
+    const [tradingPermission, setTradingPermission] = useState<{
+        has_trading_permission: boolean;
+        message: string;
+        exchange_name?: string;
+        details?: Record<string, unknown>;
+    } | null>(null);
+    const [checkingPermission, setCheckingPermission] = useState(false);
     const userEditedPriceRef = useRef(false);
 
     // Update price when currentPrice or selectedSymbol changes
@@ -120,6 +127,53 @@ export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced
     useEffect(() => {
         fetchBalance();
     }, [fetchBalance]);
+
+    // Check trading permissions
+    const checkTradingPermissions = useCallback(async () => {
+        if (!selectedAccountId) {
+            setTradingPermission(null);
+            return;
+        }
+
+        setCheckingPermission(true);
+        try {
+            const token = localStorage.getItem("auth_token") || "";
+            if (!token) {
+                setTradingPermission(null);
+                setCheckingPermission(false);
+                return;
+            }
+
+            const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+            const response = await fetch(`${apiUrl}/exchange/accounts/${selectedAccountId}/trading-permissions`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                setTradingPermission(data);
+            } else {
+                // If check fails, assume no permission (conservative approach)
+                setTradingPermission({
+                    has_trading_permission: false,
+                    message: "Unable to verify trading permissions",
+                });
+            }
+        } catch (error) {
+            console.error("Error checking trading permissions:", error);
+            setTradingPermission({
+                has_trading_permission: false,
+                message: "Error checking trading permissions",
+            });
+        } finally {
+            setCheckingPermission(false);
+        }
+    }, [selectedAccountId]);
+
+    useEffect(() => {
+        checkTradingPermissions();
+    }, [checkTradingPermissions]);
 
     // Re-fetch balance when symbol changes
     useEffect(() => {
@@ -298,6 +352,114 @@ export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced
     }
 
     const [base, quote] = selectedSymbol.split("/");
+
+    // Get exchange name from accounts
+    const selectedAccount = accounts.find(acc => acc.id === selectedAccountId);
+    const exchangeName = selectedAccount?.exchange_name || "exchange";
+
+    // Map exchange names to their API settings URLs
+    const exchangeSettingsUrls: Record<string, string> = {
+        binance: "https://www.binance.com/en/my/settings/api-management",
+        coinbase: "https://www.coinbase.com/settings/api",
+        btcturk: "https://www.btcturk.com/api-keys",
+        bingx: "https://bingx.com/en-us/user/api",
+        kraken: "https://www.kraken.com/u/security/api",
+        okx: "https://www.okx.com/account/my-api",
+        bitfinex: "https://www.bitfinex.com/api",
+        bitstamp: "https://www.bitstamp.net/account/security/api-keys/",
+        bybit: "https://www.bybit.com/app/user/api-management",
+        gate: "https://www.gate.io/myaccount/myapikeys",
+        huobi: "https://www.huobi.com/support/en-us/detail/360000402491",
+        kucoin: "https://www.kucoin.com/account/api",
+    };
+
+    const settingsUrl = exchangeSettingsUrls[exchangeName.toLowerCase()] || `https://www.google.com/search?q=${exchangeName}+api+key+settings`;
+
+    // Show permission check message if trading is not allowed
+    if (checkingPermission) {
+        return (
+            <div style={{
+                padding: "12px",
+                backgroundColor: "#1a1a1a",
+                borderRadius: "10px",
+                border: "1px solid rgba(255, 174, 0, 0.2)",
+                textAlign: "center",
+            }}>
+                <div style={{ color: "#FFAE00", fontSize: "12px", marginBottom: "8px" }}>
+                    Checking trading permissions...
+                </div>
+            </div>
+        );
+    }
+
+    if (tradingPermission && !tradingPermission.has_trading_permission) {
+        const suggestion = tradingPermission.details?.suggestion;
+        const suggestionText = typeof suggestion === "string" ? suggestion : null;
+        
+        return (
+            <div style={{
+                padding: "20px",
+                backgroundColor: "#1a1a1a",
+                borderRadius: "10px",
+                border: "1px solid rgba(255, 174, 0, 0.2)",
+                textAlign: "center",
+            }}>
+                <div style={{ 
+                    color: "#ef4444", 
+                    fontSize: "16px", 
+                    fontWeight: "600",
+                    marginBottom: "12px",
+                }}>
+                    ⚠️ Trading Permission Required
+                </div>
+                <div style={{ 
+                    color: "#888", 
+                    fontSize: "12px", 
+                    marginBottom: "16px",
+                    lineHeight: "1.5",
+                }}>
+                    {tradingPermission.message || "Your API key does not have trading (buy/sell) permissions enabled."}
+                </div>
+                {suggestionText && (
+                    <div style={{ 
+                        color: "#FFAE00", 
+                        fontSize: "11px", 
+                        marginBottom: "16px",
+                        padding: "8px",
+                        backgroundColor: "rgba(255, 174, 0, 0.1)",
+                        borderRadius: "6px",
+                    }}>
+                        💡 {suggestionText}
+                    </div>
+                )}
+                <a
+                    href={settingsUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                        display: "inline-block",
+                        padding: "10px 20px",
+                        backgroundColor: "#FFAE00",
+                        color: "#1a1a1a",
+                        borderRadius: "6px",
+                        fontSize: "13px",
+                        fontWeight: "600",
+                        textDecoration: "none",
+                        transition: "all 0.2s ease",
+                        cursor: "pointer",
+                    }}
+                    onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = "#ffc233";
+                    }}
+                    onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = "#FFAE00";
+                    }}
+                >
+                    Enable Trading in {exchangeName.charAt(0).toUpperCase() + exchangeName.slice(1)} Settings
+                </a>
+            </div>
+        );
+    }
 
     return (
         <div style={{

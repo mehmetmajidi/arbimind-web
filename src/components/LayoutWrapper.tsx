@@ -7,7 +7,7 @@ import Header from "./Header";
 
 export default function LayoutWrapper({ children }: { children: React.ReactNode }) {
     const pathname = usePathname();
-    const isAuthPage = pathname === "/login" || pathname === "/register";
+    const isAuthPage = pathname === "/login" || pathname === "/register" || pathname === "/forgot-password" || pathname === "/reset-password";
     
     // Load sidebar state from localStorage or default to false (expanded)
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -40,7 +40,7 @@ export default function LayoutWrapper({ children }: { children: React.ReactNode 
             <div
                 style={{
                     marginLeft: sidebarWidth,
-                    paddingTop: "70px",
+                    paddingTop: "68px",
                     minHeight: "100vh",
                     backgroundColor: "#202020",
                     transition: "margin-left 0.3s ease",

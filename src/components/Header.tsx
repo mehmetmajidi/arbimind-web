@@ -15,7 +15,7 @@ interface HeaderProps {
 export default function Header({ sidebarWidth, onToggleSidebar, isSidebarCollapsed }: HeaderProps) {
     const { accounts, selectedAccountId, setSelectedAccountId, loading } = useExchange();
     const pathname = usePathname();
-    const isAuthPage = pathname === "/login" || pathname === "/register";
+    const isAuthPage = pathname === "/login" || pathname === "/register" || pathname === "/forgot-password" || pathname === "/reset-password";
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -60,7 +60,7 @@ export default function Header({ sidebarWidth, onToggleSidebar, isSidebarCollaps
                 top: 0,
                 left: sidebarWidth,
                 right: 0,
-                height: "70px",
+                height: "60px",
                 backgroundColor: "#1a1a1a",
                 borderBottom: "1px solid rgba(255, 174, 0, 0.2)",
                 display: "flex",

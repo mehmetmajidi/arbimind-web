@@ -157,6 +157,7 @@ export default function MarketPage() {
                 "1m": 60 * 1000,
                 "5m": 5 * 60 * 1000,
                 "15m": 15 * 60 * 1000,
+                "30m": 30 * 60 * 1000,
                 "1h": 60 * 60 * 1000,
                 "4h": 4 * 60 * 60 * 1000,
                 "1d": 24 * 60 * 60 * 1000,
@@ -167,7 +168,9 @@ export default function MarketPage() {
             let currentSince: number | null = null;
             let fetchedCount = 0;
             let attempts = 0;
-            const maxAttempts = 5; // Prevent infinite loops
+            const maxAttempts = 10; // Increased to allow more attempts, but with better termination
+            let previousCount = 0; // Track previous count to detect if we're making progress
+            let noProgressCount = 0; // Count consecutive attempts with no progress
             
             while (fetchedCount < targetCandles && attempts < maxAttempts) {
                 attempts++;
@@ -178,65 +181,99 @@ export default function MarketPage() {
                     ? `${apiUrl}/market/ohlcv-from-exchange/${selectedAccountId}/${encodedSymbol}?timeframe=${timeframe}&limit=${requestLimit}&since=${currentSince}`
                     : `${apiUrl}/market/ohlcv-from-exchange/${selectedAccountId}/${encodedSymbol}?timeframe=${timeframe}&limit=${requestLimit}`;
                 
-                console.log(`Fetching batch ${attempts}: limit=${requestLimit}, since=${currentSince || 'null'}`);
+                console.log(`Fetching batch ${attempts}: limit=${requestLimit}, since=${currentSince || 'null'}, currentCount=${fetchedCount}`);
                 
-                const response: Response = await fetch(url, {
-                    headers: { Authorization: `Bearer ${token}` },
-                    cache: "no-cache",
-                });
-                
-                if (!response.ok) {
-                    console.error(`Failed to fetch batch ${attempts}:`, response.status);
-                    break;
-                }
-                
-                const data: {candles?: Array<{t: number; o: number; h: number; l: number; c: number; v: number}>} = await response.json();
-                const candles: Array<{t: number; o: number; h: number; l: number; c: number; v: number}> = data.candles || [];
-                console.log(`Batch ${attempts} received:`, {
-                    count: candles.length,
-                    firstCandle: candles[0],
-                    lastCandle: candles[candles.length - 1],
-                });
-                
-                if (candles.length === 0) {
-                    console.log("No more candles available");
-                    break;
-                }
-                
-                // Sort candles by timestamp
-                const sortedCandles: Array<{t: number; o: number; h: number; l: number; c: number; v: number}> = [...candles].sort((a, b) => {
-                    const timeA = a.t > 1000000000000 ? a.t / 1000 : a.t;
-                    const timeB = b.t > 1000000000000 ? b.t / 1000 : b.t;
-                    return timeA - timeB;
-                });
-                
-                // Add to all candles (avoid duplicates)
-                for (const candle of sortedCandles) {
-                    const candleTime = candle.t > 1000000000000 ? candle.t / 1000 : candle.t;
-                    const exists = allCandles.some(c => {
-                        const cTime = c.t > 1000000000000 ? c.t / 1000 : c.t;
-                        return cTime === candleTime;
+                try {
+                    const response: Response = await fetch(url, {
+                        headers: { Authorization: `Bearer ${token}` },
+                        cache: "no-cache",
                     });
-                    if (!exists) {
-                        allCandles.push(candle);
+                    
+                    if (!response.ok) {
+                        console.error(`Failed to fetch batch ${attempts}:`, response.status);
+                        break;
                     }
-                }
-                
-                fetchedCount = allCandles.length;
-                
-                // If we got fewer candles than requested, we've reached the limit
-                if (candles.length < requestLimit) {
-                    console.log(`Received ${candles.length} candles (less than requested ${requestLimit}), stopping`);
-                    break;
-                }
-                
-                // Prepare for next request: go back from the oldest candle
-                if (sortedCandles.length > 0) {
-                    const oldest: number = sortedCandles[0].t;
-                    const oldestTime: number = oldest > 1000000000000 ? oldest / 1000 : oldest;
-                    const oldestTimestampMs: number = oldestTime * 1000;
-                    currentSince = oldestTimestampMs - (requestLimit * timeframeDuration);
-                } else {
+                    
+                    const data: {candles?: Array<{t: number; o: number; h: number; l: number; c: number; v: number}>} = await response.json();
+                    const candles: Array<{t: number; o: number; h: number; l: number; c: number; v: number}> = data.candles || [];
+                    console.log(`Batch ${attempts} received:`, {
+                        count: candles.length,
+                        firstCandle: candles[0] ? {t: candles[0].t} : null,
+                        lastCandle: candles[candles.length - 1] ? {t: candles[candles.length - 1].t} : null,
+                    });
+                    
+                    if (candles.length === 0) {
+                        console.log("No more candles available");
+                        break;
+                    }
+                    
+                    // Sort candles by timestamp
+                    const sortedCandles: Array<{t: number; o: number; h: number; l: number; c: number; v: number}> = [...candles].sort((a, b) => {
+                        const timeA = a.t > 1000000000000 ? a.t / 1000 : a.t;
+                        const timeB = b.t > 1000000000000 ? b.t / 1000 : b.t;
+                        return timeA - timeB;
+                    });
+                    
+                    // Add to all candles (avoid duplicates)
+                    let newCandlesAdded = 0;
+                    for (const candle of sortedCandles) {
+                        const candleTime = candle.t > 1000000000000 ? candle.t / 1000 : candle.t;
+                        const exists = allCandles.some(c => {
+                            const cTime = c.t > 1000000000000 ? c.t / 1000 : c.t;
+                            return cTime === candleTime;
+                        });
+                        if (!exists) {
+                            allCandles.push(candle);
+                            newCandlesAdded++;
+                        }
+                    }
+                    
+                    fetchedCount = allCandles.length;
+                    
+                    // Check if we made progress
+                    if (fetchedCount === previousCount) {
+                        noProgressCount++;
+                        console.warn(`No progress made in batch ${attempts}. No progress count: ${noProgressCount}`);
+                        // If we've had 2 consecutive attempts with no progress, we're likely stuck
+                        if (noProgressCount >= 2) {
+                            console.log("Stopping: No progress made in last 2 attempts. Likely reached data limit or getting duplicate data.");
+                            break;
+                        }
+                    } else {
+                        noProgressCount = 0; // Reset counter if we made progress
+                    }
+                    previousCount = fetchedCount;
+                    
+                    // If we got fewer candles than requested, we've likely reached the limit
+                    if (candles.length < requestLimit) {
+                        console.log(`Received ${candles.length} candles (less than requested ${requestLimit}), stopping`);
+                        break;
+                    }
+                    
+                    // If we didn't add any new candles, we're getting duplicates - stop
+                    if (newCandlesAdded === 0) {
+                        console.log("No new candles added (all duplicates), stopping");
+                        break;
+                    }
+                    
+                    // Prepare for next request: go back from the oldest candle
+                    if (sortedCandles.length > 0) {
+                        const oldest: number = sortedCandles[0].t;
+                        const oldestTime: number = oldest > 1000000000000 ? oldest / 1000 : oldest;
+                        const oldestTimestampMs: number = oldestTime * 1000;
+                        // Go back by the number of candles we actually got (not requested)
+                        currentSince = oldestTimestampMs - (candles.length * timeframeDuration);
+                        
+                        // Safety check: if currentSince is not progressing backward, we might be stuck
+                        if (currentSince >= oldestTimestampMs) {
+                            console.warn("currentSince is not progressing backward, stopping to prevent infinite loop");
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                } catch (error) {
+                    console.error(`Error fetching batch ${attempts}:`, error);
                     break;
                 }
             }
@@ -777,22 +814,31 @@ export default function MarketPage() {
             };
             
             const timeframeDuration = timeframeMs[timeframe] || 60 * 60 * 1000;
-            // Calculate start time: go back 100 candles from oldest timestamp
+            // Calculate start time: go back from oldest timestamp
             // beforeTimestamp is in seconds, convert to milliseconds
             const beforeTimestampMs = beforeTimestamp > 1000000000000 ? beforeTimestamp : beforeTimestamp * 1000;
             // Go back 300 candles worth of time (Coinbase max per request)
+            // Use the oldest timestamp as the 'end' point, and go back from there
             const sinceMs = beforeTimestampMs - (300 * timeframeDuration);
+            
+            // Ensure sinceMs is not negative or too far in the past
+            const minSinceMs = Date.now() - (365 * 24 * 60 * 60 * 1000); // Max 1 year back
+            const finalSinceMs = Math.max(sinceMs, minSinceMs);
             
             console.log("FetchMore params:", {
                 beforeTimestamp,
                 beforeTimestampMs,
                 timeframeDuration,
-                sinceMs,
+                sinceMs: finalSinceMs,
                 timeframe,
+                oldestTimestamp: beforeTimestampMs,
             });
 
             // Use new endpoint that gets candles directly from selected exchange (no prioritization)
-            const response = await fetch(`${apiUrl}/market/ohlcv-from-exchange/${selectedAccountId}/${encodedSymbol}?timeframe=${timeframe}&limit=300&since=${sinceMs}`, {
+            // Request candles from sinceMs to beforeTimestampMs
+            // Note: The API will return candles from sinceMs up to (but not including) the current time
+            // We need to fetch candles that are older than beforeTimestampMs
+            const response = await fetch(`${apiUrl}/market/ohlcv-from-exchange/${selectedAccountId}/${encodedSymbol}?timeframe=${timeframe}&limit=300&since=${finalSinceMs}`, {
                 headers: { Authorization: `Bearer ${token}` },
                 cache: "no-cache",
             });
@@ -807,8 +853,22 @@ export default function MarketPage() {
                 });
                 
                 if (newCandles.length > 0) {
-                    // Sort new candles by timestamp
-                    const sortedNewCandles = [...newCandles].sort((a, b) => {
+                    // Filter out candles that are newer than or equal to the current oldest timestamp
+                    // We only want candles that are older than what we already have
+                    const beforeTimestampSeconds = beforeTimestamp > 1000000000000 ? beforeTimestamp / 1000 : beforeTimestamp;
+                    const filteredNewCandles = newCandles.filter((candle: OHLCVCandle) => {
+                        const candleTime = candle.t > 1000000000000 ? candle.t / 1000 : candle.t;
+                        return candleTime < beforeTimestampSeconds;
+                    });
+                    
+                    if (filteredNewCandles.length === 0) {
+                        console.log("⚠️ All fetched candles are newer than oldest timestamp. No more historical data available.");
+                        setLoadingMore(false);
+                        return;
+                    }
+                    
+                    // Sort new candles by timestamp (oldest first)
+                    const sortedNewCandles = [...filteredNewCandles].sort((a, b) => {
                         const timeA = a.t > 1000000000000 ? a.t / 1000 : a.t;
                         const timeB = b.t > 1000000000000 ? b.t / 1000 : b.t;
                         return timeA - timeB;
@@ -835,6 +895,8 @@ export default function MarketPage() {
                             before: prevData.length,
                             new: sortedNewCandles.length,
                             after: unique.length,
+                            oldestNew: sortedNewCandles[0] ? (sortedNewCandles[0].t > 1000000000000 ? sortedNewCandles[0].t / 1000 : sortedNewCandles[0].t) : null,
+                            oldestPrev: prevData[0] ? (prevData[0].t > 1000000000000 ? prevData[0].t / 1000 : prevData[0].t) : null,
                         });
                         return unique;
                     });

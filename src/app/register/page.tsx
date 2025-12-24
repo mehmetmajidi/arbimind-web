@@ -120,7 +120,7 @@ export default function RegisterPage() {
             style={{
                 minHeight: "100vh",
                 display: "flex",
-                backgroundColor: "#1a1a1a",
+                backgroundColor: "#2a2a2a",
                 padding: "24px",
                 gap: "24px",
             }}
@@ -193,13 +193,13 @@ export default function RegisterPage() {
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    padding: "60px",
+                    padding: "40px",
                 }}
             >
                 <div
                     style={{
                         width: "100%",
-                        maxWidth: "400px",
+                        maxWidth: "360px",
                     }}
                 >
                     {/* Welcome Text */}
