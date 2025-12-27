@@ -28,6 +28,18 @@ const getHeaders = (): HeadersInit => {
     };
 };
 
+const handleAuthError = (response: Response): void => {
+    if (response.status === 401) {
+        // Token expired or invalid - redirect to login
+        localStorage.removeItem("auth_token");
+        localStorage.removeItem("selectedAccountId");
+        window.dispatchEvent(new Event("authTokenRemoved"));
+        if (typeof window !== "undefined") {
+            window.location.href = "/login";
+        }
+    }
+};
+
 /**
  * Get list of all training jobs
  */
@@ -38,6 +50,7 @@ export async function getTrainingJobs(): Promise<{ jobs: TrainingJob[] }> {
     });
 
     if (!response.ok) {
+        handleAuthError(response);
         const error = await response.json().catch(() => ({ detail: "Failed to fetch training jobs" }));
         throw new Error(error.detail || "Failed to fetch training jobs");
     }
@@ -58,6 +71,7 @@ export async function startTraining(
     });
 
     if (!response.ok) {
+        handleAuthError(response);
         const error = await response.json().catch(() => ({ detail: "Failed to start training" }));
         throw new Error(error.detail || "Failed to start training");
     }
@@ -75,6 +89,7 @@ export async function cancelTraining(jobId: string): Promise<{ message: string }
     });
 
     if (!response.ok) {
+        handleAuthError(response);
         const error = await response.json().catch(() => ({ detail: "Failed to cancel training job" }));
         throw new Error(error.detail || "Failed to cancel training job");
     }
@@ -95,6 +110,7 @@ export async function getJobLogs(
     });
 
     if (!response.ok) {
+        handleAuthError(response);
         const error = await response.json().catch(() => ({ detail: "Failed to fetch job logs" }));
         throw new Error(error.detail || "Failed to fetch job logs");
     }
@@ -112,6 +128,7 @@ export async function getTrainingJobStatus(jobId: string): Promise<TrainingJob> 
     });
 
     if (!response.ok) {
+        handleAuthError(response);
         const error = await response.json().catch(() => ({ detail: "Failed to fetch job status" }));
         throw new Error(error.detail || "Failed to fetch job status");
     }
@@ -129,6 +146,7 @@ export async function getPeriodicStatus(): Promise<PeriodicRetrainStatus> {
     });
 
     if (!response.ok) {
+        handleAuthError(response);
         const error = await response.json().catch(() => ({ detail: "Failed to fetch periodic status" }));
         throw new Error(error.detail || "Failed to fetch periodic status");
     }
@@ -150,6 +168,7 @@ export async function getFilterStatus(
     });
 
     if (!response.ok) {
+        handleAuthError(response);
         const error = await response.json().catch(() => ({ detail: "Failed to fetch filter status" }));
         throw new Error(error.detail || "Failed to fetch filter status");
     }
@@ -202,6 +221,7 @@ export async function getAvailableModels(): Promise<{ models: Model[] }> {
     });
 
     if (!response.ok) {
+        handleAuthError(response);
         const error = await response.json().catch(() => ({ detail: "Failed to fetch models" }));
         throw new Error(error.detail || "Failed to fetch models");
     }
@@ -220,6 +240,7 @@ export async function retrainModel(modelVersion: string): Promise<StartTrainingR
     });
 
     if (!response.ok) {
+        handleAuthError(response);
         const error = await response.json().catch(() => ({ detail: "Failed to retrain model" }));
         throw new Error(error.detail || "Failed to retrain model");
     }
@@ -237,6 +258,7 @@ export async function triggerPeriodicRetrain(tier: number = 1): Promise<{ status
     });
 
     if (!response.ok) {
+        handleAuthError(response);
         const error = await response.json().catch(() => ({ detail: "Failed to trigger periodic retraining" }));
         throw new Error(error.detail || "Failed to trigger periodic retraining");
     }

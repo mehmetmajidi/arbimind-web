@@ -68,19 +68,6 @@ export default function TrainingControlsPanel({
         }
     };
 
-    const handleProcessQueue = async () => {
-        try {
-            const token = getAuthToken();
-            if (!token) return;
-
-            // Process queue - refresh status after a moment
-            setTimeout(() => {
-                fetchStatus();
-            }, 1000);
-        } catch (err) {
-            console.error("Error processing queue:", err);
-        }
-    };
 
     return (
         <div style={{
@@ -224,67 +211,6 @@ export default function TrainingControlsPanel({
                             </span>
                         </div>
                     </div>
-                )}
-            </div>
-
-            {/* Queue Status Card */}
-            <div style={{
-                padding: "12px",
-                backgroundColor: "#202020",
-                borderRadius: "8px",
-                border: "1px solid rgba(255, 174, 0, 0.1)",
-            }}>
-                <h4 style={{ color: "#FFAE00", margin: "0 0 12px 0", fontSize: "14px", fontWeight: "600" }}>
-                    Training Queue
-                </h4>
-                {loading ? (
-                    <div style={{ color: "#888", fontSize: "11px" }}>Loading...</div>
-                ) : (
-                    <>
-                        <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "12px" }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px" }}>
-                                <span style={{ color: "#888" }}>Pending:</span>
-                                <span style={{ color: "#f59e0b", fontWeight: "600" }}>
-                                    {periodicStatus?.queue?.pending || 0}
-                                </span>
-                            </div>
-                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px" }}>
-                                <span style={{ color: "#888" }}>Running:</span>
-                                <span style={{ color: "#FFAE00", fontWeight: "600" }}>
-                                    {periodicStatus?.queue?.running || 0}
-                                </span>
-                            </div>
-                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px" }}>
-                                <span style={{ color: "#888" }}>Max concurrent:</span>
-                                <span style={{ color: "#ededed" }}>
-                                    {periodicStatus?.queue?.max_concurrent || 3}
-                                </span>
-                            </div>
-                        </div>
-                        <button
-                            onClick={handleProcessQueue}
-                            style={{
-                                width: "100%",
-                                padding: "6px 12px",
-                                backgroundColor: "rgba(255, 174, 0, 0.1)",
-                                color: "#FFAE00",
-                                border: "1px solid rgba(255, 174, 0, 0.3)",
-                                borderRadius: "6px",
-                                fontSize: "11px",
-                                fontWeight: "600",
-                                cursor: "pointer",
-                                transition: "all 0.2s ease",
-                            }}
-                            onMouseEnter={(e) => {
-                                e.currentTarget.style.backgroundColor = "rgba(255, 174, 0, 0.2)";
-                            }}
-                            onMouseLeave={(e) => {
-                                e.currentTarget.style.backgroundColor = "rgba(255, 174, 0, 0.1)";
-                            }}
-                        >
-                            Process Queue
-                        </button>
-                    </>
                 )}
             </div>
 
