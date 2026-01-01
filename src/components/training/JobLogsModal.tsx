@@ -1,21 +1,24 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { MdClose, MdDownload, MdSearch, MdExpandMore, MdExpandLess } from "react-icons/md";
-import { getJobLogs } from "@/lib/trainingApi";
+import { MdClose, MdDownload, MdSearch, MdExpandMore, MdExpandLess, MdInfo } from "react-icons/md";
+import { getJobLogs, getTrainingJobStatus } from "@/lib/trainingApi";
+import type { TrainingJob } from "@/types/training";
 
 interface JobLogsModalProps {
     isOpen: boolean;
     onClose: () => void;
     jobId: string;
     autoRefresh?: boolean;
+    setSelectedJobForLogs?: (jobId: string) => void;
 }
 
 export default function JobLogsModal({ 
     isOpen, 
     onClose, 
     jobId,
-    autoRefresh = true 
+    autoRefresh = true,
+    setSelectedJobForLogs
 }: JobLogsModalProps) {
     const [logs, setLogs] = useState<string>("");
     const [loading, setLoading] = useState(true);
@@ -23,6 +26,8 @@ export default function JobLogsModal({
     const [autoScroll, setAutoScroll] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
     const [expanded, setExpanded] = useState(true);
+    const [showJobInfo, setShowJobInfo] = useState(false);
+    const [jobInfo, setJobInfo] = useState<TrainingJob | null>(null);
     const logContainerRef = useRef<HTMLDivElement>(null);
     const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -43,12 +48,22 @@ export default function JobLogsModal({
         }
     }, [jobId]);
 
+    const fetchJobInfo = useCallback(async () => {
+        try {
+            const info = await getTrainingJobStatus(jobId);
+            setJobInfo(info);
+        } catch (err) {
+            console.error("Error fetching job info:", err);
+        }
+    }, [jobId]);
+
     useEffect(() => {
         if (isOpen && jobId) {
             setLoading(true);
             fetchLogs();
+            fetchJobInfo();
         }
-    }, [isOpen, jobId, fetchLogs]);
+    }, [isOpen, jobId, fetchLogs, fetchJobInfo]);
 
     // Auto-refresh for running jobs
     useEffect(() => {
@@ -164,6 +179,22 @@ export default function JobLogsModal({
                             Job Logs: {jobId.substring(0, 8)}...
                         </h2>
                         <button
+                            onClick={() => setShowJobInfo(!showJobInfo)}
+                            style={{
+                                background: "none",
+                                border: "none",
+                                color: showJobInfo ? "#FFAE00" : "#888",
+                                cursor: "pointer",
+                                padding: "4px",
+                                display: "flex",
+                                alignItems: "center",
+                                transition: "color 0.2s",
+                            }}
+                            title="Show job information"
+                        >
+                            <MdInfo size={20} />
+                        </button>
+                        <button
                             onClick={() => setExpanded(!expanded)}
                             style={{
                                 background: "none",
@@ -216,6 +247,91 @@ export default function JobLogsModal({
                         </button>
                     </div>
                 </div>
+
+                {/* Job Info */}
+                {showJobInfo && jobInfo && (
+                    <div style={{
+                        padding: "16px 20px",
+                        borderBottom: "1px solid #2a2a2a",
+                        backgroundColor: "rgba(255, 174, 0, 0.05)",
+                    }}>
+                        <div style={{ 
+                            display: "grid", 
+                            gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", 
+                            gap: "12px",
+                            fontSize: "12px",
+                        }}>
+                            {jobInfo.symbol && (
+                                <div>
+                                    <div style={{ color: "#888", fontSize: "10px", marginBottom: "4px" }}>Symbol</div>
+                                    <div style={{ color: "#FFAE00", fontWeight: "600" }}>{jobInfo.symbol}</div>
+                                </div>
+                            )}
+                            {jobInfo.model_type && (
+                                <div>
+                                    <div style={{ color: "#888", fontSize: "10px", marginBottom: "4px" }}>Model Type</div>
+                                    <div style={{ color: "#ededed" }}>{jobInfo.model_type}</div>
+                                </div>
+                            )}
+                            {jobInfo.horizon && (
+                                <div>
+                                    <div style={{ color: "#888", fontSize: "10px", marginBottom: "4px" }}>Horizon</div>
+                                    <div style={{ color: "#ededed" }}>{jobInfo.horizon}</div>
+                                </div>
+                            )}
+                            {jobInfo.checkpoint_path && (
+                                <div style={{ gridColumn: "1 / -1" }}>
+                                    <div style={{ color: "#888", fontSize: "10px", marginBottom: "4px" }}>Checkpoint Path</div>
+                                    <div style={{ 
+                                        color: "#22c55e", 
+                                        fontFamily: "monospace", 
+                                        fontSize: "11px",
+                                        wordBreak: "break-all",
+                                        backgroundColor: "rgba(34, 197, 94, 0.1)",
+                                        padding: "6px 8px",
+                                        borderRadius: "4px",
+                                    }}>
+                                        {jobInfo.checkpoint_path}
+                                    </div>
+                                </div>
+                            )}
+                            {jobInfo.parent_job_id && (
+                                <div style={{ gridColumn: "1 / -1" }}>
+                                    <div style={{ color: "#888", fontSize: "10px", marginBottom: "4px" }}>Parent Job</div>
+                                    <div style={{ 
+                                        color: "#3b82f6", 
+                                        fontFamily: "monospace", 
+                                        fontSize: "11px",
+                                        backgroundColor: "rgba(59, 130, 246, 0.1)",
+                                        padding: "6px 8px",
+                                        borderRadius: "4px",
+                                        display: "inline-block",
+                                        cursor: "pointer",
+                                    }}
+                                    onClick={() => {
+                                        setSelectedJobForLogs?.(jobInfo.parent_job_id!);
+                                        setShowJobInfo(false);
+                                    }}
+                                    title="Click to view parent job logs"
+                                    >
+                                        {jobInfo.parent_job_id}
+                                    </div>
+                                    <div style={{ color: "#888", fontSize: "10px", marginTop: "4px" }}>
+                                        This job was resumed from the parent job above
+                                    </div>
+                                </div>
+                            )}
+                            {jobInfo.paused_at && (
+                                <div>
+                                    <div style={{ color: "#888", fontSize: "10px", marginBottom: "4px" }}>Paused At</div>
+                                    <div style={{ color: "#f59e0b" }}>
+                                        {new Date(jobInfo.paused_at).toLocaleString()}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
 
                 {/* Controls */}
                 {expanded && (

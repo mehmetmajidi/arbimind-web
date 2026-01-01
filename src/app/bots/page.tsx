@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
-  BotFiltersPanel,
   BotStatsPanel,
   BotListTable,
   BotDetailsPanel,
@@ -17,6 +16,7 @@ import {
   layoutStyle,
   mainLayoutStyle,
 } from "@/components/bots";
+import FiltersModal from "@/components/bots/FiltersModal";
 
 /**
  * Trading Bots Management Page
@@ -70,6 +70,9 @@ export default function BotsPage() {
   
   // Edit Bot Form state
   const [editingBot, setEditingBot] = useState<TradingBot | null>(null);
+  
+  // Filters Modal state
+  const [showFiltersModal, setShowFiltersModal] = useState(false);
 
   // Fetch bots
   const fetchBots = useCallback(async () => {
@@ -467,6 +470,55 @@ export default function BotsPage() {
         
         <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
           {/* Refresh Button */}
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            {/* Search Input */}
+            <input
+              type="text"
+              placeholder="Search by name..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{
+                padding: "8px 12px",
+                backgroundColor: colors.panelBackground,
+                border: `1px solid ${colors.border}`,
+                borderRadius: "8px",
+                color: colors.text,
+                fontSize: "14px",
+                minWidth: "200px",
+              }}
+            />
+            
+            {/* Filters Button */}
+            <button
+              onClick={() => setShowFiltersModal(true)}
+              style={{
+                padding: "8px 16px",
+                backgroundColor: colors.panelBackground,
+                border: `1px solid ${colors.border}`,
+                borderRadius: "8px",
+                color: colors.text,
+                cursor: "pointer",
+                fontSize: "14px",
+                fontWeight: "500",
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                transition: "all 0.2s",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = "rgba(255, 174, 0, 0.1)";
+                e.currentTarget.style.borderColor = colors.primary;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = colors.panelBackground;
+                e.currentTarget.style.borderColor = colors.border;
+              }}
+            >
+              <span>🔍</span>
+              Filters
+            </button>
+            
+          {/* Refresh Button */}
           <button
             onClick={() => {
               fetchBots();
@@ -476,7 +528,7 @@ export default function BotsPage() {
               }
             }}
             style={{
-              padding: "10px 16px",
+                padding: "8px 16px",
               backgroundColor: colors.panelBackground,
               border: `1px solid ${colors.border}`,
               borderRadius: "8px",
@@ -501,13 +553,11 @@ export default function BotsPage() {
             <span>🔄</span>
             Refresh
           </button>
+          </div>
           
           {/* Create Bot Button */}
           <button
-            onClick={() => {
-              // TODO: Open create bot form
-              console.log("Create bot clicked");
-            }}
+            onClick={() => setShowCreateForm(true)}
             style={{
               padding: "10px 20px",
               backgroundColor: colors.primary,
@@ -549,7 +599,7 @@ export default function BotsPage() {
 
       {/* Main Layout - Full Width Layout Pattern */}
       <div style={mainLayoutStyle}>
-        {/* Left Panel - Filters & Stats */}
+        {/* Left Panel - Stats */}
         <div style={{
           width: "320px",
           flexShrink: 0,
@@ -557,50 +607,8 @@ export default function BotsPage() {
           flexDirection: "column",
           gap: "12px",
         }}>
-          {/* Filters Panel */}
-          <BotFiltersPanel
-            statusFilter={statusFilter}
-            strategyFilter={strategyFilter}
-            symbolFilter={symbolFilter}
-            searchQuery={searchQuery}
-            onStatusFilterChange={setStatusFilter}
-            onStrategyFilterChange={setStrategyFilter}
-            onSymbolFilterChange={setSymbolFilter}
-            onSearchQueryChange={setSearchQuery}
-            onClearFilters={() => {
-              setStatusFilter("all");
-              setStrategyFilter("all");
-              setSymbolFilter("");
-              setSearchQuery("");
-            }}
-          />
-
           {/* Stats Panel */}
           <BotStatsPanel bots={bots} filteredBots={filteredAndSortedBots} />
-
-          {/* Create Bot Button */}
-          <button
-            onClick={() => setShowCreateForm(true)}
-            style={{
-              padding: "12px 20px",
-              backgroundColor: colors.primary,
-              border: "none",
-              borderRadius: "8px",
-              color: colors.background,
-              fontWeight: "600",
-              cursor: "pointer",
-              transition: "opacity 0.2s",
-              fontSize: "14px",
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.opacity = "0.9";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.opacity = "1";
-            }}
-          >
-            + Create New Bot
-          </button>
         </div>
 
         {/* Center Panel - Bot List */}
@@ -648,6 +656,23 @@ export default function BotsPage() {
           />
         </div>
       </div>
+
+      {/* Filters Modal */}
+      <FiltersModal
+        isOpen={showFiltersModal}
+        onClose={() => setShowFiltersModal(false)}
+        statusFilter={statusFilter}
+        strategyFilter={strategyFilter}
+        symbolFilter={symbolFilter}
+        onStatusFilterChange={setStatusFilter}
+        onStrategyFilterChange={setStrategyFilter}
+        onSymbolFilterChange={setSymbolFilter}
+        onClearFilters={() => {
+          setStatusFilter("all");
+          setStrategyFilter("all");
+          setSymbolFilter("");
+        }}
+      />
 
       {/* Create Bot Form Modal */}
       <CreateBotForm

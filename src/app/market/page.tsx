@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { PriceWidget, MainChart, OrderPanel, TradingPanel, PricePredictionsPanel, ActiveOrders, ArbitragePanel } from "@/components/market";
+import type { ActiveOrdersRef } from "@/components/market/ActiveOrders";
+import type { TradingPanelRef } from "@/components/market/TradingPanel";
 import { Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, ComposedChart, Area } from "recharts";
 import { useExchange } from "@/contexts/ExchangeContext";
 
@@ -43,10 +45,10 @@ interface PredictionData {
 export default function MarketPage() {
     const { selectedAccountId, accounts } = useExchange();
     
-    // Load from localStorage on mount
+    // Load from localStorage on mount - will be updated when accountId changes
     const [selectedSymbol, setSelectedSymbol] = useState<string>(() => {
-        if (typeof window !== "undefined") {
-            return localStorage.getItem("market_selectedSymbol") || "";
+        if (typeof window !== "undefined" && selectedAccountId) {
+            return localStorage.getItem(`market_selectedSymbol_${selectedAccountId}`) || "";
         }
         return "";
     });
@@ -93,30 +95,47 @@ export default function MarketPage() {
     } | null>(null);
     const [showAccuracyHistory, setShowAccuracyHistory] = useState(false);
     
-    // Reset symbol and clear data when exchange account changes
+    // Refs for ActiveOrders and TradingPanel to refresh after order placement
+    const activeOrdersRef = useRef<ActiveOrdersRef | null>(null);
+    const tradingPanelRef = useRef<TradingPanelRef | null>(null);
+    
+    // Callback to refresh ActiveOrders and TradingPanel when order is placed
+    const handleOrderPlaced = useCallback(() => {
+        if (activeOrdersRef.current) {
+            activeOrdersRef.current.refresh();
+        }
+        if (tradingPanelRef.current) {
+            tradingPanelRef.current.refreshBalance();
+        }
+    }, []);
+    
+    // Load saved symbol when account changes (if account didn't change, keep current symbol)
     useEffect(() => {
-        if (selectedAccountId) {
-            // Clear symbol when exchange changes - wait for new symbols to load
+        if (selectedAccountId && typeof window !== "undefined") {
+            // Try to load saved symbol for this account
+            const savedSymbol = localStorage.getItem(`market_selectedSymbol_${selectedAccountId}`);
+            if (savedSymbol) {
+                // Symbol will be validated by TradingPanel - if not available, it will select first one
+                setSelectedSymbol(savedSymbol);
+            } else {
+                // No saved symbol for this account - clear and let TradingPanel select first one
             setSelectedSymbol("");
+            }
+            // Clear data when account changes
             setOhlcvData([]);
             setCurrentPrice(null);
             setCurrentPriceTime(null);
             setPriceChange24h(null);
             setPredictions({});
-            if (typeof window !== "undefined") {
-                localStorage.removeItem("market_selectedSymbol");
-            }
         }
     }, [selectedAccountId]);
     
-    // Save to localStorage when values change
+    // Save to localStorage when symbol changes (per account)
     useEffect(() => {
-        if (typeof window !== "undefined") {
-            if (selectedSymbol) {
-                localStorage.setItem("market_selectedSymbol", selectedSymbol);
+        if (typeof window !== "undefined" && selectedAccountId && selectedSymbol) {
+            localStorage.setItem(`market_selectedSymbol_${selectedAccountId}`, selectedSymbol);
             }
-        }
-    }, [selectedSymbol]);
+    }, [selectedSymbol, selectedAccountId]);
     
     useEffect(() => {
         if (typeof window !== "undefined") {
@@ -1138,6 +1157,7 @@ export default function MarketPage() {
                 {/* Always render TradingPanel so it can fetch currencies and auto-select symbol */}
                     <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                         <TradingPanel
+                            ref={tradingPanelRef}
                         selectedSymbol={selectedSymbol || ""}
                             onSymbolChange={setSelectedSymbol}
                             currentPrice={currentPrice}
@@ -1208,10 +1228,12 @@ export default function MarketPage() {
                         <OrderPanel 
                             selectedSymbol={selectedSymbol}
                             currentPrice={currentPrice}
+                            onOrderPlaced={handleOrderPlaced}
                         />
 
                         {/* Active Orders */}
                         <ActiveOrders 
+                            ref={activeOrdersRef}
                             selectedSymbol={selectedSymbol}
                         />
 

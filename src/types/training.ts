@@ -1,6 +1,6 @@
 // TypeScript interfaces for Training module
 
-export type TrainingJobStatus = "running" | "completed" | "failed" | "unknown" | "rejected" | "pending" | "cancelled";
+export type TrainingJobStatus = "running" | "completed" | "failed" | "unknown" | "rejected" | "pending" | "cancelled" | "paused";
 
 export type ModelType = 
     | "lightgbm"
@@ -34,6 +34,9 @@ export interface TrainingJob {
     started_at?: string;
     duration?: number;
     created_at?: string;
+    checkpoint_path?: string;
+    parent_job_id?: string;
+    paused_at?: string;
 }
 
 export interface TrainingRequest {
@@ -105,6 +108,7 @@ export interface DataFreshnessStatus {
 }
 
 export interface FilterStatus {
+    tier?: number;
     symbol: string;
     interval: string;
     can_train: boolean;

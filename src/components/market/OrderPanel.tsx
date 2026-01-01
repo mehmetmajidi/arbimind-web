@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useExchange } from "@/contexts/ExchangeContext";
+import MessageModal, { MessageModalType } from "@/components/common/MessageModal";
+import ConfirmPlaceOrderModal from "./ConfirmPlaceOrderModal";
 
 interface OrderPanelProps {
     selectedSymbol: string;
@@ -34,6 +36,65 @@ export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced
     } | null>(null);
     const [checkingPermission, setCheckingPermission] = useState(false);
     const userEditedPriceRef = useRef(false);
+    
+    // Message Modal state
+    const [modalState, setModalState] = useState<{
+        isOpen: boolean;
+        type: MessageModalType;
+        message: string;
+        title?: string;
+    }>({
+        isOpen: false,
+        type: "info",
+        message: "",
+    });
+    
+    // Confirm Place Order Modal state
+    const [confirmModalOpen, setConfirmModalOpen] = useState(false);
+    
+    // Helper function to show modal
+    const showModal = useCallback((type: MessageModalType, message: string, title?: string) => {
+        setModalState({
+            isOpen: true,
+            type,
+            message,
+            title,
+        });
+    }, []);
+    
+    // Helper function to close modal
+    const closeModal = useCallback(() => {
+        setModalState((prev) => ({ ...prev, isOpen: false }));
+    }, []);
+
+    // Function to determine appropriate decimal places for price
+    const getPriceDecimals = useCallback((price: number): number => {
+        if (price >= 1000) return 2;
+        if (price >= 100) return 2;
+        if (price >= 10) return 3;
+        if (price >= 1) return 4;
+        if (price >= 0.1) return 5;
+        if (price >= 0.01) return 6;
+        if (price >= 0.001) return 7;
+        if (price >= 0.0001) return 8;
+        if (price >= 0.00001) return 9;
+        if (price >= 0.000001) return 10;
+        if (price >= 0.0000001) return 11;
+        if (price >= 0.00000001) return 12;
+        // For very small prices, show up to 16 decimal places
+        return 16;
+    }, []);
+
+    // Function to format price with appropriate decimal places
+    const formatPrice = useCallback((price: number): string => {
+        const decimals = getPriceDecimals(price);
+        const formatted = price.toFixed(decimals);
+        // Remove trailing zeros, but keep at least one decimal place for small numbers
+        if (price < 1) {
+            return formatted.replace(/\.?0+$/, '') || '0';
+        }
+        return formatted.replace(/\.0+$/, '') || formatted;
+    }, [getPriceDecimals]);
 
     // Update price when currentPrice or selectedSymbol changes
     useEffect(() => {
@@ -41,22 +102,22 @@ export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced
             // Always update price when currentPrice changes, unless user manually edited it
             // Reset the flag when symbol changes
             if (!userEditedPriceRef.current) {
-                setPrice(currentPrice.toFixed(2));
+                setPrice(formatPrice(currentPrice));
             }
         } else {
             setPrice("");
         }
-    }, [currentPrice, selectedSymbol]);
+    }, [currentPrice, selectedSymbol, formatPrice]);
 
     // Reset user edited flag when symbol changes
     useEffect(() => {
         userEditedPriceRef.current = false;
         if (currentPrice) {
-            setPrice(currentPrice.toFixed(2));
+            setPrice(formatPrice(currentPrice));
         } else {
             setPrice("");
         }
-    }, [selectedSymbol, currentPrice]);
+    }, [selectedSymbol, currentPrice, formatPrice]);
 
     // Reset percentage when side changes
     useEffect(() => {
@@ -255,29 +316,41 @@ export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced
         }
     }, [getAvailableBalance, side, price]);
 
-    // Place order
-    const handlePlaceOrder = async () => {
+    // Show confirmation modal before placing order
+    const handlePlaceOrder = () => {
         if (!selectedAccountId || !selectedSymbol || !amount) {
-            alert("Please fill in all required fields");
+            showModal("warning", "Please fill in all required fields", "Missing Information");
             return;
         }
 
         if (orderType === "limit" && !price) {
-            alert("Limit orders require a price");
+            showModal("warning", "Limit orders require a price", "Missing Price");
             return;
         }
 
         if (orderType === "stop" && !price) {
-            alert("Stop orders require a stop price");
+            showModal("warning", "Stop orders require a stop price", "Missing Stop Price");
+            return;
+        }
+
+        // Show confirmation modal
+        setConfirmModalOpen(true);
+    };
+
+    // Actually place the order after confirmation
+    const confirmPlaceOrder = async () => {
+        if (!selectedAccountId || !selectedSymbol || !amount) {
+            setConfirmModalOpen(false);
             return;
         }
 
         setPlacingOrder(true);
+        setConfirmModalOpen(false);
 
         try {
             const token = localStorage.getItem("auth_token") || "";
             if (!token) {
-                alert("Please login");
+                showModal("error", "Please login to continue", "Authentication Required");
                 setPlacingOrder(false);
                 return;
             }
@@ -296,7 +369,7 @@ export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced
                     side: side,
                     order_type: orderType,
                     quantity: parseFloat(amount),
-                    price: price ? parseFloat(price) : null,
+                    price: orderType === "market" ? null : (price ? parseFloat(price) : null),
                 }),
             });
 
@@ -307,17 +380,23 @@ export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced
                 setAmount("");
                 setTotal("");
                 setPercentage(0);
+                
+                // Refresh balance to update Exist Coins
+                fetchBalance();
+                
+                // Notify parent to refresh Active Orders
                 if (onOrderPlaced) {
                     onOrderPlaced();
                 }
-                alert("Order placed successfully!");
+                
+                showModal("success", "Order placed successfully!", "Order Placed");
             } else {
                 const errorData = await response.json().catch(() => ({}));
-                alert(errorData.detail || "Failed to place order");
+                showModal("error", errorData.detail || "Failed to place order", "Order Failed");
             }
         } catch (error) {
             console.error("Error placing order:", error);
-            alert("Network error. Please check your connection.");
+            showModal("error", "Network error. Please check your connection.", "Connection Error");
         } finally {
             setPlacingOrder(false);
         }
@@ -327,7 +406,7 @@ export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced
     const handleRefreshPrice = () => {
         if (currentPrice) {
             userEditedPriceRef.current = false; // Reset flag when user clicks refresh
-            setPrice(currentPrice.toFixed(2));
+            setPrice(formatPrice(currentPrice));
         }
     };
 
@@ -813,6 +892,36 @@ export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced
             >
                 {placingOrder ? "Placing..." : `${side.toUpperCase()} ${base}`}
             </button>
+
+            {/* Message Modal */}
+            <MessageModal
+                isOpen={modalState.isOpen}
+                onClose={closeModal}
+                type={modalState.type}
+                title={modalState.title}
+                message={modalState.message}
+                autoClose={modalState.type === "success"}
+                autoCloseDelay={3000}
+            />
+
+            {/* Confirm Place Order Modal */}
+            <ConfirmPlaceOrderModal
+                isOpen={confirmModalOpen}
+                onClose={() => setConfirmModalOpen(false)}
+                onConfirm={confirmPlaceOrder}
+                orderDetails={
+                    selectedSymbol && amount
+                        ? {
+                              symbol: selectedSymbol,
+                              side: side,
+                              orderType: orderType,
+                              quantity: parseFloat(amount),
+                              price: orderType === "market" ? null : (price ? parseFloat(price) : null),
+                              total: orderType === "market" ? null : (price && amount ? parseFloat(price) * parseFloat(amount) : null),
+                          }
+                        : null
+                }
+            />
         </div>
     );
 }

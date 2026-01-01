@@ -1,7 +1,7 @@
 "use client";
 
 interface StatusBadgeProps {
-    status: "running" | "completed" | "failed" | "rejected" | "pending" | "cancelled";
+    status: "running" | "completed" | "failed" | "rejected" | "pending" | "cancelled" | "paused";
     size?: "small" | "medium" | "large";
 }
 
@@ -48,6 +48,13 @@ export default function StatusBadge({ status, size = "medium" }: StatusBadgeProp
                     color: "#888888", // Gray
                     bgColor: "rgba(136, 136, 136, 0.2)",
                     text: "Cancelled",
+                    pulse: false,
+                };
+            case "paused":
+                return {
+                    color: "#f59e0b", // Orange/Amber
+                    bgColor: "rgba(245, 158, 11, 0.2)",
+                    text: "Paused",
                     pulse: false,
                 };
             default:

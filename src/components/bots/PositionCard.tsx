@@ -13,6 +13,11 @@ interface PositionCardProps {
   exchangeAccountId?: number;
 }
 
+// Helper function to format price with up to 10 decimal places, removing trailing zeros
+function formatPrice(price: number): string {
+  return price.toFixed(10).replace(/\.?0+$/, '');
+}
+
 export default function PositionCard({
   position,
   currentPrice,
@@ -32,7 +37,7 @@ export default function PositionCard({
   const handleClose = async () => {
     if (!onClose) return;
     
-    if (!confirm(`Are you sure you want to close this ${position.side.toUpperCase()} position?\n\nSymbol: ${position.symbol}\nQuantity: ${quantity.toFixed(4)}\nEntry Price: ${entryPrice.toFixed(4)}\nCurrent Price: ${currentPrice?.toFixed(4) || "N/A"}\nUnrealized P&L: ${unrealizedPnl >= 0 ? "+" : ""}${unrealizedPnl.toFixed(2)} (${unrealizedPnlPercent >= 0 ? "+" : ""}${unrealizedPnlPercent.toFixed(2)}%)\n\nThis will place a market order to close the position.`)) {
+    if (!confirm(`Are you sure you want to close this ${position.side.toUpperCase()} position?\n\nSymbol: ${position.symbol}\nQuantity: ${quantity.toFixed(4)}\nEntry Price: ${formatPrice(entryPrice)}\nCurrent Price: ${currentPrice ? formatPrice(currentPrice) : "N/A"}\nUnrealized P&L: ${unrealizedPnl >= 0 ? "+" : ""}${unrealizedPnl.toFixed(2)} (${unrealizedPnlPercent >= 0 ? "+" : ""}${unrealizedPnlPercent.toFixed(2)}%)\n\nThis will place a market order to close the position.`)) {
       return;
     }
 
@@ -124,7 +129,7 @@ export default function PositionCard({
             Entry Price
           </div>
           <div style={{ color: colors.text, fontSize: "14px", fontWeight: "600" }}>
-            {entryPrice.toFixed(4)} USDT
+            {formatPrice(entryPrice)} USDT
           </div>
         </div>
         <div>
@@ -141,9 +146,9 @@ export default function PositionCard({
           }}>
             {currentPrice ? (
               <>
-                {currentPrice.toFixed(4)} USDT
+                {formatPrice(currentPrice)} USDT
                 <span style={{ fontSize: "11px", opacity: 0.8 }}>
-                  ({priceChange >= 0 ? "+" : ""}{priceChange.toFixed(4)})
+                  ({priceChange >= 0 ? "+" : ""}{formatPrice(priceChange)})
                 </span>
               </>
             ) : (
@@ -190,7 +195,7 @@ export default function PositionCard({
             fontSize: "12px",
             fontWeight: "600",
           }}>
-            {priceChange >= 0 ? "+" : ""}{priceChange.toFixed(4)} USDT ({priceChangePercent >= 0 ? "+" : ""}{priceChangePercent.toFixed(2)}%)
+            {priceChange >= 0 ? "+" : ""}{formatPrice(priceChange)} USDT ({priceChangePercent >= 0 ? "+" : ""}{priceChangePercent.toFixed(2)}%)
           </span>
         </div>
       )}

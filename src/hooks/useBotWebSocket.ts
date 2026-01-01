@@ -66,18 +66,40 @@ export function useBotWebSocket({
   const isPollingRef = useRef(false);
   const maxReconnectAttempts = 5;
   const reconnectDelay = 3000; // 3 seconds
+  const consecutiveFailuresRef = useRef(0);
+  const maxConsecutiveFailures = 3; // Stop polling after 3 consecutive failures (reduced for faster stopping)
 
   // Polling fallback
   const startPolling = useCallback(async () => {
-    if (!botId || !fallbackToPolling || isPollingRef.current) return;
+    if (!botId || !fallbackToPolling) {
+      console.log(`[POLLING SKIP] botId=${botId}, fallbackToPolling=${fallbackToPolling}`);
+      return;
+    }
+    
+    // Prevent multiple polling instances
+    if (isPollingRef.current) {
+      console.warn(`[POLLING SKIP] Polling already active for bot ${botId}, skipping duplicate start`);
+      return;
+    }
+    
+    // Clear any existing polling interval first
+    if (pollingIntervalRef.current) {
+      console.warn(`[POLLING CLEANUP] Clearing existing polling interval for bot ${botId}`);
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
 
     isPollingRef.current = true;
     setConnectionStatus("connecting");
+    console.log(`[POLLING INIT] Initializing polling for bot ${botId}`);
 
     const poll = async () => {
       try {
         const token = localStorage.getItem("auth_token") || "";
-        if (!token) return;
+        if (!token) {
+          stopPolling();
+          return;
+        }
 
         const apiUrl = typeof window !== "undefined" 
           ? "http://localhost:8000" 
@@ -94,14 +116,54 @@ export function useBotWebSocket({
           }
           setConnectionStatus("connected");
           setLastError(null);
+          consecutiveFailuresRef.current = 0; // Reset failure counter on success
         } else {
           throw new Error(`HTTP ${response.status}`);
         }
       } catch (error) {
-        console.error("Polling error:", error);
+        consecutiveFailuresRef.current += 1;
+        const errorMessage = error instanceof Error ? error.message : "Polling failed";
+        const isNetworkError = errorMessage.includes("Failed to fetch") || 
+                              errorMessage.includes("ERR_") ||
+                              (error instanceof TypeError && errorMessage.includes("fetch"));
+        
+        // Only log error if it's not a network error (to reduce console spam)
+        if (!isNetworkError) {
+          console.error("Polling error:", error);
+        }
+        
         setConnectionStatus("error");
-        setLastError(error instanceof Error ? error.message : "Polling failed");
-        if (onError) {
+        setLastError(errorMessage);
+        
+        // Stop polling if too many consecutive failures (server is likely down)
+        if (consecutiveFailuresRef.current >= maxConsecutiveFailures) {
+          console.warn(`⚠️ Stopping polling after ${maxConsecutiveFailures} consecutive failures. Server may be down.`);
+          stopPolling();
+          setConnectionStatus("disconnected");
+          setLastError(`Server unreachable after ${maxConsecutiveFailures} attempts`);
+          if (onError && consecutiveFailuresRef.current === maxConsecutiveFailures) {
+            // Only call onError once when stopping
+            onError(new Error(`Server unreachable after ${maxConsecutiveFailures} attempts`));
+          }
+          return;
+        }
+        
+        // For network errors, stop immediately after 2 failures (server is definitely down)
+        if (isNetworkError && consecutiveFailuresRef.current >= 2) {
+          console.warn(`⚠️ [POLLING STOP] Stopping polling immediately after ${consecutiveFailuresRef.current} network errors. Server is down.`);
+          stopPolling();
+          setConnectionStatus("disconnected");
+          setLastError("Server unreachable - network errors");
+          return;
+        }
+        
+        // Log first failure for debugging
+        if (consecutiveFailuresRef.current === 1 && isNetworkError) {
+          console.warn(`⚠️ [POLLING] First network error detected. Will stop after 2 failures.`);
+        }
+        
+        // Only call onError on first failure to avoid spam
+        if (onError && consecutiveFailuresRef.current === 1 && !isNetworkError) {
           onError(error instanceof Error ? error : new Error("Polling failed"));
         }
       }
@@ -110,17 +172,22 @@ export function useBotWebSocket({
     // Initial poll
     await poll();
 
-    // Set up polling interval
-    pollingIntervalRef.current = setInterval(poll, pollingInterval);
+    // Set up polling interval (only if still should be polling)
+    if (isPollingRef.current && botId) {
+      pollingIntervalRef.current = setInterval(poll, pollingInterval);
+      console.log(`[POLLING START] Started polling for bot ${botId} with interval ${pollingInterval}ms`);
+    }
   }, [botId, fallbackToPolling, pollingInterval, onStatusUpdate, onError]);
 
   const stopPolling = useCallback(() => {
     if (pollingIntervalRef.current) {
       clearInterval(pollingIntervalRef.current);
       pollingIntervalRef.current = null;
+      console.log(`[POLLING STOP] Stopped polling for bot ${botId}`);
     }
     isPollingRef.current = false;
-  }, []);
+    consecutiveFailuresRef.current = 0; // Reset failure counter
+  }, [botId]);
 
   // WebSocket connection
   const connect = useCallback(() => {
@@ -201,14 +268,22 @@ export function useBotWebSocket({
       };
 
       ws.onerror = (error) => {
-        console.error("WebSocket error:", error);
+        // Only log if it's not a network error (to reduce console spam)
+        const errorStr = error?.toString() || "";
+        if (!errorStr.includes("Failed to fetch") && !errorStr.includes("ERR_")) {
+          console.error("WebSocket error:", error);
+        }
         setConnectionStatus("error");
         setLastError("WebSocket connection error");
         
-        // Fallback to polling on error
-        if (fallbackToPolling && !isPollingRef.current) {
+        // Don't fallback to polling on network errors (server is down)
+        const isNetworkError = error?.toString().includes("Failed to fetch") || 
+                              error?.toString().includes("ERR_");
+        if (fallbackToPolling && !isPollingRef.current && !isNetworkError) {
           console.log("Falling back to polling");
           startPolling();
+        } else if (isNetworkError) {
+          console.warn("WebSocket network error - not falling back to polling (server is down)");
         }
       };
 
@@ -227,12 +302,17 @@ export function useBotWebSocket({
             connect();
           }, delay);
         } else if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
-          console.log("Max reconnection attempts reached, falling back to polling");
-          if (fallbackToPolling && !isPollingRef.current) {
+          console.log("Max reconnection attempts reached");
+          // Don't fallback to polling if server is down (network errors)
+          if (event.code === 1006 && fallbackToPolling && !isPollingRef.current) {
+            // Only fallback if it's not a network error (abnormal closure)
+            console.log("Falling back to polling");
             startPolling();
+          } else {
+            console.warn("Not falling back to polling - server appears to be down");
           }
-        } else if (fallbackToPolling && !isPollingRef.current) {
-          // Fallback to polling on normal closure
+        } else if (fallbackToPolling && !isPollingRef.current && event.code === 1000) {
+          // Only fallback to polling on normal closure (not network errors)
           startPolling();
         }
       };
@@ -266,6 +346,8 @@ export function useBotWebSocket({
   // Connect on mount or when botId changes
   useEffect(() => {
     if (botId && enabled) {
+      // Reset failure counter when botId changes
+      consecutiveFailuresRef.current = 0;
       connect();
     } else {
       disconnect();
@@ -274,7 +356,8 @@ export function useBotWebSocket({
     return () => {
       disconnect();
     };
-  }, [botId, enabled, connect, disconnect]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [botId, enabled]); // Removed connect/disconnect from deps to prevent re-renders
 
   // Cleanup on unmount
   useEffect(() => {

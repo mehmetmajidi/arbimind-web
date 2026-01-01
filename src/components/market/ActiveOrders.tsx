@@ -1,8 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useImperativeHandle, forwardRef } from "react";
 import { useExchange } from "@/contexts/ExchangeContext";
 import { MdClose, MdRefresh } from "react-icons/md";
+import ConfirmCancelOrderModal from "./ConfirmCancelOrderModal";
+
+export interface ActiveOrdersRef {
+    refresh: () => void;
+}
 
 interface ActiveOrder {
     id: number;
@@ -30,13 +35,15 @@ interface ActiveOrdersProps {
     onOrderCancelled?: () => void;
 }
 
-export default function ActiveOrders({ selectedSymbol, onOrderCancelled }: ActiveOrdersProps) {
+const ActiveOrders = forwardRef<ActiveOrdersRef, ActiveOrdersProps>(({ selectedSymbol, onOrderCancelled }, ref) => {
     const { selectedAccountId } = useExchange();
     const [orders, setOrders] = useState<ActiveOrder[]>([]);
     const [allOrdersDebug, setAllOrdersDebug] = useState<ActiveOrder[]>([]); // For debugging
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const currentAccountIdRef = useRef<number | null>(null);
+    const [cancelModalOpen, setCancelModalOpen] = useState(false);
+    const [orderToCancel, setOrderToCancel] = useState<ActiveOrder | null>(null);
 
     const fetchActiveOrders = useCallback(async () => {
         if (!selectedAccountId) {
@@ -155,22 +162,44 @@ export default function ActiveOrders({ selectedSymbol, onOrderCancelled }: Activ
         }
     }, [selectedAccountId, selectedSymbol]);
 
-    const cancelOrder = useCallback(async (order: ActiveOrder) => {
-        if (!selectedAccountId || !order.exchange_order_id) return;
+    // Expose refresh function via ref (after fetchActiveOrders is defined)
+    useImperativeHandle(ref, () => ({
+        refresh: () => {
+            fetchActiveOrders();
+        },
+    }), [fetchActiveOrders]);
+
+    // Open cancel confirmation modal
+    const handleCancelClick = useCallback((order: ActiveOrder) => {
+        setOrderToCancel(order);
+        setCancelModalOpen(true);
+    }, []);
+
+    // Actually cancel the order
+    const cancelOrder = useCallback(async () => {
+        if (!selectedAccountId || !orderToCancel || !orderToCancel.exchange_order_id) {
+            setCancelModalOpen(false);
+            setOrderToCancel(null);
+            return;
+        }
 
         try {
             const token = localStorage.getItem("auth_token") || "";
-            if (!token) return;
+            if (!token) {
+                setCancelModalOpen(false);
+                setOrderToCancel(null);
+                return;
+            }
 
             const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
             
             // Cancel order from exchange API
             const params = new URLSearchParams({
                 exchange_account_id: String(selectedAccountId),
-                symbol: order.symbol,
+                symbol: orderToCancel.symbol,
             });
             
-            const response = await fetch(`${apiUrl}/trading/orders/exchange/${encodeURIComponent(order.exchange_order_id)}?${params.toString()}`, {
+            const response = await fetch(`${apiUrl}/trading/orders/exchange/${encodeURIComponent(orderToCancel.exchange_order_id)}?${params.toString()}`, {
                 method: "DELETE",
                 headers: { 
                     Authorization: `Bearer ${token}`,
@@ -178,6 +207,10 @@ export default function ActiveOrders({ selectedSymbol, onOrderCancelled }: Activ
             });
 
             if (response.ok) {
+                // Close modal
+                setCancelModalOpen(false);
+                setOrderToCancel(null);
+                
                 // Refresh orders after cancellation
                 await fetchActiveOrders();
                 if (onOrderCancelled) {
@@ -186,12 +219,16 @@ export default function ActiveOrders({ selectedSymbol, onOrderCancelled }: Activ
             } else {
                 const errorData = await response.json().catch(() => ({}));
                 setError(errorData.detail || "Failed to cancel order");
+                setCancelModalOpen(false);
+                setOrderToCancel(null);
             }
         } catch (err) {
             console.error("Error cancelling order:", err);
             setError(err instanceof Error ? err.message : "Failed to cancel order");
+            setCancelModalOpen(false);
+            setOrderToCancel(null);
         }
-    }, [selectedAccountId, fetchActiveOrders, onOrderCancelled]);
+    }, [selectedAccountId, orderToCancel, fetchActiveOrders, onOrderCancelled]);
 
     // Clear orders immediately when account changes
     useEffect(() => {
@@ -405,7 +442,7 @@ export default function ActiveOrders({ selectedSymbol, onOrderCancelled }: Activ
                                         </div>
                                     </div>
                                     <button
-                                        onClick={() => cancelOrder(order)}
+                                        onClick={() => handleCancelClick(order)}
                                         style={{
                                             backgroundColor: "rgba(239, 68, 68, 0.1)",
                                             border: "1px solid rgba(239, 68, 68, 0.3)",
@@ -492,6 +529,21 @@ export default function ActiveOrders({ selectedSymbol, onOrderCancelled }: Activ
                     })}
                 </div>
             )}
+
+            {/* Cancel Order Confirmation Modal */}
+            <ConfirmCancelOrderModal
+                isOpen={cancelModalOpen}
+                onClose={() => {
+                    setCancelModalOpen(false);
+                    setOrderToCancel(null);
+                }}
+                onConfirm={cancelOrder}
+                order={orderToCancel}
+            />
         </div>
     );
-}
+});
+
+ActiveOrders.displayName = "ActiveOrders";
+
+export default ActiveOrders;

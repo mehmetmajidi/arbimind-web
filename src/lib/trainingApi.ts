@@ -249,6 +249,83 @@ export async function retrainModel(modelVersion: string): Promise<StartTrainingR
 }
 
 /**
+ * Retrain a specific training job
+ */
+export async function retrainJob(jobId: string): Promise<{ status: string; message: string; original_job_id: string; new_job_id: string }> {
+    const response = await fetch(`${apiUrl}/train/retrain-job/${encodeURIComponent(jobId)}`, {
+        method: "POST",
+        headers: getHeaders(),
+    });
+
+    if (!response.ok) {
+        handleAuthError(response);
+        const error = await response.json().catch(() => ({ detail: "Failed to retrain job" }));
+        throw new Error(error.detail || "Failed to retrain job");
+    }
+
+    return response.json();
+}
+
+/**
+ * Pause a running training job
+ */
+export async function pauseTraining(jobId: string): Promise<{ status: string; message: string; checkpoint_path?: string }> {
+    const response = await fetch(`${apiUrl}/train/pause/${encodeURIComponent(jobId)}`, {
+        method: "POST",
+        headers: getHeaders(),
+    });
+
+    if (!response.ok) {
+        handleAuthError(response);
+        const error = await response.json().catch(() => ({ detail: "Failed to pause training job" }));
+        throw new Error(error.detail || "Failed to pause training job");
+    }
+
+    return response.json();
+}
+
+/**
+ * Resume a paused training job
+ */
+export async function resumeTraining(jobId: string, checkpointPath?: string): Promise<{ status: string; message: string; original_job_id: string; new_job_id: string; checkpoint_path?: string }> {
+    const url = new URL(`${apiUrl}/train/resume/${encodeURIComponent(jobId)}`);
+    if (checkpointPath) {
+        url.searchParams.append("checkpoint_path", checkpointPath);
+    }
+    
+    const response = await fetch(url.toString(), {
+        method: "POST",
+        headers: getHeaders(),
+    });
+
+    if (!response.ok) {
+        handleAuthError(response);
+        const error = await response.json().catch(() => ({ detail: "Failed to resume training job" }));
+        throw new Error(error.detail || "Failed to resume training job");
+    }
+
+    return response.json();
+}
+
+/**
+ * Delete a training job
+ */
+export async function deleteTraining(jobId: string): Promise<{ status: string; message: string }> {
+    const response = await fetch(`${apiUrl}/train/${encodeURIComponent(jobId)}`, {
+        method: "DELETE",
+        headers: getHeaders(),
+    });
+
+    if (!response.ok) {
+        handleAuthError(response);
+        const error = await response.json().catch(() => ({ detail: "Failed to resume training job" }));
+        throw new Error(error.detail || "Failed to resume training job");
+    }
+
+    return response.json();
+}
+
+/**
  * Trigger periodic retraining manually
  */
 export async function triggerPeriodicRetrain(tier: number = 1): Promise<{ status: string; message: string; session: any }> {
@@ -261,6 +338,37 @@ export async function triggerPeriodicRetrain(tier: number = 1): Promise<{ status
         handleAuthError(response);
         const error = await response.json().catch(() => ({ detail: "Failed to trigger periodic retraining" }));
         throw new Error(error.detail || "Failed to trigger periodic retraining");
+    }
+
+    return response.json();
+}
+
+/**
+ * Download/Update candle data for a symbol
+ */
+export async function completeCandleData(
+    symbol: string,
+    interval: string = "1h"
+): Promise<{
+    symbol: string;
+    interval: string;
+    status: string;
+    message: string;
+    count?: number;
+    is_fresh?: boolean;
+    data_age_hours?: number;
+    completeness?: number;
+}> {
+    const encodedSymbol = encodeURIComponent(symbol);
+    const response = await fetch(`${apiUrl}/train/complete-candle-data/${encodedSymbol}?interval=${interval}`, {
+        method: "POST",
+        headers: getHeaders(),
+    });
+
+    if (!response.ok) {
+        handleAuthError(response);
+        const error = await response.json().catch(() => ({ detail: "Failed to download/update candle data" }));
+        throw new Error(error.detail || "Failed to download/update candle data");
     }
 
     return response.json();

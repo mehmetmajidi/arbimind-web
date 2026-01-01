@@ -2,14 +2,14 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { formatTimestamp, formatDuration } from "./utils";
-import { MdRefresh, MdExpandMore, MdExpandLess, MdPlayArrow, MdPause, MdCheckCircle, MdCancel, MdHourglassEmpty } from "react-icons/md";
+import { MdRefresh, MdExpandMore, MdExpandLess, MdPlayArrow, MdPause, MdCheckCircle, MdCancel, MdHourglassEmpty, MdDelete } from "react-icons/md";
 import StatusBadge from "./StatusBadge";
 import JobLogsModal from "./JobLogsModal";
 import TrainingProgress from "./TrainingProgress";
 import SkeletonLoader from "./SkeletonLoader";
 import { showToast } from "./ToastContainer";
 import ConfirmationModal from "./ConfirmationModal";
-import { getTrainingJobs, cancelTraining } from "@/lib/trainingApi";
+import { getTrainingJobs, cancelTraining, retrainJob, pauseTraining, resumeTraining, deleteTraining } from "@/lib/trainingApi";
 import { getTrainingWebSocketService } from "@/lib/trainingWebSocket";
 import type { TrainingJob } from "@/types/training";
 
@@ -24,6 +24,8 @@ function TrainingJobsTable({
     const [autoRefresh, setAutoRefresh] = useState(true); // Enable auto-refresh by default
     const [selectedJobForLogs, setSelectedJobForLogs] = useState<string | null>(null);
     const [cancelConfirmJob, setCancelConfirmJob] = useState<string | null>(null);
+    const [deleteConfirmJob, setDeleteConfirmJob] = useState<string | null>(null);
+    const [processingJobs, setProcessingJobs] = useState<Set<string>>(new Set()); // Track jobs being paused/resumed
     
     // Filters
     const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -111,18 +113,107 @@ function TrainingJobsTable({
         setCancelConfirmJob(jobId);
     };
 
+    const handleRetrain = async (jobId: string) => {
+        try {
+            const result = await retrainJob(jobId);
+            showToast("success", `Retraining job started: ${result.new_job_id}`);
+            fetchJobs(); // Refresh the list
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : "Failed to retrain job";
+            showToast("error", errorMessage);
+            console.error(err);
+        }
+    };
+
+    const handlePause = async (jobId: string) => {
+        if (processingJobs.has(jobId)) return; // Prevent double-click
+        
+        setProcessingJobs(prev => new Set(prev).add(jobId));
+        try {
+            const result = await pauseTraining(jobId);
+            showToast("success", result.message || "Training job paused successfully");
+            fetchJobs(); // Refresh the list
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : "Failed to pause training job";
+            showToast("error", errorMessage);
+            console.error(err);
+        } finally {
+            setProcessingJobs(prev => {
+                const next = new Set(prev);
+                next.delete(jobId);
+                return next;
+            });
+        }
+    };
+
+    const handleResume = async (jobId: string, checkpointPath?: string) => {
+        if (processingJobs.has(jobId)) return; // Prevent double-click
+        
+        setProcessingJobs(prev => new Set(prev).add(jobId));
+        try {
+            const result = await resumeTraining(jobId, checkpointPath);
+            const message = result.message || `Training job resumed: ${result.new_job_id}`;
+            showToast("success", message);
+            fetchJobs(); // Refresh the list
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : "Failed to resume training job";
+            showToast("error", errorMessage);
+            console.error(err);
+        } finally {
+            setProcessingJobs(prev => {
+                const next = new Set(prev);
+                next.delete(jobId);
+                return next;
+            });
+        }
+    };
+
     const confirmCancel = async () => {
         if (!cancelConfirmJob) return;
 
         try {
-            await cancelTraining(cancelConfirmJob);
-            showToast("success", "Training job cancelled successfully");
-            fetchJobs(false);
+            const result = await cancelTraining(cancelConfirmJob);
+            const message = result.message || "Training job cancelled successfully";
+            showToast("success", message);
+            // Refresh jobs list after a short delay to see updated status
+            setTimeout(() => {
+                fetchJobs(false);
+            }, 500);
             setCancelConfirmJob(null);
         } catch (err) {
             const errorMessage = err instanceof Error ? err.message : "Error cancelling training job";
             showToast("error", errorMessage);
+            console.error("Cancel training job error:", err);
+        }
+    };
+
+    const handleDelete = (jobId: string) => {
+        setDeleteConfirmJob(jobId);
+    };
+
+    const confirmDelete = async () => {
+        if (!deleteConfirmJob) return;
+        
+        const jobId = deleteConfirmJob;
+        setDeleteConfirmJob(null);
+        
+        if (processingJobs.has(jobId)) return;
+        
+        setProcessingJobs(prev => new Set(prev).add(jobId));
+        try {
+            const result = await deleteTraining(jobId);
+            showToast("success", result.message || "Training job deleted successfully");
+            fetchJobs(); // Refresh the list
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : "Failed to delete training job";
+            showToast("error", errorMessage);
             console.error(err);
+        } finally {
+            setProcessingJobs(prev => {
+                const next = new Set(prev);
+                next.delete(jobId);
+                return next;
+            });
         }
     };
 
@@ -267,9 +358,12 @@ function TrainingJobsTable({
                     >
                         <option value="all">All Status</option>
                         <option value="running">Running</option>
+                        <option value="paused">Paused</option>
                         <option value="completed">Completed</option>
                         <option value="failed">Failed</option>
                         <option value="rejected">Rejected</option>
+                        <option value="cancelled">Cancelled</option>
+                        <option value="pending">Pending</option>
                     </select>
                     <input
                         type="text"
@@ -330,18 +424,27 @@ function TrainingJobsTable({
                         No training jobs found
                     </div>
                 ) : (
-                    <div style={{ overflowX: "auto" }}>
+                    <div style={{ 
+                        maxHeight: "calc(-330px + 100vh)",
+                        overflowY: "auto",
+                        overflowX: "auto"
+                    }}>
                         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "11px" }}>
                             <thead>
-                                <tr style={{ borderBottom: "1px solid rgba(255, 174, 0, 0.2)" }}>
-                                    <th style={{ padding: "8px 4px", textAlign: "left", color: "#888", fontWeight: "600", fontSize: "10px" }}>Job ID</th>
-                                    <th style={{ padding: "8px 4px", textAlign: "left", color: "#888", fontWeight: "600", fontSize: "10px" }}>Symbol</th>
-                                    <th style={{ padding: "8px 4px", textAlign: "left", color: "#888", fontWeight: "600", fontSize: "10px" }}>Model</th>
-                                    <th style={{ padding: "8px 4px", textAlign: "left", color: "#888", fontWeight: "600", fontSize: "10px" }}>Horizon</th>
-                                    <th style={{ padding: "8px 4px", textAlign: "center", color: "#888", fontWeight: "600", fontSize: "10px" }}>Status</th>
-                                    <th style={{ padding: "8px 4px", textAlign: "left", color: "#888", fontWeight: "600", fontSize: "10px" }}>Started</th>
-                                    <th style={{ padding: "8px 4px", textAlign: "left", color: "#888", fontWeight: "600", fontSize: "10px" }}>Duration</th>
-                                    <th style={{ padding: "8px 4px", textAlign: "center", color: "#888", fontWeight: "600", fontSize: "10px" }}>Actions</th>
+                                <tr style={{ 
+                                    position: "sticky", 
+                                    top: 0, 
+                                    zIndex: 10,
+                                    borderBottom: "1px solid rgba(255, 174, 0, 0.2)"
+                                }}>
+                                    <th style={{ padding: "8px 4px", textAlign: "left", color: "#888", fontWeight: "600", fontSize: "10px", backgroundColor: "#1a1a1a" }}>Job ID</th>
+                                    <th style={{ padding: "8px 4px", textAlign: "left", color: "#888", fontWeight: "600", fontSize: "10px", backgroundColor: "#1a1a1a" }}>Symbol</th>
+                                    <th style={{ padding: "8px 4px", textAlign: "left", color: "#888", fontWeight: "600", fontSize: "10px", backgroundColor: "#1a1a1a" }}>Model</th>
+                                    <th style={{ padding: "8px 4px", textAlign: "left", color: "#888", fontWeight: "600", fontSize: "10px", backgroundColor: "#1a1a1a" }}>Horizon</th>
+                                    <th style={{ padding: "8px 4px", textAlign: "center", color: "#888", fontWeight: "600", fontSize: "10px", backgroundColor: "#1a1a1a" }}>Status</th>
+                                    <th style={{ padding: "8px 4px", textAlign: "left", color: "#888", fontWeight: "600", fontSize: "10px", backgroundColor: "#1a1a1a" }}>Started</th>
+                                    <th style={{ padding: "8px 4px", textAlign: "left", color: "#888", fontWeight: "600", fontSize: "10px", backgroundColor: "#1a1a1a" }}>Duration</th>
+                                    <th style={{ padding: "8px 4px", textAlign: "center", color: "#888", fontWeight: "600", fontSize: "10px", backgroundColor: "#1a1a1a" }}>Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -375,7 +478,25 @@ function TrainingJobsTable({
                                             {job.horizon || "N/A"}
                                         </td>
                                         <td style={{ padding: "8px 4px", textAlign: "center" }}>
-                                            <StatusBadge status={job.status as any} size="small" />
+                                            <div style={{ display: "flex", flexDirection: "column", gap: "2px", alignItems: "center" }}>
+                                                <StatusBadge status={job.status as any} size="small" />
+                                                {job.parent_job_id && (
+                                                    <div style={{ 
+                                                        fontSize: "8px", 
+                                                        color: "#3b82f6",
+                                                        cursor: "pointer",
+                                                        textDecoration: "underline",
+                                                    }}
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setSelectedJobForLogs(job.parent_job_id!);
+                                                    }}
+                                                    title="View parent job"
+                                                    >
+                                                        Parent: {job.parent_job_id.substring(0, 8)}...
+                                                    </div>
+                                                )}
+                                            </div>
                                         </td>
                                         <td style={{ padding: "8px 4px", color: "#888", fontSize: "10px" }}>
                                             {formatTimestamp(job.started_at)}
@@ -422,42 +543,266 @@ function TrainingJobsTable({
                                                     View Logs
                                                 </button>
                                                 {job.status === "running" && (
+                                                    <>
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handlePause(job.job_id);
+                                                            }}
+                                                            disabled={processingJobs.has(job.job_id)}
+                                                            style={{
+                                                                padding: "4px 8px",
+                                                                backgroundColor: "rgba(251, 191, 36, 0.1)",
+                                                                color: "#fbbf24",
+                                                                border: "1px solid rgba(251, 191, 36, 0.3)",
+                                                                borderRadius: "4px",
+                                                                fontSize: "9px",
+                                                                fontWeight: "600",
+                                                                cursor: "pointer",
+                                                                transition: "all 0.2s ease",
+                                                            }}
+                                                            onMouseEnter={(e) => {
+                                                                e.currentTarget.style.backgroundColor = "rgba(251, 191, 36, 0.2)";
+                                                                e.currentTarget.style.borderColor = "rgba(251, 191, 36, 0.5)";
+                                                                e.currentTarget.style.transform = "scale(1.05)";
+                                                            }}
+                                                            onMouseLeave={(e) => {
+                                                                e.currentTarget.style.backgroundColor = "rgba(251, 191, 36, 0.1)";
+                                                                e.currentTarget.style.borderColor = "rgba(251, 191, 36, 0.3)";
+                                                                e.currentTarget.style.transform = "scale(1)";
+                                                            }}
+                                                            onFocus={(e) => {
+                                                                e.currentTarget.style.outline = "2px solid rgba(251, 191, 36, 0.5)";
+                                                                e.currentTarget.style.outlineOffset = "1px";
+                                                            }}
+                                                            onBlur={(e) => {
+                                                                e.currentTarget.style.outline = "none";
+                                                            }}
+                                                        >
+                                                            {processingJobs.has(job.job_id) ? (
+                                                                <>⏳ Pausing...</>
+                                                            ) : (
+                                                                <>
+                                                                    <MdPause style={{ display: "inline", marginRight: "2px", verticalAlign: "middle" }} />
+                                                                    Pause
+                                                                </>
+                                                            )}
+                                                        </button>
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleCancel(job.job_id);
+                                                            }}
+                                                            style={{
+                                                                padding: "4px 8px",
+                                                                backgroundColor: "rgba(239, 68, 68, 0.1)",
+                                                                color: "#ef4444",
+                                                                border: "1px solid rgba(239, 68, 68, 0.3)",
+                                                                borderRadius: "4px",
+                                                                fontSize: "9px",
+                                                                fontWeight: "600",
+                                                                cursor: "pointer",
+                                                                transition: "all 0.2s ease",
+                                                            }}
+                                                            onMouseEnter={(e) => {
+                                                                e.currentTarget.style.backgroundColor = "rgba(239, 68, 68, 0.2)";
+                                                                e.currentTarget.style.borderColor = "rgba(239, 68, 68, 0.5)";
+                                                                e.currentTarget.style.transform = "scale(1.05)";
+                                                            }}
+                                                            onMouseLeave={(e) => {
+                                                                e.currentTarget.style.backgroundColor = "rgba(239, 68, 68, 0.1)";
+                                                                e.currentTarget.style.borderColor = "rgba(239, 68, 68, 0.3)";
+                                                                e.currentTarget.style.transform = "scale(1)";
+                                                            }}
+                                                            onFocus={(e) => {
+                                                                e.currentTarget.style.outline = "2px solid rgba(239, 68, 68, 0.5)";
+                                                                e.currentTarget.style.outlineOffset = "1px";
+                                                            }}
+                                                            onBlur={(e) => {
+                                                                e.currentTarget.style.outline = "none";
+                                                            }}
+                                                        >
+                                                            Cancel
+                                                        </button>
+                                                    </>
+                                                )}
+                                                {job.status === "paused" && (
                                                     <button
                                                         onClick={(e) => {
                                                             e.stopPropagation();
-                                                            handleCancel(job.job_id);
+                                                            handleResume(job.job_id, job.checkpoint_path);
                                                         }}
+                                                        disabled={processingJobs.has(job.job_id)}
                                                         style={{
                                                             padding: "4px 8px",
-                                                            backgroundColor: "rgba(239, 68, 68, 0.1)",
-                                                            color: "#ef4444",
-                                                            border: "1px solid rgba(239, 68, 68, 0.3)",
+                                                            backgroundColor: "rgba(59, 130, 246, 0.1)",
+                                                            color: "#3b82f6",
+                                                            border: "1px solid rgba(59, 130, 246, 0.3)",
                                                             borderRadius: "4px",
                                                             fontSize: "9px",
                                                             fontWeight: "600",
-                                                            cursor: "pointer",
+                                                            cursor: processingJobs.has(job.job_id) ? "not-allowed" : "pointer",
+                                                            opacity: processingJobs.has(job.job_id) ? 0.6 : 1,
                                                             transition: "all 0.2s ease",
                                                         }}
                                                         onMouseEnter={(e) => {
-                                                            e.currentTarget.style.backgroundColor = "rgba(239, 68, 68, 0.2)";
-                                                            e.currentTarget.style.borderColor = "rgba(239, 68, 68, 0.5)";
+                                                            if (processingJobs.has(job.job_id)) return;
+                                                            e.currentTarget.style.backgroundColor = "rgba(59, 130, 246, 0.2)";
+                                                            e.currentTarget.style.borderColor = "rgba(59, 130, 246, 0.5)";
                                                             e.currentTarget.style.transform = "scale(1.05)";
                                                         }}
                                                         onMouseLeave={(e) => {
-                                                            e.currentTarget.style.backgroundColor = "rgba(239, 68, 68, 0.1)";
-                                                            e.currentTarget.style.borderColor = "rgba(239, 68, 68, 0.3)";
+                                                            e.currentTarget.style.backgroundColor = "rgba(59, 130, 246, 0.1)";
+                                                            e.currentTarget.style.borderColor = "rgba(59, 130, 246, 0.3)";
                                                             e.currentTarget.style.transform = "scale(1)";
                                                         }}
                                                         onFocus={(e) => {
-                                                            e.currentTarget.style.outline = "2px solid rgba(239, 68, 68, 0.5)";
+                                                            e.currentTarget.style.outline = "2px solid rgba(59, 130, 246, 0.5)";
                                                             e.currentTarget.style.outlineOffset = "1px";
                                                         }}
                                                         onBlur={(e) => {
                                                             e.currentTarget.style.outline = "none";
                                                         }}
                                                     >
-                                                        Cancel
+                                                        {processingJobs.has(job.job_id) ? (
+                                                            <>⏳ Resuming...</>
+                                                        ) : (
+                                                            <>
+                                                                <MdPlayArrow style={{ display: "inline", marginRight: "2px", verticalAlign: "middle" }} />
+                                                                Resume
+                                                            </>
+                                                        )}
                                                     </button>
+                                                )}
+                                                {job.status !== "running" && job.status !== "paused" && (
+                                                    <>
+                                                        {(job.status === "cancelled" || job.status === "failed") && (
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    handleResume(job.job_id, job.checkpoint_path);
+                                                                }}
+                                                                disabled={processingJobs.has(job.job_id)}
+                                                                style={{
+                                                                    padding: "4px 8px",
+                                                                    backgroundColor: "rgba(59, 130, 246, 0.1)",
+                                                                    color: "#3b82f6",
+                                                                    border: "1px solid rgba(59, 130, 246, 0.3)",
+                                                                    borderRadius: "4px",
+                                                                    fontSize: "9px",
+                                                                    fontWeight: "600",
+                                                                    cursor: processingJobs.has(job.job_id) ? "not-allowed" : "pointer",
+                                                                    opacity: processingJobs.has(job.job_id) ? 0.6 : 1,
+                                                                    transition: "all 0.2s ease",
+                                                                }}
+                                                                onMouseEnter={(e) => {
+                                                                    if (processingJobs.has(job.job_id)) return;
+                                                                    e.currentTarget.style.backgroundColor = "rgba(59, 130, 246, 0.2)";
+                                                                    e.currentTarget.style.borderColor = "rgba(59, 130, 246, 0.5)";
+                                                                    e.currentTarget.style.transform = "scale(1.05)";
+                                                                }}
+                                                                onMouseLeave={(e) => {
+                                                                    e.currentTarget.style.backgroundColor = "rgba(59, 130, 246, 0.1)";
+                                                                    e.currentTarget.style.borderColor = "rgba(59, 130, 246, 0.3)";
+                                                                    e.currentTarget.style.transform = "scale(1)";
+                                                                }}
+                                                                onFocus={(e) => {
+                                                                    e.currentTarget.style.outline = "2px solid rgba(59, 130, 246, 0.5)";
+                                                                    e.currentTarget.style.outlineOffset = "1px";
+                                                                }}
+                                                                onBlur={(e) => {
+                                                                    e.currentTarget.style.outline = "none";
+                                                                }}
+                                                            >
+                                                                {processingJobs.has(job.job_id) ? (
+                                                                    <>⏳ Resuming...</>
+                                                                ) : (
+                                                                    <>
+                                                                        <MdPlayArrow style={{ display: "inline", marginRight: "2px", verticalAlign: "middle" }} />
+                                                                        Resume
+                                                                    </>
+                                                                )}
+                                                            </button>
+                                                        )}
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleRetrain(job.job_id);
+                                                            }}
+                                                            style={{
+                                                                padding: "4px 8px",
+                                                                backgroundColor: "rgba(34, 197, 94, 0.1)",
+                                                                color: "#22c55e",
+                                                                border: "1px solid rgba(34, 197, 94, 0.3)",
+                                                                borderRadius: "4px",
+                                                                fontSize: "9px",
+                                                                fontWeight: "600",
+                                                                cursor: "pointer",
+                                                                transition: "all 0.2s ease",
+                                                            }}
+                                                            onMouseEnter={(e) => {
+                                                                e.currentTarget.style.backgroundColor = "rgba(34, 197, 94, 0.2)";
+                                                                e.currentTarget.style.borderColor = "rgba(34, 197, 94, 0.5)";
+                                                                e.currentTarget.style.transform = "scale(1.05)";
+                                                            }}
+                                                            onMouseLeave={(e) => {
+                                                                e.currentTarget.style.backgroundColor = "rgba(34, 197, 94, 0.1)";
+                                                                e.currentTarget.style.borderColor = "rgba(34, 197, 94, 0.3)";
+                                                                e.currentTarget.style.transform = "scale(1)";
+                                                            }}
+                                                            onFocus={(e) => {
+                                                                e.currentTarget.style.outline = "2px solid rgba(34, 197, 94, 0.5)";
+                                                                e.currentTarget.style.outlineOffset = "1px";
+                                                            }}
+                                                            onBlur={(e) => {
+                                                                e.currentTarget.style.outline = "none";
+                                                            }}
+                                                        >
+                                                            Retrain
+                                                        </button>
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleDelete(job.job_id);
+                                                            }}
+                                                            disabled={processingJobs.has(job.job_id)}
+                                                            style={{
+                                                                padding: "4px 8px",
+                                                                backgroundColor: "rgba(239, 68, 68, 0.1)",
+                                                                color: "#ef4444",
+                                                                border: "1px solid rgba(239, 68, 68, 0.3)",
+                                                                borderRadius: "4px",
+                                                                fontSize: "9px",
+                                                                fontWeight: "600",
+                                                                cursor: processingJobs.has(job.job_id) ? "not-allowed" : "pointer",
+                                                                opacity: processingJobs.has(job.job_id) ? 0.6 : 1,
+                                                                transition: "all 0.2s ease",
+                                                                marginLeft: "4px",
+                                                            }}
+                                                            onMouseEnter={(e) => {
+                                                                if (!processingJobs.has(job.job_id)) {
+                                                                    e.currentTarget.style.backgroundColor = "rgba(239, 68, 68, 0.2)";
+                                                                    e.currentTarget.style.borderColor = "rgba(239, 68, 68, 0.5)";
+                                                                    e.currentTarget.style.transform = "scale(1.05)";
+                                                                }
+                                                            }}
+                                                            onMouseLeave={(e) => {
+                                                                e.currentTarget.style.backgroundColor = "rgba(239, 68, 68, 0.1)";
+                                                                e.currentTarget.style.borderColor = "rgba(239, 68, 68, 0.3)";
+                                                                e.currentTarget.style.transform = "scale(1)";
+                                                            }}
+                                                            onFocus={(e) => {
+                                                                e.currentTarget.style.outline = "2px solid rgba(239, 68, 68, 0.5)";
+                                                                e.currentTarget.style.outlineOffset = "1px";
+                                                            }}
+                                                            onBlur={(e) => {
+                                                                e.currentTarget.style.outline = "none";
+                                                            }}
+                                                        >
+                                                            <MdDelete style={{ display: "inline", marginRight: "2px", verticalAlign: "middle" }} />
+                                                            {processingJobs.has(job.job_id) ? "Deleting..." : "Delete"}
+                                                        </button>
+                                                    </>
                                                 )}
                                             </div>
                                         </td>
@@ -477,6 +822,7 @@ function TrainingJobsTable({
                     onClose={() => setSelectedJobForLogs(null)}
                     jobId={selectedJobForLogs}
                     autoRefresh={jobs.find(j => j.job_id === selectedJobForLogs)?.status === "running"}
+                    setSelectedJobForLogs={setSelectedJobForLogs}
                 />
             )}
 
@@ -491,6 +837,21 @@ function TrainingJobsTable({
                     type="warning"
                     confirmText="Cancel Job"
                     cancelText="Keep Running"
+                    confirmColor="#ef4444"
+                />
+            )}
+
+            {/* Delete Confirmation Modal */}
+            {deleteConfirmJob && (
+                <ConfirmationModal
+                    isOpen={!!deleteConfirmJob}
+                    onClose={() => setDeleteConfirmJob(null)}
+                    onConfirm={confirmDelete}
+                    title="Delete Training Job"
+                    message={`Are you sure you want to delete training job "${deleteConfirmJob.substring(0, 8)}..."? This action cannot be undone and the job will be permanently removed from the queue.`}
+                    type="error"
+                    confirmText="Delete Job"
+                    cancelText="Cancel"
                     confirmColor="#ef4444"
                 />
             )}

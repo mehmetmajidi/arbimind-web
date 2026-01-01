@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import FilterStatusIndicator from "./FilterStatusIndicator";
 import LoadingSpinner from "./LoadingSpinner";
 import { showToast } from "./ToastContainer";
-import { startTraining, getFilterStatus } from "@/lib/trainingApi";
+import { startTraining, getFilterStatus, completeCandleData } from "@/lib/trainingApi";
 import type { FilterStatus } from "@/types/training";
 
 interface StartTrainingModalProps {
@@ -46,6 +46,7 @@ export default function StartTrainingModal({
     const [checkingFilter, setCheckingFilter] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [downloadingCandles, setDownloadingCandles] = useState(false);
 
     // Auto-determine interval from horizon
     const getInterval = (horizon: string): string => {
@@ -258,15 +259,115 @@ export default function StartTrainingModal({
                                         Checking filter status...
                                     </div>
                                 ) : filterStatus ? (
-                                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                                        <FilterStatusIndicator 
-                                            status={filterStatus.can_train ? "passed" : "failed"}
-                                            text={filterStatus.can_train ? "Filter check passed" : "Filter check failed"}
-                                        />
-                                        {filterStatus.reason && (
-                                            <span style={{ fontSize: "11px", color: "#888" }}>
-                                                {filterStatus.reason}
-                                            </span>
+                                    <div>
+                                        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: filterStatus.can_train ? "0" : "8px" }}>
+                                            <FilterStatusIndicator 
+                                                status={filterStatus.can_train ? "passed" : "failed"}
+                                                text={filterStatus.can_train ? "Filter check passed" : "Filter check failed"}
+                                            />
+                                            {filterStatus.reason && (
+                                                <div style={{ fontSize: "11px", color: "#888", marginTop: "4px" }}>
+                                                    {filterStatus.reason}
+                                                    {filterStatus.tier === 1 && !filterStatus.can_train && (
+                                                        <div style={{ marginTop: "4px", fontSize: "10px", color: "#FFAE00", fontStyle: "italic" }}>
+                                                            ⭐ Tier 1 symbol (BTC, ETH, etc.) - Training is allowed despite filter checks
+                                                        </div>
+                                                    )}
+                                                    {filterStatus.reason.includes("Volatility check failed") && filterStatus.tier !== 1 && (
+                                                        <div style={{ marginTop: "4px", fontSize: "10px", color: "#666", fontStyle: "italic" }}>
+                                                            Note: Candle data may be complete, but volatility requirements are not met.
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                        {!filterStatus.can_train && (
+                                            <button
+                                                type="button"
+                                                onClick={async () => {
+                                                    if (!symbol.trim()) return;
+                                                    
+                                                    setDownloadingCandles(true);
+                                                    try {
+                                                        // Normalize symbol
+                                                        let normalizedSymbol = symbol.trim().toUpperCase();
+                                                        if (!normalizedSymbol.includes("/")) {
+                                                            normalizedSymbol = `${normalizedSymbol}/USDT`;
+                                                        }
+                                                        
+                                                        const result = await completeCandleData(normalizedSymbol, interval);
+                                                        
+                                                        // Show appropriate message based on status
+                                                        if (result.status === "complete") {
+                                                            showToast("info", result.message || "Candle data is already complete");
+                                                        } else if (result.status === "success" || result.status === "completed") {
+                                                            showToast("success", result.message || "Candle data downloaded/updated successfully");
+                                                        } else {
+                                                            showToast("warning", result.message || "Candle data download completed with warnings");
+                                                        }
+                                                        
+                                                        // Always refresh filter status after download attempt
+                                                        // (even if data was already complete, volatility check might change)
+                                                        setTimeout(async () => {
+                                                            try {
+                                                                setCheckingFilter(true);
+                                                                const data = await getFilterStatus(normalizedSymbol, interval);
+                                                                setFilterStatus(data);
+                                                            } catch (err) {
+                                                                console.error("Error refreshing filter status:", err);
+                                                            } finally {
+                                                                setCheckingFilter(false);
+                                                            }
+                                                        }, 1000);
+                                                    } catch (err) {
+                                                        const errorMessage = err instanceof Error ? err.message : "Failed to download/update candle data";
+                                                        showToast("error", errorMessage);
+                                                        console.error("Error downloading candles:", err);
+                                                    } finally {
+                                                        setDownloadingCandles(false);
+                                                    }
+                                                }}
+                                                disabled={downloadingCandles}
+                                                style={{
+                                                    padding: "6px 12px",
+                                                    backgroundColor: downloadingCandles ? "#2a2a2a" : "#FFAE00",
+                                                    color: "#000",
+                                                    border: "none",
+                                                    borderRadius: "4px",
+                                                    fontSize: "11px",
+                                                    fontWeight: "600",
+                                                    cursor: downloadingCandles ? "not-allowed" : "pointer",
+                                                    transition: "all 0.2s ease",
+                                                    display: "flex",
+                                                    alignItems: "center",
+                                                    gap: "6px",
+                                                    marginTop: "8px",
+                                                }}
+                                                onMouseEnter={(e) => {
+                                                    if (!downloadingCandles) {
+                                                        e.currentTarget.style.backgroundColor = "#ffc233";
+                                                        e.currentTarget.style.transform = "scale(1.02)";
+                                                    }
+                                                }}
+                                                onMouseLeave={(e) => {
+                                                    if (!downloadingCandles) {
+                                                        e.currentTarget.style.backgroundColor = "#FFAE00";
+                                                        e.currentTarget.style.transform = "scale(1)";
+                                                    }
+                                                }}
+                                            >
+                                                {downloadingCandles ? (
+                                                    <>
+                                                        <LoadingSpinner size="small" />
+                                                        <span>Downloading...</span>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <span>📥</span>
+                                                        <span>Download/Update Candles</span>
+                                                    </>
+                                                )}
+                                            </button>
                                         )}
                                     </div>
                                 ) : null}

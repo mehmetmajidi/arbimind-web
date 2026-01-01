@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useExchange } from "@/contexts/ExchangeContext";
 
 interface BackfillJob {
@@ -87,6 +87,7 @@ export default function BackfillPage() {
 
      const [processing, setProcessing] = useState<Record<string, boolean>>({});
      const [autoRefresh, setAutoRefresh] = useState(false);
+     const [autoProcessingJobs, setAutoProcessingJobs] = useState<Set<string>>(new Set());
      const [symbolsLoading, setSymbolsLoading] = useState(false);
      const [dataStatus, setDataStatus] = useState<Record<string, SymbolDataStatus>>({});
      const [dataStatusLoading, setDataStatusLoading] = useState(false);
@@ -525,9 +526,17 @@ export default function BackfillPage() {
 
      // Pause backfill
      const handlePause = async (symbol: string, interval: string) => {
-          setProcessing({ ...processing, [`${symbol}_${interval}`]: true });
+          const jobKey = `${symbol}_${interval}`;
+          setProcessing((prev) => ({ ...prev, [jobKey]: true }));
           setError(null);
           setSuccess(null);
+
+          // Remove from auto-processing when paused
+          setAutoProcessingJobs((prev) => {
+               const newSet = new Set(prev);
+               newSet.delete(jobKey);
+               return newSet;
+          });
 
           try {
                const token = getAuthToken();
@@ -548,7 +557,7 @@ export default function BackfillPage() {
                console.error("Error pausing backfill:", error);
                setError("Failed to pause backfill");
           } finally {
-               setProcessing({ ...processing, [`${symbol}_${interval}`]: false });
+               setProcessing((prev) => ({ ...prev, [jobKey]: false }));
           }
      };
 
@@ -585,9 +594,52 @@ export default function BackfillPage() {
           }
      };
 
+     // Update candles (download new candles from last timestamp to now)
+     const handleUpdate = async (symbol: string, interval: string) => {
+          console.log("handleUpdate called:", { symbol, interval });
+          const jobKey = `update_${symbol}_${interval}`;
+          setProcessing((prev) => ({ ...prev, [jobKey]: true }));
+          setError(null);
+          setSuccess(null);
+
+          try {
+               const token = getAuthToken();
+               const url = `${apiUrl}/backfill/update?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}`;
+               console.log("Calling update endpoint:", url);
+               
+               const response = await fetch(url, {
+                    method: "POST",
+                    headers: { Authorization: `Bearer ${token}` },
+               });
+
+               console.log("Update response status:", response.status);
+               
+               if (response.ok) {
+                    const data = await response.json();
+                    console.log("Update response data:", data);
+                    if (data.status === "success") {
+                         setSuccess(data.message || `Updated ${data.candles_added || 0} new candles`);
+                    } else {
+                         setError(data.message || "Failed to update candles");
+                    }
+                    await fetchJobs();
+               } else {
+                    const errorData = await response.json().catch(() => ({}));
+                    console.error("Update error response:", errorData);
+                    setError(errorData.detail || `Failed to update candles (${response.status})`);
+               }
+          } catch (error) {
+               console.error("Error updating candles:", error);
+               setError(`Failed to update candles: ${error instanceof Error ? error.message : String(error)}`);
+          } finally {
+               setProcessing((prev) => ({ ...prev, [jobKey]: false }));
+          }
+     };
+
      // Process pages
-     const handleProcess = async (symbol: string, interval: string) => {
-          setProcessing({ ...processing, [`${symbol}_${interval}`]: true });
+     const handleProcess = useCallback(async (symbol: string, interval: string, autoContinue: boolean = false) => {
+          const jobKey = `${symbol}_${interval}`;
+          setProcessing((prev) => ({ ...prev, [jobKey]: true }));
           setError(null);
 
           try {
@@ -601,20 +653,63 @@ export default function BackfillPage() {
                     const data = await response.json();
                     if (data.status === "completed") {
                          setSuccess(`✅ Backfill completed for ${symbol}/${interval}`);
+                         // Remove from auto-processing if completed
+                         setAutoProcessingJobs((prev) => {
+                              const newSet = new Set(prev);
+                              newSet.delete(jobKey);
+                              return newSet;
+                         });
                     } else {
                          setSuccess(`📊 Processed ${data.pages_processed || 0} pages. Progress: ${data.current_page}/${data.total_pages} (${data.percentage?.toFixed(1) || 0}%)`);
+                         // If auto-continue is enabled and job is still running, continue processing
+                         if (autoContinue && data.status === "running") {
+                              // Continue processing after a short delay
+                              setTimeout(() => {
+                                   handleProcess(symbol, interval, true);
+                              }, 1000);
+                         }
                     }
                     await fetchJobs();
                } else {
                     const errorData = await response.json().catch(() => ({}));
                     setError(errorData.detail || "Failed to process backfill");
+                    // Remove from auto-processing on error
+                    setAutoProcessingJobs((prev) => {
+                         const newSet = new Set(prev);
+                         newSet.delete(jobKey);
+                         return newSet;
+                    });
                }
           } catch (error) {
                console.error("Error processing backfill:", error);
                setError("Failed to process backfill");
+               // Remove from auto-processing on error
+               setAutoProcessingJobs((prev) => {
+                    const newSet = new Set(prev);
+                    newSet.delete(jobKey);
+                    return newSet;
+               });
           } finally {
-               setProcessing({ ...processing, [`${symbol}_${interval}`]: false });
+               setProcessing((prev) => ({ ...prev, [jobKey]: false }));
           }
+     }, [apiUrl, fetchJobs]);
+
+     // Toggle auto-processing for a job
+     const toggleAutoProcess = (symbol: string, interval: string) => {
+          const jobKey = `${symbol}_${interval}`;
+          setAutoProcessingJobs((prev) => {
+               const newSet = new Set(prev);
+               if (newSet.has(jobKey)) {
+                    // Stop auto-processing
+                    newSet.delete(jobKey);
+               } else {
+                    // Start auto-processing
+                    newSet.add(jobKey);
+                    // Start processing immediately
+                    handleProcess(symbol, interval, true);
+               }
+               return newSet;
+          });
      };
 
      // Start batch backfill
@@ -813,6 +908,54 @@ export default function BackfillPage() {
           return () => clearInterval(interval);
      }, [autoRefresh, fetchJobs, fetchDataStatus, activeTab, fetchBatchJobs]);
 
+     // Auto-process jobs that are in auto-processing mode
+     useEffect(() => {
+          if (autoProcessingJobs.size === 0) return;
+
+          const checkAndProcess = async () => {
+               // Clean up jobs that are no longer running (completed, paused, failed, etc.)
+               setAutoProcessingJobs((prev) => {
+                    const newSet = new Set(prev);
+                    for (const jobKey of prev) {
+                         // jobKey format is "SYMBOL_INTERVAL" where symbol may contain "/"
+                         // We need to find the last "_" to split symbol and interval
+                         const lastUnderscore = jobKey.lastIndexOf('_');
+                         if (lastUnderscore === -1) continue;
+                         
+                         const symbol = jobKey.substring(0, lastUnderscore);
+                         const interval = jobKey.substring(lastUnderscore + 1);
+                         const job = jobs.find(j => j.symbol === symbol && j.interval === interval);
+                         if (!job || job.status !== "running") {
+                              newSet.delete(jobKey);
+                         }
+                    }
+                    return newSet;
+               });
+
+               // Get current jobs that are still running and in auto-processing
+               const currentJobs = jobs.filter(job => {
+                    const jobKey = `${job.symbol}_${job.interval}`;
+                    return autoProcessingJobs.has(jobKey) && job.status === "running";
+               });
+
+               // Process each job that's still running
+               for (const job of currentJobs) {
+                    const jobKey = `${job.symbol}_${job.interval}`;
+                    const isCurrentlyProcessing = processing[jobKey];
+                    
+                    // Only process if not already processing
+                    if (!isCurrentlyProcessing && autoProcessingJobs.has(jobKey)) {
+                         await handleProcess(job.symbol, job.interval, true);
+                    }
+               }
+          };
+
+          // Check every 2 seconds
+          const interval = setInterval(checkAndProcess, 2000);
+
+          return () => clearInterval(interval);
+     }, [autoProcessingJobs, jobs, processing, handleProcess]);
+
      useEffect(() => {
           if (activeTab === "batch") {
                fetchBatchJobs();
@@ -915,110 +1058,292 @@ export default function BackfillPage() {
      }, [markets, searchQuery, statusFilter, intervalFilter, dataStatus, jobs, availableIntervals]);
 
      return (
-          <div className="min-h-screen bg-[#1a1a1a] text-white p-6" style={{  paddingTop: "24px" }}>
-               <div className="max-w-7xl mx-auto">
-                    {/* Header */}
-                    <div className="mb-8">
-                         <h1 className="text-4xl font-bold mb-2 bg-gradient-to-r from-[#FFAE00] to-[#FFD700] bg-clip-text text-transparent">📥 Backfill Management</h1>
-                         <p className="text-gray-400 text-lg">Manage historical data collection with start/stop, resume, and backup capabilities</p>
+          <div style={{ padding: "0 16px", maxWidth: "1870px", margin: "0 auto", color: "#ededed", minHeight: "100vh" }}>
+               {/* Header */}
+               <div style={{ marginBottom: "32px", marginTop: "24px" }}>
+                    <h1 style={{ 
+                         fontSize: "32px", 
+                         fontWeight: "bold", 
+                         marginBottom: "8px",
+                         background: "linear-gradient(to right, #FFAE00, #FFD700)",
+                         WebkitBackgroundClip: "text",
+                         WebkitTextFillColor: "transparent",
+                         backgroundClip: "text"
+                    }}>
+                         📥 Backfill Management
+                    </h1>
+                    <p style={{ color: "#888888", fontSize: "16px", margin: 0 }}>
+                         Manage historical data collection with start/stop, resume, and backup capabilities
+                    </p>
+               </div>
+
+               {/* Tabs */}
+               <div style={{ 
+                    marginBottom: "24px", 
+                    display: "flex", 
+                    gap: "16px", 
+                    borderBottom: "1px solid rgba(255, 255, 255, 0.1)" 
+               }}>
+                    <button
+                         onClick={() => setActiveTab("single")}
+                         style={{
+                              padding: "12px 24px",
+                              fontWeight: "600",
+                              fontSize: "14px",
+                              transition: "all 0.2s",
+                              border: "none",
+                              background: "transparent",
+                              color: activeTab === "single" ? "#FFAE00" : "#888888",
+                              borderBottom: activeTab === "single" ? "2px solid #FFAE00" : "2px solid transparent",
+                              cursor: "pointer",
+                         }}
+                         onMouseEnter={(e) => {
+                              if (activeTab !== "single") {
+                                   e.currentTarget.style.color = "#ededed";
+                              }
+                         }}
+                         onMouseLeave={(e) => {
+                              if (activeTab !== "single") {
+                                   e.currentTarget.style.color = "#888888";
+                              }
+                         }}
+                    >
+                         Single Backfill
+                    </button>
+                    <button
+                         onClick={() => setActiveTab("batch")}
+                         style={{
+                              padding: "12px 24px",
+                              fontWeight: "600",
+                              fontSize: "14px",
+                              transition: "all 0.2s",
+                              border: "none",
+                              background: "transparent",
+                              color: activeTab === "batch" ? "#FFAE00" : "#888888",
+                              borderBottom: activeTab === "batch" ? "2px solid #FFAE00" : "2px solid transparent",
+                              cursor: "pointer",
+                         }}
+                         onMouseEnter={(e) => {
+                              if (activeTab !== "batch") {
+                                   e.currentTarget.style.color = "#ededed";
+                              }
+                         }}
+                         onMouseLeave={(e) => {
+                              if (activeTab !== "batch") {
+                                   e.currentTarget.style.color = "#888888";
+                              }
+                         }}
+                    >
+                         Batch Backfill
+                    </button>
+               </div>
+
+               {/* Messages */}
+               {error && (
+                    <div style={{
+                         marginBottom: "16px",
+                         padding: "12px",
+                         backgroundColor: "rgba(239, 68, 68, 0.15)",
+                         border: "2px solid rgba(239, 68, 68, 0.5)",
+                         borderRadius: "8px",
+                         color: "#ef4444",
+                         fontSize: "14px",
+                         fontWeight: "500",
+                         display: "flex",
+                         alignItems: "center",
+                         gap: "8px"
+                    }}>
+                         <span>⚠️</span>
+                         <span>{error}</span>
                     </div>
-
-                    {/* Tabs */}
-                    <div className="mb-6 flex gap-4 border-b border-gray-700">
-                         <button
-                              onClick={() => setActiveTab("single")}
-                              className={`px-6 py-3 font-semibold transition-colors ${
-                                   activeTab === "single"
-                                        ? "text-[#FFAE00] border-b-2 border-[#FFAE00]"
-                                        : "text-gray-400 hover:text-gray-300"
-                              }`}
-                         >
-                              Single Backfill
-                         </button>
-                         <button
-                              onClick={() => setActiveTab("batch")}
-                              className={`px-6 py-3 font-semibold transition-colors ${
-                                   activeTab === "batch"
-                                        ? "text-[#FFAE00] border-b-2 border-[#FFAE00]"
-                                        : "text-gray-400 hover:text-gray-300"
-                              }`}
-                         >
-                              Batch Backfill
-                         </button>
+               )}
+               {success && (
+                    <div style={{
+                         marginBottom: "16px",
+                         padding: "12px",
+                         backgroundColor: "rgba(34, 197, 94, 0.15)",
+                         border: "2px solid rgba(34, 197, 94, 0.5)",
+                         borderRadius: "8px",
+                         color: "#22c55e",
+                         fontSize: "14px",
+                         fontWeight: "500",
+                         display: "flex",
+                         alignItems: "center",
+                         gap: "8px"
+                    }}>
+                         <span>✅</span>
+                         <span>{success}</span>
                     </div>
+               )}
 
-                    {/* Messages */}
-                    {error && (
-                         <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 flex items-center gap-2">
-                              <span>⚠️</span>
-                              <span>{error}</span>
-                         </div>
-                    )}
-                    {success && (
-                         <div className="mb-6 p-4 bg-green-500/10 border border-green-500/30 rounded-lg text-green-400 flex items-center gap-2">
-                              <span>✅</span>
-                              <span>{success}</span>
-                         </div>
-                    )}
+               {/* Exchange Account Selector */}
+               {!selectedAccountId && (
+                    <div style={{
+                         marginBottom: "24px",
+                         padding: "24px",
+                         backgroundColor: "rgba(234, 179, 8, 0.15)",
+                         border: "1px solid rgba(234, 179, 8, 0.3)",
+                         borderRadius: "8px",
+                         color: "#eab308"
+                    }}>
+                         ⚠️ Please select an exchange account from the header to view available symbols
+                    </div>
+               )}
 
-                    {/* Exchange Account Selector */}
-                    {!selectedAccountId && (
-                         <div className="mb-6 p-6 bg-yellow-500/10 border border-yellow-500/30 rounded-lg text-yellow-400">
-                              ⚠️ Please select an exchange account from the header to view available symbols
-                         </div>
-                    )}
-
-                    {/* Sync Symbols Buttons */}
-                    {selectedAccountId && (
-                         <div className="mb-6 space-y-4">
-                              <div className="flex justify-between items-center gap-4">
-                                   <div className="text-sm text-gray-400">
-                                        {markets.length > 0 ? <>📊 {markets.length} symbols loaded from database</> : <>⚠️ No symbols in database. Sync from exchange to load symbols.</>}
-                                   </div>
-                                   <div className="flex gap-3">
-                                        <button
-                                             onClick={syncSymbols}
-                                             disabled={symbolsLoading}
-                                             className="px-4 py-2 bg-blue-600/20 border border-blue-500/30 text-blue-400 rounded-lg hover:bg-blue-600/30 transition-colors disabled:opacity-50 text-sm font-medium"
-                                        >
-                                             {symbolsLoading ? "⏳ Syncing..." : "🔄 Sync Current Exchange"}
-                                        </button>
-                                        <button
-                                             onClick={syncAllExchanges}
-                                             disabled={syncingAll || symbolsLoading}
-                                             className="px-4 py-2 bg-[#FFAE00]/20 border border-[#FFAE00]/30 text-[#FFAE00] rounded-lg hover:bg-[#FFAE00]/30 transition-colors disabled:opacity-50 text-sm font-medium"
-                                        >
-                                             {syncingAll ? "⏳ Syncing All..." : "🌐 Sync All Exchanges"}
-                                        </button>
-                                   </div>
+               {/* Sync Symbols Buttons */}
+               {selectedAccountId && (
+                    <div style={{ marginBottom: "24px", display: "flex", flexDirection: "column", gap: "16px" }}>
+                         <div style={{ 
+                              display: "flex", 
+                              justifyContent: "space-between", 
+                              alignItems: "center", 
+                              gap: "16px",
+                              flexWrap: "wrap"
+                         }}>
+                              <div style={{ fontSize: "14px", color: "#888888" }}>
+                                   {markets.length > 0 ? <>📊 {markets.length} symbols loaded from database</> : <>⚠️ No symbols in database. Sync from exchange to load symbols.</>}
                               </div>
-                              
-                              {/* Sync Specific Exchange */}
-                              <div className="flex items-center gap-3 p-4 bg-[#1a1a1a] border border-[#333] rounded-lg">
-                                   <label className="text-sm text-gray-400 whitespace-nowrap">Sync Specific Exchange:</label>
-                                   <select
-                                        value={selectedExchangeName}
-                                        onChange={(e) => setSelectedExchangeName(e.target.value)}
-                                        disabled={syncingExchange || syncingAll}
-                                        className="flex-1 px-4 py-2 bg-[#252525] border border-[#333] text-white rounded-lg focus:outline-none focus:border-[#FFAE00] disabled:opacity-50 text-sm"
-                                   >
-                                        <option value="">Select Exchange...</option>
-                                        {exchanges.map((ex) => (
-                                             <option key={ex.id} value={ex.name}>
-                                                  {ex.display_name} ({ex.name})
-                                             </option>
-                                        ))}
-                                   </select>
+                              <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
                                    <button
-                                        onClick={syncSpecificExchange}
-                                        disabled={!selectedExchangeName || syncingExchange || syncingAll || symbolsLoading}
-                                        className="px-4 py-2 bg-purple-600/20 border border-purple-500/30 text-purple-400 rounded-lg hover:bg-purple-600/30 transition-colors disabled:opacity-50 text-sm font-medium whitespace-nowrap"
+                                        onClick={syncSymbols}
+                                        disabled={symbolsLoading}
+                                        style={{
+                                             padding: "8px 16px",
+                                             backgroundColor: "rgba(37, 99, 235, 0.2)",
+                                             border: "1px solid rgba(59, 130, 246, 0.3)",
+                                             color: "#60a5fa",
+                                             borderRadius: "8px",
+                                             fontSize: "14px",
+                                             fontWeight: "500",
+                                             cursor: symbolsLoading ? "not-allowed" : "pointer",
+                                             opacity: symbolsLoading ? 0.5 : 1,
+                                             transition: "all 0.2s",
+                                        }}
+                                        onMouseEnter={(e) => {
+                                             if (!symbolsLoading) {
+                                                  e.currentTarget.style.backgroundColor = "rgba(37, 99, 235, 0.3)";
+                                             }
+                                        }}
+                                        onMouseLeave={(e) => {
+                                             if (!symbolsLoading) {
+                                                  e.currentTarget.style.backgroundColor = "rgba(37, 99, 235, 0.2)";
+                                             }
+                                        }}
                                    >
-                                        {syncingExchange ? "⏳ Syncing..." : "🔄 Sync"}
+                                        {symbolsLoading ? "⏳ Syncing..." : "🔄 Sync Current Exchange"}
+                                   </button>
+                                   <button
+                                        onClick={syncAllExchanges}
+                                        disabled={syncingAll || symbolsLoading}
+                                        style={{
+                                             padding: "8px 16px",
+                                             backgroundColor: "rgba(255, 174, 0, 0.2)",
+                                             border: "1px solid rgba(255, 174, 0, 0.3)",
+                                             color: "#FFAE00",
+                                             borderRadius: "8px",
+                                             fontSize: "14px",
+                                             fontWeight: "500",
+                                             cursor: (syncingAll || symbolsLoading) ? "not-allowed" : "pointer",
+                                             opacity: (syncingAll || symbolsLoading) ? 0.5 : 1,
+                                             transition: "all 0.2s",
+                                        }}
+                                        onMouseEnter={(e) => {
+                                             if (!syncingAll && !symbolsLoading) {
+                                                  e.currentTarget.style.backgroundColor = "rgba(255, 174, 0, 0.3)";
+                                             }
+                                        }}
+                                        onMouseLeave={(e) => {
+                                             if (!syncingAll && !symbolsLoading) {
+                                                  e.currentTarget.style.backgroundColor = "rgba(255, 174, 0, 0.2)";
+                                             }
+                                        }}
+                                   >
+                                        {syncingAll ? "⏳ Syncing All..." : "🌐 Sync All Exchanges"}
                                    </button>
                               </div>
                          </div>
-                    )}
+                         
+                         {/* Sync Specific Exchange */}
+                         <div style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "12px",
+                              padding: "16px",
+                              backgroundColor: "#1a1a1a",
+                              border: "1px solid rgba(255, 255, 255, 0.1)",
+                              borderRadius: "8px",
+                              flexWrap: "wrap"
+                         }}>
+                              <label style={{ 
+                                   fontSize: "14px", 
+                                   color: "#888888", 
+                                   whiteSpace: "nowrap" 
+                              }}>
+                                   Sync Specific Exchange:
+                              </label>
+                              <select
+                                   value={selectedExchangeName}
+                                   onChange={(e) => setSelectedExchangeName(e.target.value)}
+                                   disabled={syncingExchange || syncingAll}
+                                   style={{
+                                        flex: 1,
+                                        minWidth: "200px",
+                                        padding: "8px 16px",
+                                        backgroundColor: "#252525",
+                                        border: "1px solid rgba(255, 255, 255, 0.1)",
+                                        color: "#ededed",
+                                        borderRadius: "8px",
+                                        fontSize: "14px",
+                                        outline: "none",
+                                        cursor: (syncingExchange || syncingAll) ? "not-allowed" : "pointer",
+                                        opacity: (syncingExchange || syncingAll) ? 0.5 : 1,
+                                   }}
+                                   onFocus={(e) => {
+                                        e.currentTarget.style.borderColor = "#FFAE00";
+                                   }}
+                                   onBlur={(e) => {
+                                        e.currentTarget.style.borderColor = "rgba(255, 255, 255, 0.1)";
+                                   }}
+                              >
+                                   <option value="">Select Exchange...</option>
+                                   {exchanges.map((ex) => (
+                                        <option key={ex.id} value={ex.name}>
+                                             {ex.display_name} ({ex.name})
+                                        </option>
+                                   ))}
+                              </select>
+                              <button
+                                   onClick={syncSpecificExchange}
+                                   disabled={!selectedExchangeName || syncingExchange || syncingAll || symbolsLoading}
+                                   style={{
+                                        padding: "8px 16px",
+                                        backgroundColor: "rgba(147, 51, 234, 0.2)",
+                                        border: "1px solid rgba(168, 85, 247, 0.3)",
+                                        color: "#a855f7",
+                                        borderRadius: "8px",
+                                        fontSize: "14px",
+                                        fontWeight: "500",
+                                        whiteSpace: "nowrap",
+                                        cursor: (!selectedExchangeName || syncingExchange || syncingAll || symbolsLoading) ? "not-allowed" : "pointer",
+                                        opacity: (!selectedExchangeName || syncingExchange || syncingAll || symbolsLoading) ? 0.5 : 1,
+                                        transition: "all 0.2s",
+                                   }}
+                                   onMouseEnter={(e) => {
+                                        if (selectedExchangeName && !syncingExchange && !syncingAll && !symbolsLoading) {
+                                             e.currentTarget.style.backgroundColor = "rgba(147, 51, 234, 0.3)";
+                                        }
+                                   }}
+                                   onMouseLeave={(e) => {
+                                        if (selectedExchangeName && !syncingExchange && !syncingAll && !symbolsLoading) {
+                                             e.currentTarget.style.backgroundColor = "rgba(147, 51, 234, 0.2)";
+                                        }
+                                   }}
+                              >
+                                   {syncingExchange ? "⏳ Syncing..." : "🔄 Sync"}
+                              </button>
+                         </div>
+                    </div>
+               )}
                     
                     {/* Sync All Exchanges Results Modal */}
                     {showSyncAllResults && syncAllResults && (
@@ -1186,41 +1511,120 @@ export default function BackfillPage() {
                          </div>
                     )}
 
-                    {/* All Symbols Table - For Download */}
-                    {selectedAccountId && markets.length > 0 && (
-                         <div className="bg-[#252525] border border-[#333] rounded-xl p-6 mb-6 shadow-xl">
-                              <div className="flex justify-between items-center mb-6">
-                                   <h2 className="text-2xl font-semibold">All Symbols - Start Download</h2>
-                                   <button
-                                        onClick={() => {
-                                             fetchMarkets();
-                                             fetchDataStatus();
-                                        }}
-                                        className="px-4 py-2 bg-[#1a1a1a] border border-[#333] text-gray-300 rounded-lg hover:bg-[#2a2a2a] transition-colors"
-                                   >
-                                        🔄 Refresh
-                                   </button>
-                              </div>
+               {/* All Symbols Table - For Download */}
+               {selectedAccountId && markets.length > 0 && (
+                    <div style={{
+                         backgroundColor: "#252525",
+                         border: "1px solid rgba(255, 255, 255, 0.1)",
+                         borderRadius: "12px",
+                         padding: "24px",
+                         marginBottom: "24px",
+                         boxShadow: "0 4px 6px rgba(0, 0, 0, 0.3)"
+                    }}>
+                         <div style={{ 
+                              display: "flex", 
+                              justifyContent: "space-between", 
+                              alignItems: "center", 
+                              marginBottom: "24px",
+                              flexWrap: "wrap",
+                              gap: "16px"
+                         }}>
+                              <h2 style={{ 
+                                   fontSize: "24px", 
+                                   fontWeight: "600", 
+                                   color: "#FFAE00",
+                                   margin: 0
+                              }}>
+                                   All Symbols - Start Download
+                              </h2>
+                              <button
+                                   onClick={() => {
+                                        fetchMarkets();
+                                        fetchDataStatus();
+                                   }}
+                                   style={{
+                                        padding: "8px 16px",
+                                        backgroundColor: "#1a1a1a",
+                                        border: "1px solid rgba(255, 255, 255, 0.1)",
+                                        color: "#ededed",
+                                        borderRadius: "8px",
+                                        fontSize: "14px",
+                                        cursor: "pointer",
+                                        transition: "all 0.2s",
+                                   }}
+                                   onMouseEnter={(e) => {
+                                        e.currentTarget.style.backgroundColor = "#2a2a2a";
+                                   }}
+                                   onMouseLeave={(e) => {
+                                        e.currentTarget.style.backgroundColor = "#1a1a1a";
+                                   }}
+                              >
+                                   🔄 Refresh
+                              </button>
+                         </div>
 
-                              {/* Search and Filter Bar */}
-                              <div className="mb-6 flex flex-col md:flex-row gap-4">
+                         {/* Search and Filter Bar */}
+                         <div style={{ 
+                              marginBottom: "24px", 
+                              display: "flex", 
+                              flexDirection: "column",
+                              gap: "16px"
+                         }}>
+                              <div style={{ 
+                                   display: "flex", 
+                                   flexDirection: "row",
+                                   gap: "12px",
+                                   flexWrap: "wrap"
+                              }}>
                                    {/* Search Input */}
-                                   <div className="flex-1">
+                                   <div style={{ flex: 1, minWidth: "200px" }}>
                                         <input
                                              type="text"
                                              placeholder="🔍 Search symbols (e.g., BTC, ETH, USDT)..."
                                              value={searchQuery}
                                              onChange={(e) => setSearchQuery(e.target.value)}
-                                             className="w-full px-4 py-2 bg-[#1a1a1a] border border-[#333] text-white rounded-lg focus:outline-none focus:border-[#FFAE00] transition-colors"
+                                             style={{
+                                                  width: "100%",
+                                                  padding: "10px 16px",
+                                                  backgroundColor: "#1a1a1a",
+                                                  border: "1px solid rgba(255, 255, 255, 0.1)",
+                                                  color: "#ededed",
+                                                  borderRadius: "8px",
+                                                  fontSize: "14px",
+                                                  outline: "none",
+                                                  transition: "all 0.2s",
+                                             }}
+                                             onFocus={(e) => {
+                                                  e.currentTarget.style.borderColor = "#FFAE00";
+                                             }}
+                                             onBlur={(e) => {
+                                                  e.currentTarget.style.borderColor = "rgba(255, 255, 255, 0.1)";
+                                             }}
                                         />
                                    </div>
 
                                    {/* Status Filter */}
-                                   <div className="flex-shrink-0">
+                                   <div style={{ flexShrink: 0 }}>
                                         <select
                                              value={statusFilter}
                                              onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
-                                             className="px-4 py-2 bg-[#1a1a1a] border border-[#333] text-white rounded-lg focus:outline-none focus:border-[#FFAE00] transition-colors"
+                                             style={{
+                                                  padding: "10px 16px",
+                                                  backgroundColor: "#1a1a1a",
+                                                  border: "1px solid rgba(255, 255, 255, 0.1)",
+                                                  color: "#ededed",
+                                                  borderRadius: "8px",
+                                                  fontSize: "14px",
+                                                  outline: "none",
+                                                  cursor: "pointer",
+                                                  transition: "all 0.2s",
+                                             }}
+                                             onFocus={(e) => {
+                                                  e.currentTarget.style.borderColor = "#FFAE00";
+                                             }}
+                                             onBlur={(e) => {
+                                                  e.currentTarget.style.borderColor = "rgba(255, 255, 255, 0.1)";
+                                             }}
                                         >
                                              <option value="all">All Status</option>
                                              <option value="missing">❌ Missing</option>
@@ -1232,11 +1636,27 @@ export default function BackfillPage() {
                                    </div>
 
                                    {/* Interval Filter */}
-                                   <div className="flex-shrink-0">
+                                   <div style={{ flexShrink: 0 }}>
                                         <select
                                              value={intervalFilter}
                                              onChange={(e) => setIntervalFilter(e.target.value)}
-                                             className="px-4 py-2 bg-[#1a1a1a] border border-[#333] text-white rounded-lg focus:outline-none focus:border-[#FFAE00] transition-colors"
+                                             style={{
+                                                  padding: "10px 16px",
+                                                  backgroundColor: "#1a1a1a",
+                                                  border: "1px solid rgba(255, 255, 255, 0.1)",
+                                                  color: "#ededed",
+                                                  borderRadius: "8px",
+                                                  fontSize: "14px",
+                                                  outline: "none",
+                                                  cursor: "pointer",
+                                                  transition: "all 0.2s",
+                                             }}
+                                             onFocus={(e) => {
+                                                  e.currentTarget.style.borderColor = "#FFAE00";
+                                             }}
+                                             onBlur={(e) => {
+                                                  e.currentTarget.style.borderColor = "rgba(255, 255, 255, 0.1)";
+                                             }}
                                         >
                                              <option value="all">All Intervals</option>
                                              {availableIntervals.map((interval) => (
@@ -1255,7 +1675,22 @@ export default function BackfillPage() {
                                                   setStatusFilter("all");
                                                   setIntervalFilter("all");
                                              }}
-                                             className="px-4 py-2 bg-red-600/20 border border-red-500/30 text-red-400 rounded-lg hover:bg-red-600/30 transition-colors"
+                                             style={{
+                                                  padding: "10px 16px",
+                                                  backgroundColor: "rgba(220, 38, 38, 0.2)",
+                                                  border: "1px solid rgba(239, 68, 68, 0.3)",
+                                                  color: "#ef4444",
+                                                  borderRadius: "8px",
+                                                  fontSize: "14px",
+                                                  cursor: "pointer",
+                                                  transition: "all 0.2s",
+                                             }}
+                                             onMouseEnter={(e) => {
+                                                  e.currentTarget.style.backgroundColor = "rgba(220, 38, 38, 0.3)";
+                                             }}
+                                             onMouseLeave={(e) => {
+                                                  e.currentTarget.style.backgroundColor = "rgba(220, 38, 38, 0.2)";
+                                             }}
                                         >
                                              ✕ Clear
                                         </button>
@@ -1263,32 +1698,94 @@ export default function BackfillPage() {
                               </div>
 
                               {/* Results Count */}
-                              <div className="mb-4 text-sm text-gray-400">
+                              <div style={{ fontSize: "14px", color: "#888888" }}>
                                    Showing {filteredMarkets.length} of {markets.length} symbols
                               </div>
+                         </div>
 
-                              <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
-                                   <table className="w-full">
-                                        <thead className="bg-[#1a1a1a] border-b border-[#333] sticky top-0">
-                                             <tr>
-                                                  <th className="px-4 py-3 text-left text-sm font-medium text-gray-300 sticky left-0 bg-[#1a1a1a] z-10 border-r border-[#333]">Symbol</th>
-                                                  {availableIntervals.map((interval) => (
-                                                       <th key={interval} className="px-3 py-3 text-center text-xs font-medium text-gray-300 min-w-[120px]">
-                                                            {interval}
-                                                       </th>
-                                                  ))}
-                                                  <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Actions</th>
-                                             </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-[#333]">
-                                             {filteredMarkets.map((market) => {
-                                                  const symbolStatus = dataStatus[market.symbol] || {};
-                                                  // Normalize symbol for backup filename matching
-                                                  const normalizedSymbol = market.symbol.replace("/", "_");
+                         <div style={{
+                              overflowX: "auto",
+                              maxHeight: "600px",
+                              overflowY: "auto"
+                         }}>
+                              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                                   <thead style={{
+                                        backgroundColor: "#1a1a1a",
+                                        borderBottom: "1px solid rgba(255, 255, 255, 0.1)",
+                                        position: "sticky",
+                                        top: 0,
+                                        zIndex: 10
+                                   }}>
+                                        <tr>
+                                             <th style={{
+                                                  padding: "12px 16px",
+                                                  textAlign: "left",
+                                                  fontSize: "14px",
+                                                  fontWeight: "500",
+                                                  color: "#ededed",
+                                                  position: "sticky",
+                                                  left: 0,
+                                                  backgroundColor: "#1a1a1a",
+                                                  zIndex: 11,
+                                                  borderRight: "1px solid rgba(255, 255, 255, 0.1)"
+                                             }}>
+                                                  Symbol
+                                             </th>
+                                             {availableIntervals.map((interval) => (
+                                                  <th key={interval} style={{
+                                                       padding: "12px",
+                                                       textAlign: "center",
+                                                       fontSize: "12px",
+                                                       fontWeight: "500",
+                                                       color: "#ededed",
+                                                       minWidth: "120px"
+                                                  }}>
+                                                       {interval}
+                                                  </th>
+                                             ))}
+                                             <th style={{
+                                                  padding: "12px 16px",
+                                                  textAlign: "left",
+                                                  fontSize: "14px",
+                                                  fontWeight: "500",
+                                                  color: "#ededed"
+                                             }}>
+                                                  Actions
+                                             </th>
+                                        </tr>
+                                   </thead>
+                                   <tbody>
+                                        {filteredMarkets.map((market) => {
+                                             const symbolStatus = dataStatus[market.symbol] || {};
+                                             // Normalize symbol for backup filename matching
+                                             const normalizedSymbol = market.symbol.replace("/", "_");
 
-                                                  return (
-                                                       <tr key={market.symbol} className="hover:bg-[#1a1a1a]/50 transition-colors">
-                                                            <td className="px-4 py-3 font-semibold text-white sticky left-0 bg-[#252525] z-10 border-r border-[#333]">{market.symbol}</td>
+                                             return (
+                                                  <tr 
+                                                       key={market.symbol}
+                                                       style={{
+                                                            borderBottom: "1px solid rgba(255, 255, 255, 0.05)",
+                                                            transition: "background-color 0.2s",
+                                                       }}
+                                                       onMouseEnter={(e) => {
+                                                            e.currentTarget.style.backgroundColor = "rgba(26, 26, 26, 0.5)";
+                                                       }}
+                                                       onMouseLeave={(e) => {
+                                                            e.currentTarget.style.backgroundColor = "transparent";
+                                                       }}
+                                                  >
+                                                       <td style={{
+                                                            padding: "12px 16px",
+                                                            fontWeight: "600",
+                                                            color: "#ededed",
+                                                            position: "sticky",
+                                                            left: 0,
+                                                            backgroundColor: "#252525",
+                                                            zIndex: 10,
+                                                            borderRight: "1px solid rgba(255, 255, 255, 0.1)"
+                                                       }}>
+                                                            {market.symbol}
+                                                       </td>
                                                             {availableIntervals.map((interval) => {
                                                                  const status = symbolStatus[interval];
                                                                  const hasData = status && status.exists && status.count > 0;
@@ -1313,41 +1810,85 @@ export default function BackfillPage() {
                                                                  })?.filename;
 
                                                                  return (
-                                                                      <td key={interval} className="px-3 py-3 text-center">
-                                                                           <div className="flex flex-col items-center gap-1">
+                                                                      <td key={interval} style={{
+                                                                           padding: "12px",
+                                                                           textAlign: "center"
+                                                                      }}>
+                                                                           <div style={{
+                                                                                display: "flex",
+                                                                                flexDirection: "column",
+                                                                                alignItems: "center",
+                                                                                gap: "4px"
+                                                                           }}>
                                                                                 {activeJob ? (
                                                                                      <span
-                                                                                          className={`inline-block px-2 py-1 rounded text-xs font-medium ${
-                                                                                               activeJob.status === "running"
-                                                                                                    ? "bg-blue-500/20 text-blue-400 border border-blue-500/30"
-                                                                                                    : activeJob.status === "paused"
-                                                                                                    ? "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30"
-                                                                                                    : activeJob.status === "completed"
-                                                                                                    ? "bg-green-500/20 text-green-400 border border-green-500/30"
-                                                                                                    : "bg-red-500/20 text-red-400 border border-red-500/30"
-                                                                                          }`}
+                                                                                          style={{
+                                                                                               display: "inline-block",
+                                                                                               padding: "4px 8px",
+                                                                                               borderRadius: "4px",
+                                                                                               fontSize: "12px",
+                                                                                               fontWeight: "500",
+                                                                                               ...(activeJob.status === "running" ? {
+                                                                                                    backgroundColor: "rgba(59, 130, 246, 0.2)",
+                                                                                                    color: "#60a5fa",
+                                                                                                    border: "1px solid rgba(59, 130, 246, 0.3)"
+                                                                                               } : activeJob.status === "paused" ? {
+                                                                                                    backgroundColor: "rgba(234, 179, 8, 0.2)",
+                                                                                                    color: "#eab308",
+                                                                                                    border: "1px solid rgba(234, 179, 8, 0.3)"
+                                                                                               } : activeJob.status === "completed" ? {
+                                                                                                    backgroundColor: "rgba(34, 197, 94, 0.2)",
+                                                                                                    color: "#22c55e",
+                                                                                                    border: "1px solid rgba(34, 197, 94, 0.3)"
+                                                                                               } : {
+                                                                                                    backgroundColor: "rgba(239, 68, 68, 0.2)",
+                                                                                                    color: "#ef4444",
+                                                                                                    border: "1px solid rgba(239, 68, 68, 0.3)"
+                                                                                               })
+                                                                                          }}
                                                                                      >
                                                                                           {activeJob.status.toUpperCase()}
                                                                                      </span>
                                                                                 ) : hasData ? (
                                                                                      <span
-                                                                                          className={`inline-block px-2 py-1 rounded text-xs font-medium ${
-                                                                                               isComplete
-                                                                                                    ? "bg-green-500/20 text-green-400 border border-green-500/30"
-                                                                                                    : isIncomplete
-                                                                                                    ? "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30"
-                                                                                                    : "bg-gray-500/20 text-gray-400 border border-gray-500/30"
-                                                                                          }`}
+                                                                                          style={{
+                                                                                               display: "inline-block",
+                                                                                               padding: "4px 8px",
+                                                                                               borderRadius: "4px",
+                                                                                               fontSize: "12px",
+                                                                                               fontWeight: "500",
+                                                                                               ...(isComplete ? {
+                                                                                                    backgroundColor: "rgba(34, 197, 94, 0.2)",
+                                                                                                    color: "#22c55e",
+                                                                                                    border: "1px solid rgba(34, 197, 94, 0.3)"
+                                                                                               } : isIncomplete ? {
+                                                                                                    backgroundColor: "rgba(234, 179, 8, 0.2)",
+                                                                                                    color: "#eab308",
+                                                                                                    border: "1px solid rgba(234, 179, 8, 0.3)"
+                                                                                               } : {
+                                                                                                    backgroundColor: "rgba(107, 114, 128, 0.2)",
+                                                                                                    color: "#9ca3af",
+                                                                                                    border: "1px solid rgba(107, 114, 128, 0.3)"
+                                                                                               })
+                                                                                          }}
                                                                                      >
                                                                                           {isComplete ? "✅" : isIncomplete ? "⚠️" : "📊"}
                                                                                      </span>
                                                                                 ) : (
-                                                                                     <span className="inline-block px-2 py-1 rounded text-xs bg-gray-500/20 text-gray-400 border border-gray-500/30">
+                                                                                     <span style={{
+                                                                                          display: "inline-block",
+                                                                                          padding: "4px 8px",
+                                                                                          borderRadius: "4px",
+                                                                                          fontSize: "12px",
+                                                                                          backgroundColor: "rgba(107, 114, 128, 0.2)",
+                                                                                          color: "#9ca3af",
+                                                                                          border: "1px solid rgba(107, 114, 128, 0.3)"
+                                                                                     }}>
                                                                                           ❌
                                                                                      </span>
                                                                                 )}
                                                                                 {!activeJob && (
-                                                                                     <div className="flex gap-1">
+                                                                                     <div style={{ display: "flex", gap: "4px" }}>
                                                                                           {hasBackup && !hasData && backupFile && (
                                                                                                <button
                                                                                                     onClick={async () => {
@@ -1355,8 +1896,28 @@ export default function BackfillPage() {
                                                                                                          await fetchDataStatus();
                                                                                                     }}
                                                                                                     disabled={processing[`restore_${backupFile}`] || loading}
-                                                                                                    className="px-2 py-1 text-xs bg-purple-600/20 border border-purple-500/30 text-purple-400 rounded hover:bg-purple-600/30 transition-colors disabled:opacity-50"
+                                                                                                    style={{
+                                                                                                         padding: "4px 8px",
+                                                                                                         fontSize: "12px",
+                                                                                                         backgroundColor: "rgba(147, 51, 234, 0.2)",
+                                                                                                         border: "1px solid rgba(168, 85, 247, 0.3)",
+                                                                                                         color: "#a855f7",
+                                                                                                         borderRadius: "4px",
+                                                                                                         cursor: (processing[`restore_${backupFile}`] || loading) ? "not-allowed" : "pointer",
+                                                                                                         opacity: (processing[`restore_${backupFile}`] || loading) ? 0.5 : 1,
+                                                                                                         transition: "all 0.2s",
+                                                                                                    }}
                                                                                                     title={`Restore backup for ${market.symbol} ${interval} from ${backupFile}`}
+                                                                                                    onMouseEnter={(e) => {
+                                                                                                         if (!processing[`restore_${backupFile}`] && !loading) {
+                                                                                                              e.currentTarget.style.backgroundColor = "rgba(147, 51, 234, 0.3)";
+                                                                                                         }
+                                                                                                    }}
+                                                                                                    onMouseLeave={(e) => {
+                                                                                                         if (!processing[`restore_${backupFile}`] && !loading) {
+                                                                                                              e.currentTarget.style.backgroundColor = "rgba(147, 51, 234, 0.2)";
+                                                                                                         }
+                                                                                                    }}
                                                                                                >
                                                                                                     📥
                                                                                                </button>
@@ -1371,8 +1932,28 @@ export default function BackfillPage() {
                                                                                                     }
                                                                                                }}
                                                                                                disabled={loading}
-                                                                                               className="px-2 py-1 text-xs bg-green-600/20 border border-green-500/30 text-green-400 rounded hover:bg-green-600/30 transition-colors disabled:opacity-50"
+                                                                                               style={{
+                                                                                                    padding: "4px 8px",
+                                                                                                    fontSize: "12px",
+                                                                                                    backgroundColor: "rgba(34, 197, 94, 0.2)",
+                                                                                                    border: "1px solid rgba(34, 197, 94, 0.3)",
+                                                                                                    color: "#22c55e",
+                                                                                                    borderRadius: "4px",
+                                                                                                    cursor: loading ? "not-allowed" : "pointer",
+                                                                                                    opacity: loading ? 0.5 : 1,
+                                                                                                    transition: "all 0.2s",
+                                                                                               }}
                                                                                                title={`Start download for ${market.symbol} ${interval}`}
+                                                                                               onMouseEnter={(e) => {
+                                                                                                    if (!loading) {
+                                                                                                         e.currentTarget.style.backgroundColor = "rgba(34, 197, 94, 0.3)";
+                                                                                                    }
+                                                                                               }}
+                                                                                               onMouseLeave={(e) => {
+                                                                                                    if (!loading) {
+                                                                                                         e.currentTarget.style.backgroundColor = "rgba(34, 197, 94, 0.2)";
+                                                                                                    }
+                                                                                               }}
                                                                                           >
                                                                                                ⬇️
                                                                                           </button>
@@ -1382,83 +1963,210 @@ export default function BackfillPage() {
                                                                       </td>
                                                                  );
                                                             })}
-                                                            <td className="px-4 py-3">
-                                                                 <button
-                                                                      onClick={async () => {
-                                                                           // Start download for all intervals sequentially
-                                                                           const intervals = availableIntervals;
-                                                                           let started = 0;
-                                                                           for (const interval of intervals) {
-                                                                                const existingJob = jobs.find((j) => j.symbol === market.symbol && j.interval === interval);
-                                                                                if (!existingJob) {
-                                                                                     const result = await startBackfillForSymbol(market.symbol, interval);
-                                                                                     if (result.success) {
-                                                                                          started++;
-                                                                                     }
-                                                                                     // Small delay between starts
-                                                                                     await new Promise((resolve) => setTimeout(resolve, 500));
+                                                       <td style={{ padding: "12px 16px" }}>
+                                                            <button
+                                                                 onClick={async () => {
+                                                                      // Start download for all intervals sequentially
+                                                                      const intervals = availableIntervals;
+                                                                      let started = 0;
+                                                                      for (const interval of intervals) {
+                                                                           const existingJob = jobs.find((j) => j.symbol === market.symbol && j.interval === interval);
+                                                                           if (!existingJob) {
+                                                                                const result = await startBackfillForSymbol(market.symbol, interval);
+                                                                                if (result.success) {
+                                                                                     started++;
                                                                                 }
+                                                                                // Small delay between starts
+                                                                                await new Promise((resolve) => setTimeout(resolve, 500));
                                                                            }
-                                                                           if (started > 0) {
-                                                                                setSuccess(`Started ${started} download(s) for ${market.symbol}`);
-                                                                           }
-                                                                      }}
-                                                                      disabled={loading}
-                                                                      className="px-3 py-1.5 text-xs bg-blue-600/20 border border-blue-500/30 text-blue-400 rounded hover:bg-blue-600/30 transition-colors disabled:opacity-50"
-                                                                      title={`Start download for all intervals`}
-                                                                 >
-                                                                      ⬇️ All
-                                                                 </button>
-                                                            </td>
-                                                       </tr>
-                                                  );
-                                             })}
-                                        </tbody>
-                                   </table>
-                              </div>
+                                                                      }
+                                                                      if (started > 0) {
+                                                                           setSuccess(`Started ${started} download(s) for ${market.symbol}`);
+                                                                      }
+                                                                 }}
+                                                                 disabled={loading}
+                                                                 style={{
+                                                                      padding: "6px 12px",
+                                                                      fontSize: "12px",
+                                                                      backgroundColor: "rgba(37, 99, 235, 0.2)",
+                                                                      border: "1px solid rgba(59, 130, 246, 0.3)",
+                                                                      color: "#60a5fa",
+                                                                      borderRadius: "4px",
+                                                                      cursor: loading ? "not-allowed" : "pointer",
+                                                                      opacity: loading ? 0.5 : 1,
+                                                                      transition: "all 0.2s",
+                                                                 }}
+                                                                 title="Start download for all intervals"
+                                                                 onMouseEnter={(e) => {
+                                                                      if (!loading) {
+                                                                           e.currentTarget.style.backgroundColor = "rgba(37, 99, 235, 0.3)";
+                                                                      }
+                                                                 }}
+                                                                 onMouseLeave={(e) => {
+                                                                      if (!loading) {
+                                                                           e.currentTarget.style.backgroundColor = "rgba(37, 99, 235, 0.2)";
+                                                                      }
+                                                                 }}
+                                                            >
+                                                                 ⬇️ All
+                                                            </button>
+                                                       </td>
+                                                  </tr>
+                                             );
+                                        })}
+                                   </tbody>
+                              </table>
                          </div>
-                    )}
+                    </div>
+               )}
 
-                    {/* Backfill Jobs Table */}
-                    <div className="bg-[#252525] border border-[#333] rounded-xl p-6 mb-6 shadow-xl">
-                         <div className="flex justify-between items-center mb-6">
-                              <h2 className="text-2xl font-semibold">Backfill Jobs</h2>
-                              <button
-                                   onClick={() => {
-                                        fetchJobs();
-                                        fetchBackups();
-                                        fetchDataStatus();
-                                   }}
-                                   className="px-4 py-2 bg-[#1a1a1a] border border-[#333] text-gray-300 rounded-lg hover:bg-[#2a2a2a] transition-colors"
-                              >
-                                   🔄 Refresh
-                              </button>
+               {/* Backfill Jobs Table */}
+               <div style={{
+                    backgroundColor: "#252525",
+                    border: "1px solid rgba(255, 255, 255, 0.1)",
+                    borderRadius: "12px",
+                    padding: "24px",
+                    marginBottom: "24px",
+                    boxShadow: "0 4px 6px rgba(0, 0, 0, 0.3)"
+               }}>
+                    <div style={{
+                         display: "flex",
+                         justifyContent: "space-between",
+                         alignItems: "center",
+                         marginBottom: "24px",
+                         flexWrap: "wrap",
+                         gap: "16px"
+                    }}>
+                         <h2 style={{
+                              fontSize: "24px",
+                              fontWeight: "600",
+                              color: "#FFAE00",
+                              margin: 0
+                         }}>
+                              Backfill Jobs
+                         </h2>
+                         <button
+                              onClick={() => {
+                                   fetchJobs();
+                                   fetchBackups();
+                                   fetchDataStatus();
+                              }}
+                              style={{
+                                   padding: "8px 16px",
+                                   backgroundColor: "#1a1a1a",
+                                   border: "1px solid rgba(255, 255, 255, 0.1)",
+                                   color: "#ededed",
+                                   borderRadius: "8px",
+                                   fontSize: "14px",
+                                   cursor: "pointer",
+                                   transition: "all 0.2s",
+                              }}
+                              onMouseEnter={(e) => {
+                                   e.currentTarget.style.backgroundColor = "#2a2a2a";
+                              }}
+                              onMouseLeave={(e) => {
+                                   e.currentTarget.style.backgroundColor = "#1a1a1a";
+                              }}
+                         >
+                              🔄 Refresh
+                         </button>
+                    </div>
+
+                    {jobs.length === 0 ? (
+                         <div style={{
+                              textAlign: "center",
+                              padding: "48px 0",
+                              color: "#888888"
+                         }}>
+                              <div style={{ fontSize: "48px", marginBottom: "16px" }}>📭</div>
+                              <p style={{ margin: 0 }}>No active backfill jobs</p>
                          </div>
-
-                         {jobs.length === 0 ? (
-                              <div className="text-center py-12 text-gray-400">
-                                   <div className="text-4xl mb-4">📭</div>
-                                   <p>No active backfill jobs</p>
-                              </div>
-                         ) : (
-                              <div className="overflow-x-auto">
-                                   <table className="w-full">
-                                        <thead className="bg-[#1a1a1a] border-b border-[#333]">
-                                             <tr>
-                                                  <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Symbol</th>
-                                                  <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Last Updated</th>
-                                                  <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Intervals</th>
-                                                  <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Progress</th>
-                                                  <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Pages</th>
-                                                  <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Status</th>
-                                                  <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Backup File Name</th>
-                                                  <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Actions</th>
-                                             </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-[#333]">
-                                             {jobs.map((job) => {
-                                                  const progress = calculateProgress(job);
-                                                  const isProcessing = processing[`${job.symbol}_${job.interval}`] || false;
+                    ) : (
+                         <div style={{ overflowX: "auto" }}>
+                              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                                   <thead style={{
+                                        backgroundColor: "#1a1a1a",
+                                        borderBottom: "1px solid rgba(255, 255, 255, 0.1)"
+                                   }}>
+                                        <tr>
+                                             <th style={{
+                                                  padding: "12px 16px",
+                                                  textAlign: "left",
+                                                  fontSize: "14px",
+                                                  fontWeight: "500",
+                                                  color: "#ededed"
+                                             }}>
+                                                  Symbol
+                                             </th>
+                                             <th style={{
+                                                  padding: "12px 16px",
+                                                  textAlign: "left",
+                                                  fontSize: "14px",
+                                                  fontWeight: "500",
+                                                  color: "#ededed"
+                                             }}>
+                                                  Last Updated
+                                             </th>
+                                             <th style={{
+                                                  padding: "12px 16px",
+                                                  textAlign: "left",
+                                                  fontSize: "14px",
+                                                  fontWeight: "500",
+                                                  color: "#ededed"
+                                             }}>
+                                                  Intervals
+                                             </th>
+                                             <th style={{
+                                                  padding: "12px 16px",
+                                                  textAlign: "left",
+                                                  fontSize: "14px",
+                                                  fontWeight: "500",
+                                                  color: "#ededed"
+                                             }}>
+                                                  Progress
+                                             </th>
+                                             <th style={{
+                                                  padding: "12px 16px",
+                                                  textAlign: "left",
+                                                  fontSize: "14px",
+                                                  fontWeight: "500",
+                                                  color: "#ededed"
+                                             }}>
+                                                  Pages
+                                             </th>
+                                             <th style={{
+                                                  padding: "12px 16px",
+                                                  textAlign: "left",
+                                                  fontSize: "14px",
+                                                  fontWeight: "500",
+                                                  color: "#ededed"
+                                             }}>
+                                                  Status
+                                             </th>
+                                             <th style={{
+                                                  padding: "12px 16px",
+                                                  textAlign: "left",
+                                                  fontSize: "14px",
+                                                  fontWeight: "500",
+                                                  color: "#ededed"
+                                             }}>
+                                                  Backup File Name
+                                             </th>
+                                             <th style={{
+                                                  padding: "12px 16px",
+                                                  textAlign: "left",
+                                                  fontSize: "14px",
+                                                  fontWeight: "500",
+                                                  color: "#ededed"
+                                             }}>
+                                                  Actions
+                                             </th>
+                                        </tr>
+                                   </thead>
+                                   <tbody>
+                                        {jobs.map((job) => {
+                                             const progress = calculateProgress(job);
+                                             const isProcessing = processing[`${job.symbol}_${job.interval}`] || false;
 
                                                   // Find backup file for this symbol/interval
                                                   const normalizedSymbol = job.symbol.replace("/", "_");
@@ -1510,7 +2218,24 @@ export default function BackfillPage() {
 
                                                             {/* Backup File Name */}
                                                             <td className="px-4 py-4">
-                                                                 <div className="text-xs text-gray-400 font-mono">{backupFile ? backupFile.filename : "-"}</div>
+                                                                 {backupFile ? (
+                                                                      <div>
+                                                                           <div className="text-xs text-gray-400 font-mono">{backupFile.filename}</div>
+                                                                           {backupFile.created && (
+                                                                                <div className="text-xs text-gray-500 mt-1">
+                                                                                     {new Date(backupFile.created).toLocaleDateString('en-US', { 
+                                                                                          year: 'numeric', 
+                                                                                          month: '2-digit', 
+                                                                                          day: '2-digit',
+                                                                                          hour: '2-digit',
+                                                                                          minute: '2-digit'
+                                                                                     })}
+                                                                                </div>
+                                                                           )}
+                                                                      </div>
+                                                                 ) : (
+                                                                      <div className="text-xs text-gray-400">-</div>
+                                                                 )}
                                                             </td>
 
                                                             {/* Actions */}
@@ -1584,12 +2309,60 @@ export default function BackfillPage() {
                                                                       )}
                                                                       {job.status === "running" && (
                                                                            <button
-                                                                                onClick={() => handleProcess(job.symbol, job.interval)}
+                                                                                onClick={() => {
+                                                                                     const jobKey = `${job.symbol}_${job.interval}`;
+                                                                                     if (autoProcessingJobs.has(jobKey)) {
+                                                                                          // Stop auto-processing
+                                                                                          toggleAutoProcess(job.symbol, job.interval);
+                                                                                     } else {
+                                                                                          // Start auto-processing (will continue until done)
+                                                                                          toggleAutoProcess(job.symbol, job.interval);
+                                                                                     }
+                                                                                }}
                                                                                 disabled={isProcessing}
-                                                                                className="px-4 py-2 bg-green-600/20 border border-green-500/30 text-green-400 rounded hover:bg-green-600/30 transition-colors disabled:opacity-50 text-sm font-medium"
-                                                                                title="Process Pages"
+                                                                                style={{
+                                                                                     padding: "8px 16px",
+                                                                                     backgroundColor: autoProcessingJobs.has(`${job.symbol}_${job.interval}`) 
+                                                                                          ? "rgba(239, 68, 68, 0.2)" 
+                                                                                          : "rgba(34, 197, 94, 0.2)",
+                                                                                     border: `1px solid ${autoProcessingJobs.has(`${job.symbol}_${job.interval}`) 
+                                                                                          ? "rgba(239, 68, 68, 0.3)" 
+                                                                                          : "rgba(34, 197, 94, 0.3)"}`,
+                                                                                     color: autoProcessingJobs.has(`${job.symbol}_${job.interval}`) 
+                                                                                          ? "#ef4444" 
+                                                                                          : "#22c55e",
+                                                                                     borderRadius: "4px",
+                                                                                     fontSize: "14px",
+                                                                                     fontWeight: "500",
+                                                                                     cursor: isProcessing ? "not-allowed" : "pointer",
+                                                                                     opacity: isProcessing ? 0.5 : 1,
+                                                                                     transition: "all 0.2s",
+                                                                                }}
+                                                                                title={autoProcessingJobs.has(`${job.symbol}_${job.interval}`) 
+                                                                                     ? "Stop auto-download" 
+                                                                                     : "Start auto-download (will continue until complete)"}
+                                                                                onMouseEnter={(e) => {
+                                                                                     if (!isProcessing) {
+                                                                                          const jobKey = `${job.symbol}_${job.interval}`;
+                                                                                          if (autoProcessingJobs.has(jobKey)) {
+                                                                                               e.currentTarget.style.backgroundColor = "rgba(239, 68, 68, 0.3)";
+                                                                                          } else {
+                                                                                               e.currentTarget.style.backgroundColor = "rgba(34, 197, 94, 0.3)";
+                                                                                          }
+                                                                                     }
+                                                                                }}
+                                                                                onMouseLeave={(e) => {
+                                                                                     if (!isProcessing) {
+                                                                                          const jobKey = `${job.symbol}_${job.interval}`;
+                                                                                          if (autoProcessingJobs.has(jobKey)) {
+                                                                                               e.currentTarget.style.backgroundColor = "rgba(239, 68, 68, 0.2)";
+                                                                                          } else {
+                                                                                               e.currentTarget.style.backgroundColor = "rgba(34, 197, 94, 0.2)";
+                                                                                          }
+                                                                                     }
+                                                                                }}
                                                                            >
-                                                                                {isProcessing ? "Processing..." : "Download"}
+                                                                                {isProcessing ? "Processing..." : (autoProcessingJobs.has(`${job.symbol}_${job.interval}`) ? "⏹️ Stop" : "⬇️ Auto Download")}
                                                                            </button>
                                                                       )}
                                                                       <button
@@ -1599,6 +2372,17 @@ export default function BackfillPage() {
                                                                            title="Create Backup"
                                                                       >
                                                                            {processing[`backup_${job.symbol}_${job.interval}`] ? "Creating..." : "Backup"}
+                                                                      </button>
+                                                                      <button
+                                                                           onClick={() => {
+                                                                                console.log("Update button clicked:", { symbol: job.symbol, interval: job.interval, status: job.status });
+                                                                                handleUpdate(job.symbol, job.interval);
+                                                                           }}
+                                                                           disabled={processing[`update_${job.symbol}_${job.interval}`] || false}
+                                                                           className="px-4 py-2 bg-blue-600/20 border border-blue-500/30 text-blue-400 rounded hover:bg-blue-600/30 transition-colors disabled:opacity-50 text-sm font-medium"
+                                                                           title="Update - Download new candles from last timestamp to now"
+                                                                      >
+                                                                           {processing[`update_${job.symbol}_${job.interval}`] ? "Updating..." : "Update"}
                                                                       </button>
                                                                  </div>
                                                             </td>
@@ -1871,7 +2655,6 @@ export default function BackfillPage() {
                               </div>
                          </div>
                     )}
-               </div>
           </div>
      );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { createChart, IChartApi, ISeriesApi, CandlestickData, Time, LineData, CandlestickSeries, LineSeries, UTCTimestamp, IRange, BusinessDay } from "lightweight-charts";
+import { createChart, IChartApi, ISeriesApi, CandlestickData, Time, LineData, CandlestickSeries, LineSeries, UTCTimestamp, IRange, BusinessDay, IPriceLine } from "lightweight-charts";
 import DrawingToolsToolbar, { DrawingTool } from "./DrawingToolsToolbar";
 
 interface OHLCVCandle {
@@ -65,6 +65,7 @@ export default function MainChart({
     const paginationListenerRef = useRef<(() => void) | null>(null);
     const previousDataRef = useRef<CandlestickData[]>([]);
     const currentPriceLineRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const currentPriceLinePriceLineRef = useRef<IPriceLine | null>(null);
     const previousPriceRef = useRef<number | null>(null);
     const drawingsRef = useRef<Array<{ id: string; primitive: unknown }>>([]);
     const oldestTimestampRef = useRef<number | null>(null);
@@ -411,11 +412,23 @@ export default function MainChart({
                     color: initialColor,
                     lineWidth: 2,
                     lineStyle: 1, // Dashed
-                    title: candleTimeTitle,
-                    priceLineVisible: true,
+                    priceLineVisible: false, // We'll use createPriceLine instead
                     lastValueVisible: false,
                 }) as ISeriesApi<"Line">;
                 currentPriceLineRef.current = currentPriceLine;
+                
+                // Create price line with title for displaying price label
+                if (currentPrice !== null) {
+                    const priceLine = currentPriceLine.createPriceLine({
+                        price: currentPrice,
+                        color: initialColor,
+                        lineWidth: 2,
+                        lineStyle: 1, // Dashed
+                        axisLabelVisible: true,
+                        title: candleTimeTitle,
+                    });
+                    currentPriceLinePriceLineRef.current = priceLine;
+                }
                 
                 // Initialize previous price reference
                 if (currentPrice !== null) {
@@ -541,6 +554,7 @@ export default function MainChart({
             }
             candlestickSeriesRef.current = null;
             currentPriceLineRef.current = null;
+            currentPriceLinePriceLineRef.current = null;
             setChartReady(false);
         };
     }, [loading]); // Re-run when loading state changes
@@ -697,11 +711,23 @@ export default function MainChart({
                             color: initialColor,
                             lineWidth: 2,
                             lineStyle: 1, // Dashed
-                            title: candleTimeTitle,
-                            priceLineVisible: true,
+                            priceLineVisible: false, // We'll use createPriceLine instead
                             lastValueVisible: false,
                         }) as ISeriesApi<"Line">;
                         currentPriceLineRef.current = currentPriceLine;
+                        
+                        // Create price line with title for displaying price label
+                        if (currentPrice !== null) {
+                            const priceLine = currentPriceLine.createPriceLine({
+                                price: currentPrice,
+                                color: initialColor,
+                                lineWidth: 2,
+                                lineStyle: 1, // Dashed
+                                axisLabelVisible: true,
+                                title: candleTimeTitle,
+                            });
+                            currentPriceLinePriceLineRef.current = priceLine;
+                        }
                         
                         // Initialize previous price reference
                         if (currentPrice !== null) {
@@ -1225,17 +1251,6 @@ export default function MainChart({
             // If price is the same, keep previous color
         }
         
-        // Update line color if price changed
-        if (previousPrice !== null && currentPrice !== previousPrice) {
-            try {
-                currentPriceLine.applyOptions({
-                    color: lineColor,
-                });
-            } catch (error) {
-                console.error("Error updating current price line color:", error);
-            }
-        }
-        
         // Helper function to calculate remaining time until candle closes
         const getCandleRemainingTime = (timeframe: string, candleTimestamp: number): string => {
             // Parse timeframe to seconds
@@ -1266,11 +1281,8 @@ export default function MainChart({
             return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
         };
         
-        // Get the first and last timestamps from ohlcvData to create a horizontal line across the entire chart
-        const firstCandle = ohlcvData[0];
+        // Get the last candle timestamp
         const lastCandle = ohlcvData[ohlcvData.length - 1];
-        
-        const firstTimestamp = firstCandle.t > 1000000000000 ? Math.floor(firstCandle.t / 1000) : firstCandle.t;
         const lastTimestamp = lastCandle.t > 1000000000000 ? Math.floor(lastCandle.t / 1000) : lastCandle.t;
         
         // Calculate remaining time until candle closes for title
@@ -1283,51 +1295,47 @@ export default function MainChart({
             candleTimeTitle = currentPrice.toFixed(8);
         }
         
-        // Update title with candle time - put timer under price using newline
+        // Remove old price line if it exists
+        if (currentPriceLinePriceLineRef.current) {
+            try {
+                currentPriceLine.removePriceLine(currentPriceLinePriceLineRef.current);
+            } catch (error) {
+                console.warn("Error removing old price line:", error);
+            }
+            currentPriceLinePriceLineRef.current = null;
+        }
+        
+        // Create new price line with updated title and color
+        // Note: createPriceLine creates a horizontal line at the specified price
+        // We don't need to call setData separately - the priceLine itself handles the display
         try {
-            currentPriceLine.applyOptions({
+            const priceLine = currentPriceLine.createPriceLine({
+                price: currentPrice,
+                color: lineColor,
+                lineWidth: 2,
+                lineStyle: 1, // Dashed
+                axisLabelVisible: true,
                 title: candleTimeTitle,
             });
+            currentPriceLinePriceLineRef.current = priceLine;
+            
+            // Update line color if price changed
+            if (previousPrice !== null && currentPrice !== previousPrice) {
+                try {
+                    currentPriceLine.applyOptions({
+                        color: lineColor,
+            });
         } catch (error) {
-            console.error("Error updating current price line title:", error);
-        }
-        
-        // Get current visible range BEFORE updating price line to preserve scroll position
-        let savedVisibleRange: IRange<Time> | null = null;
-        if (chartRef.current) {
-            const visibleRange = chartRef.current.timeScale().getVisibleRange();
-            if (visibleRange) {
-                savedVisibleRange = {
-                    from: visibleRange.from,
-                    to: visibleRange.to,
-                };
+                    console.error("Error updating current price line color:", error);
+                }
             }
-        }
-        
-        // Create a horizontal line by setting the same price at both start and end timestamps
-        try {
-            currentPriceLine.setData([
-                {
-                    time: firstTimestamp as UTCTimestamp,
-                    value: currentPrice,
-                },
-                {
-                    time: lastTimestamp as UTCTimestamp,
-                    value: currentPrice,
-                },
-            ]);
+            
             console.log("✅ Current price line updated:", { 
                 price: currentPrice, 
                 previousPrice: previousPrice,
                 color: lineColor,
                 title: candleTimeTitle,
-                from: firstTimestamp, 
-                to: lastTimestamp 
             });
-            
-            // IMPORTANT: Do NOT restore position after currentPriceLine.setData() - it may cause the chart to stick to right
-            // Restoring position with setVisibleRange() may actually cause the problem
-            // With rightBarStaysOnScroll: false, the chart should NOT auto-scroll
         } catch (error) {
             console.error("Error updating current price line:", error);
         }
@@ -1372,12 +1380,16 @@ export default function MainChart({
             return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
         };
         
-        // Update title every second - put timer under price using newline
+        // Update price line title every second - put timer under price using newline
         const interval = setInterval(() => {
             try {
+                if (!currentPriceLinePriceLineRef.current || !currentPriceLineRef.current) {
+                    return;
+                }
+                
                 const remainingTime = getCandleRemainingTime(timeframe, lastCandle.t);
                 // Get current price from the line data
-                const lineData = currentPriceLine.data();
+                const lineData = currentPriceLineRef.current.data();
                 const currentPriceValue = lineData && lineData.length > 0 
                     ? (lineData[lineData.length - 1] as LineData).value 
                     : null;
@@ -1390,9 +1402,19 @@ export default function MainChart({
                     ? `${priceFormatted}\n${remainingTime}`
                     : remainingTime;
                 
-                currentPriceLine.applyOptions({
+                // Remove old price line and create new one with updated title
+                const oldPriceLine = currentPriceLinePriceLineRef.current;
+                currentPriceLineRef.current.removePriceLine(oldPriceLine);
+                
+                const newPriceLine = currentPriceLineRef.current.createPriceLine({
+                    price: currentPriceValue || 0,
+                    color: oldPriceLine.options().color || "#ef4444",
+                    lineWidth: 2,
+                    lineStyle: 1, // Dashed
+                    axisLabelVisible: true,
                     title: titleWithTimer,
                 });
+                currentPriceLinePriceLineRef.current = newPriceLine;
             } catch (error) {
                 console.error("Error updating candle remaining time:", error);
             }

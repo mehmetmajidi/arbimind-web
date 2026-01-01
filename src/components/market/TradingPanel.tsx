@@ -1,8 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useImperativeHandle, forwardRef } from "react";
 import { useExchange } from "@/contexts/ExchangeContext";
 import { MdRefresh, MdArrowDownward, MdArrowUpward, MdTrendingUp, MdTrendingDown, MdLanguage, MdExpandMore } from "react-icons/md";
+
+export interface TradingPanelRef {
+    refreshBalance: () => void;
+}
 
 interface TradingPanelProps {
     selectedSymbol: string;
@@ -54,7 +58,7 @@ interface Balance {
     balances: Record<string, { free: number; used: number; total: number }>;
 }
 
-export default function TradingPanel({
+const TradingPanel = forwardRef<TradingPanelRef, TradingPanelProps>(({
     selectedSymbol,
     onSymbolChange,
     currentPrice,
@@ -63,7 +67,7 @@ export default function TradingPanel({
     onRefreshPredictions,
     predictionsLoading,
     connectionStatus = "disconnected",
-}: TradingPanelProps) {
+}, ref) => {
     const { selectedAccountId, accounts } = useExchange();
     const [balance, setBalance] = useState<Balance | null>(null);
     const [balanceLoading, setBalanceLoading] = useState(false);
@@ -94,7 +98,13 @@ export default function TradingPanel({
             Object.keys(balance.balances || {}).find(key => key.toUpperCase() === baseUpper) 
                 ? balance.balances[Object.keys(balance.balances || {}).find(key => key.toUpperCase() === baseUpper)!]
                 : null;
-        return currencyBalance?.free || 0;
+        
+        const freeValue = currencyBalance?.free || 0;
+        // Debug log
+        if (currencyBalance) {
+            console.log(`[TradingPanel] Base: ${base}, CurrencyBalance:`, currencyBalance, `Free: ${freeValue}, Used: ${currencyBalance?.used || 0}`);
+        }
+        return freeValue;
     }, [balance, selectedSymbol, base]);
 
     // Get balance in orders (used)
@@ -113,7 +123,13 @@ export default function TradingPanel({
             Object.keys(balance.balances || {}).find(key => key.toUpperCase() === baseUpper) 
                 ? balance.balances[Object.keys(balance.balances || {}).find(key => key.toUpperCase() === baseUpper)!]
                 : null;
-        return currencyBalance?.used || 0;
+        
+        const usedValue = currencyBalance?.used || 0;
+        // Debug log
+        if (currencyBalance) {
+            console.log(`[TradingPanel] Base: ${base}, CurrencyBalance:`, currencyBalance, `Free: ${currencyBalance?.free || 0}, Used: ${usedValue}`);
+        }
+        return usedValue;
     }, [balance, selectedSymbol, base]);
 
     // Calculate total value
@@ -151,6 +167,20 @@ export default function TradingPanel({
                 console.log("Balance data received:", data);
                 console.log("Base currency:", base);
                 console.log("Available currencies:", Object.keys(data.balances || {}));
+                
+                // Debug: Log the specific currency balance if found
+                if (data.balances && base) {
+                    const baseUpper = base.toUpperCase();
+                    const foundKey = Object.keys(data.balances).find(key => key.toUpperCase() === baseUpper);
+                    if (foundKey) {
+                        const currencyBalance = data.balances[foundKey];
+                        console.log(`[TradingPanel] Found balance for ${base}:`, currencyBalance);
+                        console.log(`[TradingPanel] Free: ${currencyBalance?.free}, Used: ${currencyBalance?.used}, Total: ${currencyBalance?.total}`);
+                    } else {
+                        console.warn(`[TradingPanel] Currency ${base} not found in balance data`);
+                    }
+                }
+                
                 setBalance(data);
             } else {
                 console.error("Failed to fetch balance:", response.status, response.statusText);
@@ -167,6 +197,13 @@ export default function TradingPanel({
     useEffect(() => {
         fetchBalance();
     }, [fetchBalance]);
+
+    // Expose refreshBalance function via ref
+    useImperativeHandle(ref, () => ({
+        refreshBalance: () => {
+            fetchBalance();
+        },
+    }), [fetchBalance]);
 
     // Fetch currencies from database - optimized for speed
     const fetchCurrencies = useCallback(async () => {
@@ -363,19 +400,23 @@ export default function TradingPanel({
         fetchCurrencies();
     }, [fetchCurrencies]);
 
-    // Auto-select first symbol when currencies/symbols are loaded and no symbol is selected
-    // This ensures we wait for symbols to load before selecting
+    // Auto-select symbol when currencies/symbols are loaded
+    // 1. If symbol is selected but not in available symbols, select first one
+    // 2. If no symbol is selected, select first one
     useEffect(() => {
-        // Only auto-select if:
-        // 1. No symbol is currently selected
-        // 2. Loading is complete
-        // 3. We have symbols available
-        if (!selectedSymbol && !currenciesLoading && selectedAccountId) {
+        if (!currenciesLoading && selectedAccountId) {
+            // Check if current symbol is valid
+            const isSymbolValid = selectedSymbol && (
+                availableSymbols.includes(selectedSymbol) ||
+                (baseCurrencies.length > 0 && quoteCurrencies.length > 0 && selectedSymbol.includes("/"))
+            );
+            
+            if (!isSymbolValid) {
+                // Current symbol is not valid or not selected - select first available
             if (availableSymbols.length > 0) {
-                // For all exchanges: select first available symbol
                 const firstSymbol = availableSymbols[0];
-                if (firstSymbol) {
-                    console.log("🔄 Auto-selecting first symbol after exchange change:", firstSymbol);
+                    if (firstSymbol && firstSymbol !== selectedSymbol) {
+                        console.log("🔄 Auto-selecting first symbol (symbol not available or not selected):", firstSymbol);
                     onSymbolChange(firstSymbol);
                 }
             } else if (baseCurrencies.length > 0 && quoteCurrencies.length > 0) {
@@ -384,8 +425,11 @@ export default function TradingPanel({
                 const firstQuote = quoteCurrencies[0];
                 if (firstBase && firstQuote) {
                     const newSymbol = `${firstBase}/${firstQuote}`;
+                        if (newSymbol !== selectedSymbol) {
                     console.log("🔄 Auto-selecting first symbol (fallback):", newSymbol);
                     onSymbolChange(newSymbol);
+                        }
+                    }
                 }
             }
         }
@@ -1065,4 +1109,8 @@ export default function TradingPanel({
 
         </div>
     );
-}
+});
+
+TradingPanel.displayName = "TradingPanel";
+
+export default TradingPanel;

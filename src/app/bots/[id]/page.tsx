@@ -132,10 +132,12 @@ export default function BotDetailPage() {
     if (botId) {
       setLoading(true);
       fetchBot();
+      // Only fetch status once on mount, WebSocket/polling will handle updates
       fetchBotStatus();
       fetchBotTrades();
     }
-  }, [botId, fetchBot, fetchBotStatus, fetchBotTrades]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [botId]); // Only depend on botId to avoid re-fetching on every render
 
   // WebSocket connection for real-time updates
   const {

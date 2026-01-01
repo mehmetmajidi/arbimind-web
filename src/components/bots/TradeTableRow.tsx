@@ -8,6 +8,11 @@ interface TradeTableRowProps {
   trade: BotTrade;
 }
 
+// Helper function to format price with up to 10 decimal places, removing trailing zeros
+function formatPrice(price: number): string {
+  return price.toFixed(10).replace(/\.?0+$/, '');
+}
+
 export default function TradeTableRow({ trade }: TradeTableRowProps) {
   const [expanded, setExpanded] = useState(false);
   const pnl = parseFloat(trade.pnl || "0");
@@ -48,7 +53,7 @@ export default function TradeTableRow({ trade }: TradeTableRowProps) {
           </span>
         </td>
         <td style={{ padding: "12px", textAlign: "right", color: colors.text, fontSize: "13px" }}>
-          {parseFloat(trade.entry_price).toFixed(4)}
+          {formatPrice(parseFloat(trade.entry_price))}
         </td>
         <td style={{ padding: "12px", textAlign: "right", color: colors.text, fontSize: "13px" }}>
           {trade.exit_price ? parseFloat(trade.exit_price).toFixed(4) : "-"}

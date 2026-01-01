@@ -749,16 +749,23 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
           backgroundColor: colors.panelBackground,
           border: `1px solid ${colors.border}`,
           borderRadius: "12px",
-          padding: "24px",
           width: isDesktop ? "80%" : "90%",
           maxWidth: "1400px",
           maxHeight: "90vh",
-          overflowY: "auto",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
         }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Form Header */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
+        <div style={{ 
+          display: "flex", 
+          justifyContent: "space-between", 
+          alignItems: "center", 
+          padding: "24px 24px 16px 24px",
+          flexShrink: 0,
+        }}>
           <h2 style={{ color: colors.primary, margin: 0, fontSize: "24px", fontWeight: "bold" }}>
             Create Trading Bot
           </h2>
@@ -789,22 +796,38 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
             backgroundColor: "rgba(239, 68, 68, 0.15)",
             border: `1px solid rgba(239, 68, 68, 0.5)`,
             borderRadius: "8px",
-            marginBottom: "16px",
+            margin: "0 24px 16px 24px",
             color: colors.error,
             fontSize: "14px",
+            flexShrink: 0,
           }}>
             {formError}
           </div>
         )}
 
+        {/* Scrollable Content */}
+        <div style={{
+          flex: 1,
+          overflowY: "auto",
+          padding: "0 24px",
+        }}>
         {/* Two Column Layout */}
         <div style={{ 
           display: "grid", 
           gridTemplateColumns: isDesktop ? "1fr 1fr" : "1fr", 
           gap: "24px",
+            paddingBottom: "24px",
+            alignItems: "start",
         }}>
           {/* Left Column */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+          <div style={{ 
+            display: "flex", 
+            flexDirection: "column", 
+            gap: "24px",
+            height: "calc(90vh - 250px)",
+            overflowY: "auto",
+            paddingRight: "8px",
+          }}>
             {/* Basic Info Section */}
             <div>
               <h3 style={{ color: colors.primary, marginBottom: "16px", fontSize: "18px", fontWeight: "600" }}>
@@ -1553,14 +1576,21 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
           </div>
 
           {/* Right Column */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+          <div style={{ 
+            display: "flex", 
+            flexDirection: "column", 
+            gap: "24px",
+            height: "calc(90vh - 250px)",
+            overflowY: "auto",
+            paddingRight: "8px",
+          }}>
             {/* Strategy Selection Section */}
             <div>
               <h3 style={{ color: colors.primary, marginBottom: "16px", fontSize: "18px", fontWeight: "600" }}>
                 Strategy
               </h3>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: "12px", maxHeight: "calc(90vh - 300px)", overflowY: "auto" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                 {[
                   { id: "prediction_based", name: "Prediction Based", desc: "Uses ML predictions for trading decisions" },
                   { id: "confidence_weighted", name: "Confidence Weighted", desc: "Weights trades by prediction confidence" },
@@ -1603,12 +1633,21 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
                   </div>
                 ))}
               </div>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Form Actions */}
-        <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end" }}>
+        {/* Form Actions - Fixed at bottom */}
+        <div style={{ 
+          display: "flex", 
+          gap: "12px", 
+          justifyContent: "flex-end",
+          padding: "16px 24px",
+          borderTop: `1px solid ${colors.border}`,
+          backgroundColor: colors.panelBackground,
+          flexShrink: 0,
+        }}>
           <button
             onClick={onClose}
             disabled={formLoading}

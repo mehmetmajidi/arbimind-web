@@ -3,6 +3,11 @@
 import { BotTrade } from "./types";
 import { colors, panelStyle } from "./constants";
 
+// Helper function to format price with up to 10 decimal places, removing trailing zeros
+function formatPrice(price: number): string {
+  return price.toFixed(10).replace(/\.?0+$/, '');
+}
+
 interface BotPositionsPanelProps {
   positions: BotTrade[];
   loading?: boolean;
@@ -171,7 +176,7 @@ export default function BotPositionsPanel({
                 <div>
                   <span style={{ color: colors.secondaryText }}>Entry:</span>
                   <span style={{ color: colors.text, marginLeft: "4px" }}>
-                    {entryPrice.toFixed(4)}
+                    {formatPrice(entryPrice)}
                   </span>
                 </div>
                 <div>
