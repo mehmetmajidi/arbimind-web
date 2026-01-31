@@ -14,12 +14,22 @@ export interface BotStatusUpdate {
     strategy_type: string;
     capital: number;
     current_capital: number;
+    available_balance: number;  // Available balance for new trades
+    locked_capital: number;  // Capital locked in open positions
     total_trades: number;
     winning_trades: number;
     losing_trades: number;
     win_rate: number;
     total_pnl: number;
     open_positions: number;
+    symbol_stats?: Record<string, {
+      total_quantity: number;
+      total_cost_at_entry: number;
+      current_value: number;
+      realized_pnl: number;
+      unrealized_pnl: number;
+      total_pnl: number;
+    }>;  // Statistics per symbol
     started_at: string | null;
     stopped_at: string | null;
     last_error: string | null;

@@ -4,13 +4,45 @@ import { usePathname } from "next/navigation";
 import { useState, useEffect } from "react";
 import Sidebar from "./Sidebar";
 import Header from "./Header";
+import KeyboardShortcutsHelp from "./shared/KeyboardShortcutsHelp";
+import { useKeyboardShortcuts, commonShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { useRouter } from "next/navigation";
 
 export default function LayoutWrapper({ children }: { children: React.ReactNode }) {
     const pathname = usePathname();
+    const router = useRouter();
     const isAuthPage = pathname === "/login" || pathname === "/register" || pathname === "/forgot-password" || pathname === "/reset-password";
     
     // Load sidebar state from localStorage or default to false (expanded)
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+
+    // Keyboard shortcuts
+    useKeyboardShortcuts([
+        {
+            ...commonShortcuts.goToMarket,
+            action: () => router.push("/market"),
+        },
+        {
+            ...commonShortcuts.goToBots,
+            action: () => router.push("/bots"),
+        },
+        {
+            ...commonShortcuts.goToTrading,
+            action: () => router.push("/trading"),
+        },
+        {
+            ...commonShortcuts.goToPerformance,
+            action: () => router.push("/performance"),
+        },
+        {
+            ...commonShortcuts.goToPredictions,
+            action: () => router.push("/predictions"),
+        },
+        {
+            ...commonShortcuts.refresh,
+            action: () => window.location.reload(),
+        },
+    ]);
 
     useEffect(() => {
         // Load sidebar state from localStorage
@@ -48,6 +80,7 @@ export default function LayoutWrapper({ children }: { children: React.ReactNode 
             >
                 {children}
             </div>
+            {!isAuthPage && <KeyboardShortcutsHelp />}
         </>
     );
 }

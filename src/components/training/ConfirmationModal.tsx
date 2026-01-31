@@ -121,8 +121,8 @@ export default function ConfirmationModal({
                         {cancelText}
                     </button>
                     <button
-                        onClick={() => {
-                            onConfirm();
+                        onClick={async () => {
+                            await onConfirm();
                             onClose();
                         }}
                         style={{

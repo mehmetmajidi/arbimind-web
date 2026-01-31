@@ -11,6 +11,7 @@ import {
   BotStatusBadge,
   ConnectionStatusIndicator,
   EditBotForm,
+  BotDecisionLogs,
   TradingBot,
   BotStatus,
   BotTrade,
@@ -96,10 +97,21 @@ export default function BotDetailPage() {
 
       if (response.ok) {
         const data = await response.json();
+        console.log("[BotStatus] Fetched status:", data);
+        if (data && typeof data === 'object') {
         setBotStatus(data);
+        } else {
+          console.error("[BotStatus] Invalid data format:", data);
+        }
+      } else {
+        console.error("[BotStatus] Failed to fetch status:", response.status, response.statusText);
+        const errorData = await response.json().catch(() => ({}));
+        console.error("[BotStatus] Error details:", errorData);
+        // Don't set error state here, just log - WebSocket/polling will handle retries
       }
     } catch (err) {
-      console.error("Error fetching bot status:", err);
+      console.error("[BotStatus] Error fetching bot status:", err);
+      // Don't set error state here, just log - WebSocket/polling will handle retries
     }
   }, [botId]);
 
@@ -150,6 +162,7 @@ export default function BotDetailPage() {
     enabled: !!botId && !!bot,
     interval: 5,
     onStatusUpdate: (data) => {
+      console.log("[BotStatus] WebSocket/Polling update received:", data);
       setBotStatus(data);
     },
     onTradeUpdate: () => {
@@ -375,6 +388,84 @@ export default function BotDetailPage() {
             size="small"
           />
         </div>
+        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          {/* Quick Actions Buttons */}
+          {bot && (
+            <>
+              {bot.status === "active" ? (
+                <button
+                  onClick={handleStopBot}
+                  disabled={actionLoading}
+                  style={{
+                    padding: "8px 16px",
+                    backgroundColor: colors.error,
+                    border: "none",
+                    borderRadius: "8px",
+                    color: colors.text,
+                    fontWeight: "600",
+                    cursor: actionLoading ? "not-allowed" : "pointer",
+                    fontSize: "14px",
+                    opacity: actionLoading ? 0.6 : 1,
+                  }}
+                >
+                  Stop Bot
+                </button>
+              ) : (
+                <button
+                  onClick={handleStartBot}
+                  disabled={actionLoading}
+                  style={{
+                    padding: "8px 16px",
+                    backgroundColor: colors.success,
+                    border: "none",
+                    borderRadius: "8px",
+                    color: colors.text,
+                    fontWeight: "600",
+                    cursor: actionLoading ? "not-allowed" : "pointer",
+                    fontSize: "14px",
+                    opacity: actionLoading ? 0.6 : 1,
+                  }}
+                >
+                  Start Bot
+                </button>
+              )}
+              <button
+                onClick={handleEditBot}
+                disabled={actionLoading}
+                style={{
+                  padding: "8px 16px",
+                  backgroundColor: colors.primary,
+                  border: "none",
+                  borderRadius: "8px",
+                  color: colors.background,
+                  fontWeight: "600",
+                  cursor: actionLoading ? "not-allowed" : "pointer",
+                  fontSize: "14px",
+                  opacity: actionLoading ? 0.6 : 1,
+                }}
+              >
+                Edit Bot
+              </button>
+              <button
+                onClick={handleDeleteBot}
+                disabled={actionLoading}
+                style={{
+                  padding: "8px 16px",
+                  backgroundColor: "transparent",
+                  border: "1px solid rgba(239, 68, 68, 0.5)",
+                  borderRadius: "8px",
+                  color: colors.error,
+                  fontWeight: "600",
+                  cursor: actionLoading ? "not-allowed" : "pointer",
+                  fontSize: "14px",
+                  opacity: actionLoading ? 0.6 : 1,
+                }}
+              >
+                Delete Bot
+              </button>
+            </>
+          )}
+          {/* Refresh Button */}
         <button
           onClick={() => {
             fetchBot();
@@ -396,6 +487,7 @@ export default function BotDetailPage() {
         >
           🔄 Refresh
         </button>
+        </div>
       </div>
 
       {/* Error Message */}
@@ -419,10 +511,7 @@ export default function BotDetailPage() {
         {/* Left Panel */}
         <BotInfoPanel
           bot={bot}
-          onStartBot={handleStartBot}
-          onStopBot={handleStopBot}
-          onEditBot={handleEditBot}
-          onDeleteBot={handleDeleteBot}
+          botStatus={botStatus}
         />
 
         {/* Center Panel */}
@@ -434,6 +523,10 @@ export default function BotDetailPage() {
           gap: "12px",
         }}>
           <BotPerformanceCharts bot={bot} trades={trades} botStatus={botStatus} />
+          <BotDecisionLogs 
+            botId={botId} 
+            enabled={bot?.status === "active"}
+          />
           <BotTradeHistoryTable 
             trades={trades} 
             loading={false}
@@ -456,7 +549,7 @@ export default function BotDetailPage() {
           botStatus={botStatus}
           currentPositions={openPositions}
           recentTrades={recentTrades}
-          loading={false}
+          loading={loading && !botStatus}
         />
       </div>
       

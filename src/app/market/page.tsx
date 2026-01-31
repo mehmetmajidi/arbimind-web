@@ -1199,6 +1199,7 @@ export default function MarketPage() {
                         onLoadMore={(beforeTimestamp) => fetchMoreOHLCV(beforeTimestamp)}
                         oldestTimestamp={oldestTimestamp}
                         loadingMore={loadingMore}
+                        selectedSymbol={selectedSymbol}
                     />
                 ) : (
                     <div

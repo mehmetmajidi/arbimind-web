@@ -29,6 +29,50 @@ export const mainLayoutStyle = {
   minHeight: "600px",
 };
 
+// Responsive layout styles
+export const getResponsiveLayoutStyle = (isMobile: boolean, isTablet: boolean) => {
+  if (isMobile) {
+    return {
+      display: "flex",
+      flexDirection: "column" as const,
+      gap: "12px",
+      width: "100%",
+    };
+  }
+  
+  if (isTablet) {
+    return {
+      display: "flex",
+      flexDirection: "row" as const,
+      gap: "12px",
+      flexWrap: "wrap" as const,
+      width: "100%",
+    };
+  }
+  
+  return mainLayoutStyle;
+};
+
+// Responsive panel styles
+export const getResponsivePanelStyle = (isMobile: boolean, isTablet: boolean) => {
+  if (isMobile) {
+    return {
+      ...panelStyle,
+      width: "100%",
+    };
+  }
+  
+  if (isTablet) {
+    return {
+      ...panelStyle,
+      width: "calc(50% - 6px)",
+      minWidth: "300px",
+    };
+  }
+  
+  return panelStyle;
+};
+
 // Panel Style - Same as Market Page
 export const panelStyle = {
   backgroundColor: "#2a2a2a",

@@ -26,6 +26,7 @@ export default function BotPositionsList({
   const [currentPrices, setCurrentPrices] = useState<Record<string, PriceData>>({});
   const [priceLoading, setPriceLoading] = useState<Record<string, boolean>>({});
   const [closingTradeId, setClosingTradeId] = useState<number | null>(null);
+  const [exitOrders, setExitOrders] = useState<Record<number, boolean>>({});
 
   const openPositions = useMemo(() => {
     return positions.filter(p => p.status.toLowerCase() === "open");
@@ -91,16 +92,66 @@ export default function BotPositionsList({
     }
   }, [openPositions.length, exchangeAccountId, fetchAllPrices]);
 
+  // Fetch exit orders for open positions
+  const fetchExitOrders = useCallback(async () => {
+    if (openPositions.length === 0 || !exchangeAccountId) {
+      setExitOrders({});
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("auth_token") || "";
+      if (!token) return;
+
+      const apiUrl = typeof window !== "undefined" 
+        ? "http://localhost:8000" 
+        : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+      // Fetch all open/pending orders for this exchange account
+      const response = await fetch(`${apiUrl}/trading/orders?exchange_account_id=${exchangeAccountId}&status=open,pending&limit=100`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (response.ok) {
+        const orders = await response.json();
+        const exitOrdersMap: Record<number, boolean> = {};
+        
+        // Check for each open position if there's a sell order (exit order)
+        openPositions.forEach(position => {
+          if (position.side === "buy") {
+            // For buy positions, check if there's a sell order for the same symbol
+            const hasExitOrder = orders.some((order: { symbol: string; side: string; status: string }) => 
+              order.symbol === position.symbol && 
+              order.side === "sell" && 
+              (order.status === "open" || order.status === "pending" || order.status === "partially_filled")
+            );
+            exitOrdersMap[position.id] = hasExitOrder;
+          }
+        });
+        
+        setExitOrders(exitOrdersMap);
+      }
+    } catch (error) {
+      console.error("Error fetching exit orders:", error);
+    }
+  }, [openPositions, exchangeAccountId]);
+
+  // Fetch exit orders on mount and when positions change
+  useEffect(() => {
+    fetchExitOrders();
+  }, [fetchExitOrders]);
+
   // Real-time price updates (every 5 seconds)
   useEffect(() => {
     if (openPositions.length === 0 || !exchangeAccountId) return;
 
     const interval = setInterval(() => {
       fetchAllPrices();
+      fetchExitOrders(); // Also check exit orders periodically
     }, 5000); // Update every 5 seconds
 
     return () => clearInterval(interval);
-  }, [openPositions.length, exchangeAccountId, fetchAllPrices]);
+  }, [openPositions.length, exchangeAccountId, fetchAllPrices, fetchExitOrders]);
 
   // Calculate unrealized P&L for a position
   const calculateUnrealizedPnl = useCallback((position: BotTrade): { pnl: number; pnlPercent: number } => {
@@ -332,6 +383,7 @@ export default function BotPositionsList({
               unrealizedPnlPercent={pnlPercent}
               onClose={exchangeAccountId ? handleClosePosition : undefined}
               exchangeAccountId={exchangeAccountId}
+              hasExitOrder={exitOrders[position.id] || false}
             />
           );
         })}

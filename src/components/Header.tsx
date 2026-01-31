@@ -5,6 +5,7 @@ import { useExchange } from "@/contexts/ExchangeContext";
 import { usePathname } from "next/navigation";
 import { MdMenuOpen, MdExpandMore } from "react-icons/md";
 import { useState, useRef, useEffect } from "react";
+import HealthCheck from "./HealthCheck";
 
 interface HeaderProps {
     sidebarWidth: string;
@@ -288,6 +289,14 @@ export default function Header({ sidebarWidth, onToggleSidebar, isSidebarCollaps
                     </div>
                 </div>
             )}
+
+            {/* Health Check - Right side */}
+            <div style={{ marginLeft: "auto", display: "flex", alignItems: "center" }}>
+                <HealthCheck 
+                    apiUrl={typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"} 
+                    compact={true} 
+                />
+            </div>
         </header>
     );
 }

@@ -13,6 +13,8 @@ interface BotDetailsPanelProps {
   onStopBot: (botId: number) => void;
   onEditBot: (bot: TradingBot) => void;
   onDeleteBot: (botId: number) => void;
+  isMobile?: boolean;
+  isTablet?: boolean;
 }
 
 export default function BotDetailsPanel({
@@ -25,13 +27,20 @@ export default function BotDetailsPanel({
   onStopBot,
   onEditBot,
   onDeleteBot,
+  isMobile = false,
+  isTablet = false,
 }: BotDetailsPanelProps) {
   if (!selectedBot) {
     return (
       <>
         {/* Quick Actions Panel (when no bot selected) */}
         <div style={panelStyle}>
-          <h3 style={{ color: colors.primary, marginBottom: "12px", fontSize: "18px", fontWeight: "600" }}>
+          <h3 style={{ 
+            color: colors.primary, 
+            marginBottom: "12px", 
+            fontSize: isMobile ? "16px" : "18px", 
+            fontWeight: "600" 
+          }}>
             Quick Actions
           </h3>
           <div style={{ color: colors.secondaryText, fontSize: "14px" }}>
@@ -41,7 +50,12 @@ export default function BotDetailsPanel({
 
         {/* Info Panel */}
         <div style={panelStyle}>
-          <h3 style={{ color: colors.primary, marginBottom: "12px", fontSize: "18px", fontWeight: "600" }}>
+          <h3 style={{ 
+            color: colors.primary, 
+            marginBottom: "12px", 
+            fontSize: isMobile ? "16px" : "18px", 
+            fontWeight: "600" 
+          }}>
             Information
           </h3>
           <div style={{ color: colors.secondaryText, fontSize: "12px", lineHeight: "1.6" }}>

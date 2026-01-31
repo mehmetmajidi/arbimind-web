@@ -1,8 +1,12 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, lazy, Suspense } from "react";
 import { createChart, IChartApi, ISeriesApi, CandlestickData, Time, LineData, CandlestickSeries, LineSeries, UTCTimestamp, IRange, BusinessDay, IPriceLine } from "lightweight-charts";
 import DrawingToolsToolbar, { DrawingTool } from "./DrawingToolsToolbar";
+import { LiquidationMapControls, useLiquidationMap } from "@/components/liquidation";
+
+// Lazy load LiquidationMap component for better performance
+const LiquidationMap = lazy(() => import("@/components/liquidation/LiquidationMap"));
 
 interface OHLCVCandle {
     t: number;
@@ -37,6 +41,7 @@ interface MainChartProps {
     onLoadMore?: (beforeTimestamp: number) => void;
     oldestTimestamp?: number | null;
     loadingMore?: boolean;
+    selectedSymbol?: string;
 }
 
 export default function MainChart({
@@ -52,12 +57,14 @@ export default function MainChart({
     onLoadMore,
     oldestTimestamp = null,
     loadingMore = false,
+    selectedSymbol = "",
 }: MainChartProps) {
     const [refreshInterval, setRefreshInterval] = useState(5);
     const [chartReady, setChartReady] = useState(false);
     const [activeDrawingTool, setActiveDrawingTool] = useState<DrawingTool>(null);
     const [drawingsLocked, setDrawingsLocked] = useState(false);
     const [drawingsVisible, setDrawingsVisible] = useState(true);
+    const [activeTab, setActiveTab] = useState<"chart" | "liquidation">("chart");
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const candlestickSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -81,6 +88,86 @@ export default function MainChart({
     ];
 
     const availableHorizons = ["10m", "30m", "1h", "4h", "24h"];
+
+    // Liquidation Map Tab Component
+    function LiquidationMapTab({ selectedSymbol }: { selectedSymbol: string }) {
+        // Extract base symbol from trading pair (e.g., "BTC/USD" -> "BTC")
+        const extractBaseSymbol = (symbol: string): string => {
+            if (!symbol) return "BTC";
+            const parts = symbol.split("/");
+            return parts[0] || "BTC";
+        };
+
+        const [liquidationSymbol, setLiquidationSymbol] = useState(() => extractBaseSymbol(selectedSymbol));
+        const [liquidationTimeframe, setLiquidationTimeframe] = useState("1w");
+        const liquidationMapRef = useRef<{ handleExport: () => void } | null>(null);
+        
+        const { data, loading, error, refresh } = useLiquidationMap({
+            symbol: liquidationSymbol,
+            timeframe: liquidationTimeframe,
+            autoFetch: true,
+            autoRefreshInterval: 0, // Disable auto-refresh by default
+            debounceMs: 300,
+            enableCache: true,
+        });
+
+        // Update symbol when selectedSymbol changes
+        useEffect(() => {
+            const baseSymbol = extractBaseSymbol(selectedSymbol);
+            if (baseSymbol && baseSymbol !== liquidationSymbol) {
+                setLiquidationSymbol(baseSymbol);
+            }
+        }, [selectedSymbol]);
+
+        const handleExport = () => {
+            if (liquidationMapRef.current) {
+                liquidationMapRef.current.handleExport();
+            }
+        };
+
+        return (
+            <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: "450px" }}>
+                <LiquidationMapControls
+                    selectedSymbol={liquidationSymbol}
+                    selectedTimeframe={liquidationTimeframe}
+                    onSymbolChange={setLiquidationSymbol}
+                    onTimeframeChange={setLiquidationTimeframe}
+                    onRefresh={refresh}
+                    onExport={handleExport}
+                    loading={loading}
+                />
+                <div style={{ flex: "1", position: "relative" }}>
+                    <Suspense
+                        fallback={
+                            <div
+                                style={{
+                                    width: "100%",
+                                    height: "100%",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    color: "#888",
+                                    fontSize: "14px",
+                                }}
+                            >
+                                Loading liquidation map...
+                            </div>
+                        }
+                    >
+                        <LiquidationMap 
+                            ref={liquidationMapRef}
+                            data={data} 
+                            loading={loading} 
+                            error={error}
+                            enableZoom={true}
+                            enableAnimation={true}
+                            showWatermark={false}
+                        />
+                    </Suspense>
+                </div>
+            </div>
+        );
+    }
 
     // Handle drawing tool activation and mouse events
     useEffect(() => {
@@ -1587,86 +1674,156 @@ export default function MainChart({
                     flexDirection: "column",
                     height: "100%",
                 }}>
-                    <div style={{ color: "#ffffff", fontSize: "14px", marginBottom: "8px", fontWeight: "500" }}>
-                    Main Chart Area
-                </div>
-                {loading ? (
-                        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", flex: "1", minHeight: "450px", color: "#888" }}>
-                        Loading chart data...
-                    </div>
-                ) : (
-                    <>
-                        <div 
-                            ref={chartContainerRef} 
-                            style={{ 
-                                width: "100%", 
-                                    flex: "1",
-                                    minHeight: "450px",
-                                minWidth: "600px",
-                                position: "relative",
-                                zIndex: 1,
-                                display: "block",
-                                visibility: "visible",
-                            }} 
-                        />
-                        {loadingMore && (
-                            <div style={{ 
-                                position: "absolute", 
-                                top: "10px", 
-                                left: "50%", 
-                                transform: "translateX(-50%)",
-                                backgroundColor: "rgba(255, 174, 0, 0.9)",
-                                color: "#1a1a1a",
-                                padding: "6px 12px",
+                    {/* Tabs */}
+                    <div style={{ 
+                        display: "flex", 
+                        gap: "8px", 
+                        marginBottom: "12px",
+                        borderBottom: "1px solid rgba(255, 174, 0, 0.2)",
+                        paddingBottom: "8px",
+                    }}>
+                        <button
+                            onClick={() => setActiveTab("chart")}
+                            style={{
+                                padding: "6px 16px",
+                                backgroundColor: activeTab === "chart" ? "rgba(255, 174, 0, 0.2)" : "transparent",
+                                color: activeTab === "chart" ? "#FFAE00" : "#888",
+                                border: "none",
                                 borderRadius: "6px",
-                                fontSize: "12px",
-                                fontWeight: "600",
-                                zIndex: 10,
-                                pointerEvents: "none",
-                            }}>
-                                Loading more data...
-                            </div>
-                        )}
-                        {ohlcvData.length === 0 && !loading && (
-                            <div style={{ 
-                                position: "absolute", 
-                                top: "50%", 
-                                left: "50%", 
-                                transform: "translate(-50%, -50%)",
-                                color: "#888",
-                                fontSize: "14px",
-                                pointerEvents: "none",
-                            }}>
-                                No chart data available
-                            </div>
-                        )}
-                    </>
-                )}
-
-                {/* Prediction Labels */}
-                {predictionLabels.length > 0 && (
-                    <div style={{ marginTop: "12px", display: "flex", flexWrap: "wrap", gap: "8px" }}>
-                        {predictionLabels.map((label) => {
-                            const isPositive = label.change >= 0;
-                            return (
-                                <div
-                                    key={label.horizon}
-                                    style={{
-                                        backgroundColor: "#8b5cf6",
-                                        color: "#ffffff",
-                                        padding: "4px 8px",
-                                        borderRadius: "4px",
-                                        fontSize: "11px",
-                                        fontWeight: "500",
-                                    }}
-                                >
-                                    {label.horizon.toUpperCase()} Target: ${label.price.toFixed(4)} ({isPositive ? "+" : ""}
-                                    {label.change.toFixed(1)}%)
-                                </div>
-                            );
-                        })}
+                                cursor: "pointer",
+                                fontSize: "13px",
+                                fontWeight: activeTab === "chart" ? "600" : "400",
+                                transition: "all 0.2s ease",
+                            }}
+                            onMouseEnter={(e) => {
+                                if (activeTab !== "chart") {
+                                    e.currentTarget.style.backgroundColor = "rgba(255, 174, 0, 0.1)";
+                                    e.currentTarget.style.color = "#FFAE00";
+                                }
+                            }}
+                            onMouseLeave={(e) => {
+                                if (activeTab !== "chart") {
+                                    e.currentTarget.style.backgroundColor = "transparent";
+                                    e.currentTarget.style.color = "#888";
+                                }
+                            }}
+                        >
+                            Chart
+                        </button>
+                        <button
+                            onClick={() => setActiveTab("liquidation")}
+                            style={{
+                                padding: "6px 16px",
+                                backgroundColor: activeTab === "liquidation" ? "rgba(255, 174, 0, 0.2)" : "transparent",
+                                color: activeTab === "liquidation" ? "#FFAE00" : "#888",
+                                border: "none",
+                                borderRadius: "6px",
+                                cursor: "pointer",
+                                fontSize: "13px",
+                                fontWeight: activeTab === "liquidation" ? "600" : "400",
+                                transition: "all 0.2s ease",
+                            }}
+                            onMouseEnter={(e) => {
+                                if (activeTab !== "liquidation") {
+                                    e.currentTarget.style.backgroundColor = "rgba(255, 174, 0, 0.1)";
+                                    e.currentTarget.style.color = "#FFAE00";
+                                }
+                            }}
+                            onMouseLeave={(e) => {
+                                if (activeTab !== "liquidation") {
+                                    e.currentTarget.style.backgroundColor = "transparent";
+                                    e.currentTarget.style.color = "#888";
+                                }
+                            }}
+                        >
+                            Liquidation Map
+                        </button>
                     </div>
-                )}
+
+                    {/* Tab Content */}
+                    {activeTab === "chart" ? (
+                        <>
+                            {loading ? (
+                                <div style={{ display: "flex", justifyContent: "center", alignItems: "center", flex: "1", minHeight: "450px", color: "#888" }}>
+                                    Loading chart data...
+                                </div>
+                            ) : (
+                                <>
+                                    <div 
+                                        ref={chartContainerRef} 
+                                        style={{ 
+                                            width: "100%", 
+                                            flex: "1",
+                                            minHeight: "450px",
+                                            minWidth: "600px",
+                                            position: "relative",
+                                            zIndex: 1,
+                                            display: "block",
+                                            visibility: "visible",
+                                        }} 
+                                    />
+                                    {loadingMore && (
+                                        <div style={{ 
+                                            position: "absolute", 
+                                            top: "10px", 
+                                            left: "50%", 
+                                            transform: "translateX(-50%)",
+                                            backgroundColor: "rgba(255, 174, 0, 0.9)",
+                                            color: "#1a1a1a",
+                                            padding: "6px 12px",
+                                            borderRadius: "6px",
+                                            fontSize: "12px",
+                                            fontWeight: "600",
+                                            zIndex: 10,
+                                            pointerEvents: "none",
+                                        }}>
+                                            Loading more data...
+                                        </div>
+                                    )}
+                                    {ohlcvData.length === 0 && !loading && (
+                                        <div style={{ 
+                                            position: "absolute", 
+                                            top: "50%", 
+                                            left: "50%", 
+                                            transform: "translate(-50%, -50%)",
+                                            color: "#888",
+                                            fontSize: "14px",
+                                            pointerEvents: "none",
+                                        }}>
+                                            No chart data available
+                                        </div>
+                                    )}
+                                </>
+                            )}
+
+                            {/* Prediction Labels */}
+                            {predictionLabels.length > 0 && (
+                                <div style={{ marginTop: "12px", display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                                    {predictionLabels.map((label) => {
+                                        const isPositive = label.change >= 0;
+                                        return (
+                                            <div
+                                                key={label.horizon}
+                                                style={{
+                                                    backgroundColor: "#8b5cf6",
+                                                    color: "#ffffff",
+                                                    padding: "4px 8px",
+                                                    borderRadius: "4px",
+                                                    fontSize: "11px",
+                                                    fontWeight: "500",
+                                                }}
+                                            >
+                                                {label.horizon.toUpperCase()} Target: ${label.price.toFixed(4)} ({isPositive ? "+" : ""}
+                                                {label.change.toFixed(1)}%)
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </>
+                    ) : (
+                        <LiquidationMapTab selectedSymbol={selectedSymbol} />
+                    )}
                 </div>
             </div>
         </div>

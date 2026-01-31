@@ -31,6 +31,7 @@ const adminMenuItems = [
      { name: "Monitoring", path: "/monitoring", icon: MdNotifications, adminOnly: true },
      { name: "Training", path: "/training", icon: MdSchool, adminOnly: true },
      { name: "Backfill", path: "/backfill", icon: MdDownload, adminOnly: true },
+     { name: "Metrics", path: "/metrics", icon: MdBarChart, adminOnly: true },
 ];
 
 interface SidebarProps {
@@ -77,6 +78,26 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
           window.dispatchEvent(new Event("authTokenRemoved"));
           window.location.href = "/";
      };
+
+     // Keyboard shortcut for sidebar toggle (Ctrl+B or Cmd+B)
+     useEffect(() => {
+          const handleKeyDown = (event: KeyboardEvent) => {
+               if ((event.ctrlKey || event.metaKey) && event.key === "b") {
+                    const isTyping =
+                         event.target instanceof HTMLInputElement ||
+                         event.target instanceof HTMLTextAreaElement ||
+                         (event.target as HTMLElement)?.isContentEditable;
+                    
+                    if (!isTyping) {
+                         event.preventDefault();
+                         onToggle();
+                    }
+               }
+          };
+
+          window.addEventListener("keydown", handleKeyDown);
+          return () => window.removeEventListener("keydown", handleKeyDown);
+     }, [onToggle]);
 
      // Don't show sidebar on login/register/forgot-password/reset-password pages
      if (pathname === "/login" || pathname === "/register" || pathname === "/forgot-password" || pathname === "/reset-password" || !isAuthenticated) {

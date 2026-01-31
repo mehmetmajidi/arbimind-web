@@ -18,6 +18,16 @@ interface BotListTableProps {
   onStopBot: (botId: number) => void;
   onEditBot: (bot: TradingBot) => void;
   onDeleteBot: (botId: number) => void;
+  // Pagination props
+  currentPage?: number;
+  pageSize?: number;
+  totalItems?: number;
+  onPageChange?: (page: number) => void;
+  onPageSizeChange?: (size: number) => void;
+  showPagination?: boolean;
+  // Responsive props
+  isMobile?: boolean;
+  isTablet?: boolean;
 }
 
 export default function BotListTable({
@@ -32,7 +42,19 @@ export default function BotListTable({
   onStopBot,
   onEditBot,
   onDeleteBot,
+  currentPage = 1,
+  pageSize = 10,
+  totalItems,
+  onPageChange,
+  onPageSizeChange,
+  showPagination = false,
+  isMobile = false,
+  isTablet = false,
 }: BotListTableProps) {
+  const totalPages = totalItems !== undefined 
+    ? Math.ceil(totalItems / pageSize)
+    : Math.ceil(bots.length / pageSize);
+  const displayTotalItems = totalItems !== undefined ? totalItems : bots.length;
   if (bots.length === 0) {
     return (
       <div style={panelStyle}>
@@ -53,12 +75,28 @@ export default function BotListTable({
 
   return (
     <div style={panelStyle}>
-      <h3 style={{ color: colors.primary, marginBottom: "12px", fontSize: "18px", fontWeight: "600" }}>
+      <h3 style={{ 
+        color: colors.primary, 
+        marginBottom: "12px", 
+        fontSize: isMobile ? "16px" : "18px", 
+        fontWeight: "600" 
+      }}>
         Bot List
       </h3>
       
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+      <div style={{ 
+        overflowX: "auto",
+        WebkitOverflowScrolling: "touch",
+        ...(isMobile && { 
+          overflowX: "scroll",
+          msOverflowStyle: "-ms-autohiding-scrollbar",
+        }),
+      }}>
+        <table style={{ 
+          width: "100%", 
+          borderCollapse: "collapse",
+          minWidth: isMobile ? "800px" : "100%",
+        }}>
           <thead>
             <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
               <th 
@@ -380,6 +418,154 @@ export default function BotListTable({
           </tbody>
         </table>
       </div>
+      
+      {/* Pagination Controls */}
+      {showPagination && displayTotalItems > 0 && (
+        <div style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginTop: "16px",
+          paddingTop: "16px",
+          borderTop: `1px solid ${colors.border}`,
+        }}>
+          {/* Page Size Selector */}
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <label style={{ color: colors.secondaryText, fontSize: "12px" }}>
+              Show:
+            </label>
+            <select
+              value={pageSize}
+              onChange={(e) => onPageSizeChange?.(parseInt(e.target.value, 10))}
+              style={{
+                padding: "4px 8px",
+                backgroundColor: colors.panelBackground,
+                border: `1px solid ${colors.border}`,
+                borderRadius: "6px",
+                color: colors.text,
+                fontSize: "12px",
+                cursor: "pointer",
+              }}
+            >
+              <option value={5}>5</option>
+              <option value={10}>10</option>
+              <option value={20}>20</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
+            <span style={{ color: colors.secondaryText, fontSize: "12px" }}>
+              per page
+            </span>
+          </div>
+          
+          {/* Pagination Info */}
+          <div style={{ color: colors.secondaryText, fontSize: "12px" }}>
+            Showing {((currentPage - 1) * pageSize) + 1} to {Math.min(currentPage * pageSize, displayTotalItems)} of {displayTotalItems} bots
+          </div>
+          
+          {/* Pagination Buttons */}
+          <div style={{ display: "flex", gap: "4px" }}>
+            <button
+              onClick={() => onPageChange?.(1)}
+              disabled={currentPage === 1}
+              style={{
+                padding: "4px 8px",
+                backgroundColor: currentPage === 1 ? colors.panelBackground : colors.background,
+                border: `1px solid ${colors.border}`,
+                borderRadius: "4px",
+                color: currentPage === 1 ? colors.secondaryText : colors.text,
+                fontSize: "12px",
+                cursor: currentPage === 1 ? "not-allowed" : "pointer",
+                opacity: currentPage === 1 ? 0.5 : 1,
+              }}
+            >
+              ««
+            </button>
+            <button
+              onClick={() => onPageChange?.(currentPage - 1)}
+              disabled={currentPage === 1}
+              style={{
+                padding: "4px 8px",
+                backgroundColor: currentPage === 1 ? colors.panelBackground : colors.background,
+                border: `1px solid ${colors.border}`,
+                borderRadius: "4px",
+                color: currentPage === 1 ? colors.secondaryText : colors.text,
+                fontSize: "12px",
+                cursor: currentPage === 1 ? "not-allowed" : "pointer",
+                opacity: currentPage === 1 ? 0.5 : 1,
+              }}
+            >
+              «
+            </button>
+            
+            {/* Page Numbers */}
+            {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+              let pageNum: number;
+              if (totalPages <= 5) {
+                pageNum = i + 1;
+              } else if (currentPage <= 3) {
+                pageNum = i + 1;
+              } else if (currentPage >= totalPages - 2) {
+                pageNum = totalPages - 4 + i;
+              } else {
+                pageNum = currentPage - 2 + i;
+              }
+              
+              return (
+                <button
+                  key={pageNum}
+                  onClick={() => onPageChange?.(pageNum)}
+                  style={{
+                    padding: "4px 8px",
+                    backgroundColor: currentPage === pageNum ? colors.primary : colors.background,
+                    border: `1px solid ${colors.border}`,
+                    borderRadius: "4px",
+                    color: currentPage === pageNum ? colors.background : colors.text,
+                    fontSize: "12px",
+                    cursor: "pointer",
+                    fontWeight: currentPage === pageNum ? "600" : "400",
+                  }}
+                >
+                  {pageNum}
+                </button>
+              );
+            })}
+            
+            <button
+              onClick={() => onPageChange?.(currentPage + 1)}
+              disabled={currentPage === totalPages}
+              style={{
+                padding: "4px 8px",
+                backgroundColor: currentPage === totalPages ? colors.panelBackground : colors.background,
+                border: `1px solid ${colors.border}`,
+                borderRadius: "4px",
+                color: currentPage === totalPages ? colors.secondaryText : colors.text,
+                fontSize: "12px",
+                cursor: currentPage === totalPages ? "not-allowed" : "pointer",
+                opacity: currentPage === totalPages ? 0.5 : 1,
+              }}
+            >
+              »
+            </button>
+            <button
+              onClick={() => onPageChange?.(totalPages)}
+              disabled={currentPage === totalPages}
+              style={{
+                padding: "4px 8px",
+                backgroundColor: currentPage === totalPages ? colors.panelBackground : colors.background,
+                border: `1px solid ${colors.border}`,
+                borderRadius: "4px",
+                color: currentPage === totalPages ? colors.secondaryText : colors.text,
+                fontSize: "12px",
+                cursor: currentPage === totalPages ? "not-allowed" : "pointer",
+                opacity: currentPage === totalPages ? 0.5 : 1,
+              }}
+            >
+              »»
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

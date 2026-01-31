@@ -11,6 +11,7 @@ interface PositionCardProps {
   unrealizedPnlPercent: number;
   onClose?: (tradeId: number) => Promise<void>;
   exchangeAccountId?: number;
+  hasExitOrder?: boolean;
 }
 
 // Helper function to format price with up to 10 decimal places, removing trailing zeros
@@ -25,6 +26,7 @@ export default function PositionCard({
   unrealizedPnlPercent,
   onClose,
   exchangeAccountId,
+  hasExitOrder = false,
 }: PositionCardProps) {
   const [closing, setClosing] = useState(false);
   const entryPrice = parseFloat(position.entry_price);
@@ -196,6 +198,25 @@ export default function PositionCard({
             fontWeight: "600",
           }}>
             {priceChange >= 0 ? "+" : ""}{formatPrice(priceChange)} USDT ({priceChangePercent >= 0 ? "+" : ""}{priceChangePercent.toFixed(2)}%)
+          </span>
+        </div>
+      )}
+
+      {/* Exit Order Status */}
+      {hasExitOrder && (
+        <div style={{
+          marginBottom: "12px",
+          padding: "8px 12px",
+          backgroundColor: "rgba(255, 174, 0, 0.15)",
+          border: `1px solid rgba(255, 174, 0, 0.3)`,
+          borderRadius: "6px",
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+        }}>
+          <span style={{ fontSize: "14px" }}>⏳</span>
+          <span style={{ color: colors.primary, fontSize: "12px", fontWeight: "500" }}>
+            Exit order pending
           </span>
         </div>
       )}

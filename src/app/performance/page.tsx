@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { ExportModal, ExportFormat } from "@/components/export";
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 
@@ -97,12 +97,15 @@ export default function PerformancePage() {
 
      // Filters
      const [symbolFilter, setSymbolFilter] = useState<string>("");
+     const [selectedSymbols, setSelectedSymbols] = useState<string[]>([]); // Multiple symbols filter
+     const [availableSymbols, setAvailableSymbols] = useState<string[]>([]); // Available symbols for multi-select
      const [startDate, setStartDate] = useState<string>("");
      const [endDate, setEndDate] = useState<string>("");
      const [winLossFilter, setWinLossFilter] = useState<string | null>(null);
      const [days, setDays] = useState<number>(30);
      const [autoRefresh, setAutoRefresh] = useState(true);
      const [refreshInterval, setRefreshInterval] = useState(30); // seconds
+     const [useMultipleSymbols, setUseMultipleSymbols] = useState(false); // Toggle between single and multiple
 
      // Model Performance State
      const [models, setModels] = useState<Model[]>([]);
@@ -362,7 +365,12 @@ export default function PerformancePage() {
                }
 
                const params = new URLSearchParams();
-               if (symbolFilter) params.append("symbol", symbolFilter);
+               // Support both single and multiple symbols
+               if (useMultipleSymbols && selectedSymbols.length > 0) {
+                    selectedSymbols.forEach(symbol => params.append("symbol", symbol));
+               } else if (symbolFilter) {
+                    params.append("symbol", symbolFilter);
+               }
                if (startDate) params.append("start_date", startDate);
                if (endDate) params.append("end_date", endDate);
                if (winLossFilter !== null) params.append("win_loss", winLossFilter);
@@ -380,11 +388,15 @@ export default function PerformancePage() {
 
                const data = await response.json();
                setTradeResults(data);
+               
+               // Extract unique symbols for multi-select
+               const uniqueSymbols = Array.from(new Set(data.map((tr: TradeResult) => tr.symbol))) as string[];
+               setAvailableSymbols(uniqueSymbols.sort());
           } catch (err) {
                console.error("Error fetching trade results:", err);
                setError(err instanceof Error ? err.message : "Failed to fetch trade results");
           }
-     }, [symbolFilter, startDate, endDate, winLossFilter, apiUrl]);
+     }, [symbolFilter, selectedSymbols, useMultipleSymbols, startDate, endDate, winLossFilter, apiUrl]);
 
      const exportTradeResults = async (format: ExportFormat) => {
           try {
@@ -598,6 +610,55 @@ export default function PerformancePage() {
           color: COLORS[idx % COLORS.length],
      }));
 
+     // Performance over time by symbol (for comparison chart)
+     const performanceOverTimeBySymbol = useMemo(() => {
+          if (tradeResults.length === 0) return [];
+          
+          // Group by date and symbol
+          const grouped = tradeResults.reduce((acc, tr) => {
+               const date = new Date(tr.exit_time).toLocaleDateString();
+               const key = `${date}_${tr.symbol}`;
+               
+               if (!acc[key]) {
+                    acc[key] = {
+                         date,
+                         symbol: tr.symbol,
+                         totalPnl: 0,
+                         tradeCount: 0,
+                         winCount: 0,
+                    };
+               }
+               
+               acc[key].totalPnl += parseFloat(tr.pnl);
+               acc[key].tradeCount += 1;
+               if (tr.win_loss) acc[key].winCount += 1;
+               
+               return acc;
+          }, {} as Record<string, { date: string; symbol: string; totalPnl: number; tradeCount: number; winCount: number }>);
+
+          // Convert to array and calculate cumulative PnL per symbol
+          const symbols = Array.from(new Set(tradeResults.map(tr => tr.symbol)));
+          const dates = Array.from(new Set(Object.values(grouped).map(g => g.date))).sort();
+          
+          return dates.map(date => {
+               const result: Record<string, any> = { date };
+               let cumulativePnl: Record<string, number> = {};
+               
+               symbols.forEach(symbol => {
+                    const key = `${date}_${symbol}`;
+                    const data = grouped[key];
+                    if (data) {
+                         cumulativePnl[symbol] = (cumulativePnl[symbol] || 0) + data.totalPnl;
+                         result[symbol] = cumulativePnl[symbol];
+                    } else {
+                         result[symbol] = cumulativePnl[symbol] || 0;
+                    }
+               });
+               
+               return result;
+          });
+     }, [tradeResults]);
+
      const exportToCSV = () => {
           if (tradeResults.length === 0) {
                alert("No data to export");
@@ -709,22 +770,80 @@ export default function PerformancePage() {
                          alignItems: "center",
                     }}
                >
-                    <div>
-                         <label style={{ marginRight: "8px", fontSize: "14px", color: "#ffffff" }}>Symbol:</label>
-                         <input
-                              type="text"
-                              value={symbolFilter}
-                              onChange={(e) => setSymbolFilter(e.target.value)}
-                              placeholder="BTC/USDT"
-                              style={{
-                                   padding: "6px 12px",
-                                   backgroundColor: "#1a1a1a",
-                                   border: "1px solid #2a2a2a",
-                                   borderRadius: "4px",
-                                   fontSize: "14px",
-                                   color: "#ffffff",
-                              }}
-                         />
+                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                              <label style={{ fontSize: "14px", color: "#ffffff" }}>
+                                   <input
+                                        type="checkbox"
+                                        checked={useMultipleSymbols}
+                                        onChange={(e) => {
+                                             setUseMultipleSymbols(e.target.checked);
+                                             if (!e.target.checked) {
+                                                  setSelectedSymbols([]);
+                                             }
+                                        }}
+                                        style={{ marginRight: "4px" }}
+                                   />
+                                   Multiple Symbols
+                              </label>
+                         </div>
+                         {useMultipleSymbols ? (
+                              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                                   <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
+                                        {availableSymbols.map(symbol => (
+                                             <label
+                                                  key={symbol}
+                                                  style={{
+                                                       display: "flex",
+                                                       alignItems: "center",
+                                                       gap: "4px",
+                                                       padding: "4px 8px",
+                                                       backgroundColor: selectedSymbols.includes(symbol) ? "#FFAE00" : "#1a1a1a",
+                                                       border: `1px solid ${selectedSymbols.includes(symbol) ? "#FFAE00" : "#2a2a2a"}`,
+                                                       borderRadius: "4px",
+                                                       cursor: "pointer",
+                                                       fontSize: "12px",
+                                                       color: "#ffffff",
+                                                  }}
+                                             >
+                                                  <input
+                                                       type="checkbox"
+                                                       checked={selectedSymbols.includes(symbol)}
+                                                       onChange={(e) => {
+                                                            if (e.target.checked) {
+                                                                 setSelectedSymbols([...selectedSymbols, symbol]);
+                                                            } else {
+                                                                 setSelectedSymbols(selectedSymbols.filter(s => s !== symbol));
+                                                            }
+                                                       }}
+                                                       style={{ marginRight: "4px" }}
+                                                  />
+                                                  {symbol}
+                                             </label>
+                                        ))}
+                                   </div>
+                                   {selectedSymbols.length === 0 && (
+                                        <div style={{ fontSize: "12px", color: "#888", fontStyle: "italic" }}>
+                                             Select symbols to compare
+                                        </div>
+                                   )}
+                              </div>
+                         ) : (
+                              <input
+                                   type="text"
+                                   value={symbolFilter}
+                                   onChange={(e) => setSymbolFilter(e.target.value)}
+                                   placeholder="BTC/USDT"
+                                   style={{
+                                        padding: "6px 12px",
+                                        backgroundColor: "#1a1a1a",
+                                        border: "1px solid #2a2a2a",
+                                        borderRadius: "4px",
+                                        fontSize: "14px",
+                                        color: "#ffffff",
+                                   }}
+                              />
+                         )}
                     </div>
                     <div>
                          <label style={{ marginRight: "8px", fontSize: "14px", color: "#ffffff" }}>Start Date:</label>
@@ -1077,6 +1196,63 @@ export default function PerformancePage() {
                                         </Pie>
                                         <Tooltip />
                                    </PieChart>
+                              </ResponsiveContainer>
+                         </div>
+                    )}
+
+                    {/* Performance Comparison by Symbol */}
+                    {useMultipleSymbols && selectedSymbols.length > 1 && performanceOverTimeBySymbol.length > 0 && (
+                         <div
+                              style={{
+                                   padding: "16px",
+                                   backgroundColor: "#202020",
+                                   border: "1px solid #2a2a2a",
+                                   borderRadius: "8px",
+                                   marginTop: "24px",
+                              }}
+                         >
+                              <h3 style={{ marginBottom: "16px", fontSize: "18px", color: "#ffffff" }}>
+                                   Performance Comparison by Symbol (Cumulative P&L Over Time)
+                              </h3>
+                              <ResponsiveContainer width="100%" height={400}>
+                                   <LineChart data={performanceOverTimeBySymbol}>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" />
+                                        <XAxis 
+                                             dataKey="date" 
+                                             stroke="#888"
+                                             tick={{ fill: "#888", fontSize: 12 }}
+                                             angle={-45}
+                                             textAnchor="end"
+                                             height={80}
+                                        />
+                                        <YAxis 
+                                             stroke="#888"
+                                             tick={{ fill: "#888", fontSize: 12 }}
+                                             tickFormatter={(value) => `$${value.toFixed(0)}`}
+                                        />
+                                        <Tooltip
+                                             contentStyle={{
+                                                  backgroundColor: "#1a1a1a",
+                                                  border: "1px solid #2a2a2a",
+                                                  borderRadius: "8px",
+                                                  color: "#ffffff",
+                                             }}
+                                             formatter={(value: number) => [`$${value.toFixed(2)}`, "Cumulative P&L"]}
+                                        />
+                                        <Legend />
+                                        {selectedSymbols.map((symbol, idx) => (
+                                             <Line
+                                                  key={symbol}
+                                                  type="monotone"
+                                                  dataKey={symbol}
+                                                  stroke={COLORS[idx % COLORS.length]}
+                                                  strokeWidth={2}
+                                                  dot={false}
+                                                  activeDot={{ r: 4 }}
+                                                  name={symbol}
+                                             />
+                                        ))}
+                                   </LineChart>
                               </ResponsiveContainer>
                          </div>
                     )}

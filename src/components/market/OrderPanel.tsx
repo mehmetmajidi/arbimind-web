@@ -35,6 +35,7 @@ export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced
         details?: Record<string, unknown>;
     } | null>(null);
     const [checkingPermission, setCheckingPermission] = useState(false);
+    const [paperTrading, setPaperTrading] = useState(false);
     const userEditedPriceRef = useRef(false);
     
     // Message Modal state
@@ -245,6 +246,11 @@ export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced
 
     // Get available balance for current symbol
     const getAvailableBalance = useCallback(() => {
+        // If paper trading is enabled, return 1000 in the quote currency
+        if (paperTrading) {
+            return 1000;
+        }
+        
         if (!balance || !selectedSymbol || !balance.balances) {
             return 0;
         }
@@ -270,10 +276,15 @@ export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced
         // This can happen if BTCTurk API doesn't return currencies with 0 balance
         // In this case, return 0
         return currencyBalance?.free || 0;
-    }, [balance, selectedSymbol, side]);
+    }, [balance, selectedSymbol, side, paperTrading]);
     
     // Get total balance for current symbol
     const getTotalBalance = useCallback(() => {
+        // If paper trading is enabled, return 1000 in the quote currency
+        if (paperTrading) {
+            return 1000;
+        }
+        
         if (!balance || !selectedSymbol || !balance.balances) return 0;
         
         const [base, quote] = selectedSymbol.split("/");
@@ -294,7 +305,7 @@ export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced
         }
         
         return currencyBalance?.total || 0;
-    }, [balance, selectedSymbol, side]);
+    }, [balance, selectedSymbol, side, paperTrading]);
 
     // Handle percentage slider
     const handlePercentageChange = useCallback((value: number) => {
@@ -822,26 +833,69 @@ export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced
 
             {/* Available Balance Display */}
             {selectedSymbol && (
-                <div style={{ marginBottom: "8px", padding: "6px 8px", backgroundColor: "#2a2a2a", borderRadius: "5px", border: "1px solid rgba(255, 174, 0, 0.1)" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <span style={{ fontSize: "9px", color: "#888" }}>
-                            Available {side === "buy" ? selectedSymbol.split("/")[1] : selectedSymbol.split("/")[0]}:
-                        </span>
-                        <span style={{ fontSize: "10px", fontWeight: "600", color: "#FFAE00" }}>
-                            {balanceLoading ? "Loading..." : balance ? (
-                                getAvailableBalance() > 0 ? 
-                                    getAvailableBalance().toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 4 }) : 
-                                    "0.0000"
-                            ) : "N/A"}
-                        </span>
-                    </div>
-                    {balance && (
-                        <div style={{ marginTop: "3px", fontSize: "8px", color: "#666" }}>
-                            Total: {getTotalBalance() > 0 ? getTotalBalance().toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 4 }) : "0.0000"}
-                        </div>
-                    )}
+                <div style={{ marginBottom: "8px", padding: "12px", backgroundColor: "#1a1a1a", borderRadius: "8px", border: "1px solid rgba(255, 174, 0, 0.2)" }}>
+                    {(() => {
+                        const [base, quote] = selectedSymbol.split("/");
+                        const currency = side === "buy" ? quote : base;
+                        const availableBalance = getAvailableBalance();
+                        const totalBalance = getTotalBalance();
+                        const inOrders = paperTrading ? 0 : (balance ? (() => {
+                            let currencyBalance = balance.balances[currency];
+                            if (!currencyBalance) {
+                                const currencyUpper = currency.toUpperCase();
+                                const foundKey = Object.keys(balance.balances).find(
+                                    key => key.toUpperCase() === currencyUpper
+                                );
+                                if (foundKey) {
+                                    currencyBalance = balance.balances[foundKey];
+                                }
+                            }
+                            return currencyBalance?.used || 0;
+                        })() : 0);
+                        
+                        return (
+                            <>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                                    <span style={{ color: "#888", fontSize: "12px" }}>Available Balance:</span>
+                                    <span style={{ color: "#ededed", fontSize: "14px", fontWeight: "600" }}>
+                                        {balanceLoading && !paperTrading ? "Loading..." : (
+                                            `${availableBalance.toLocaleString(undefined, { minimumFractionDigits: 8, maximumFractionDigits: 8 })} ${currency}`
+                                        )}
+                                    </span>
+                                </div>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                                    <span style={{ color: "#888", fontSize: "12px" }}>In Orders:</span>
+                                    <span style={{ color: "#888", fontSize: "12px" }}>
+                                        {inOrders.toLocaleString(undefined, { minimumFractionDigits: 8, maximumFractionDigits: 8 })} {currency}
+                                    </span>
+                                </div>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                    <span style={{ color: "#888", fontSize: "12px" }}>Total Balance:</span>
+                                    <span style={{ color: "#ededed", fontSize: "12px" }}>
+                                        {totalBalance.toLocaleString(undefined, { minimumFractionDigits: 8, maximumFractionDigits: 8 })} {currency}
+                                    </span>
+                                </div>
+                            </>
+                        );
+                    })()}
                 </div>
             )}
+
+            {/* Paper Trading Option */}
+            <div style={{ marginBottom: "12px" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
+                    <input
+                        type="checkbox"
+                        checked={paperTrading}
+                        onChange={(e) => setPaperTrading(e.target.checked)}
+                        style={{ width: "18px", height: "18px", cursor: "pointer" }}
+                    />
+                    <span style={{ color: "#ededed", fontSize: "12px" }}>Paper Trading (Demo Mode)</span>
+                </label>
+                <p style={{ color: "#888", fontSize: "10px", marginTop: "4px", marginLeft: "26px" }}>
+                    Simulate trading without real money
+                </p>
+            </div>
 
             {/* Percentage Slider */}
             <div style={{ marginBottom: "10px" }}>

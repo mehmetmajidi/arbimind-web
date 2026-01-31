@@ -122,7 +122,14 @@ export default function StartTrainingModal({
 
             const result = await startTraining(requestBody);
             
-            showToast("success", `Training job started successfully! Job ID: ${result.job_id?.substring(0, 8)}...`);
+            // Handle job_id - it might be in result.job_id or result.sub_jobs[0].job_id
+            const jobId = result.job_id || (result.sub_jobs && result.sub_jobs[0]?.job_id) || "unknown";
+            const jobIdDisplay = jobId !== "unknown" ? `${jobId.substring(0, 8)}...` : "N/A";
+            
+            showToast("success", `Training job started successfully! Job ID: ${jobIdDisplay}`);
+            
+            // Trigger refresh of job list
+            window.dispatchEvent(new CustomEvent("refreshTrainingJobs"));
             
             if (onSuccess) onSuccess();
             onClose();

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import {
   BotStatsPanel,
   BotListTable,
@@ -15,8 +16,14 @@ import {
   colors,
   layoutStyle,
   mainLayoutStyle,
+  panelStyle,
+  getResponsiveLayoutStyle,
+  getResponsivePanelStyle,
+  SkeletonLoader,
+  ErrorBoundary,
 } from "@/components/bots";
 import FiltersModal from "@/components/bots/FiltersModal";
+import { useResponsive } from "@/hooks/useResponsive";
 
 /**
  * Trading Bots Management Page
@@ -40,10 +47,16 @@ if (typeof document !== "undefined") {
   }
 }
 
-export default function BotsPage() {
+function BotsPageContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const { isMobile, isTablet, isDesktop } = useResponsive();
+  
   const [bots, setBots] = useState<TradingBot[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const retryCountRef = useRef(0);
+  const maxRetries = 3;
   
   // Bot details state
   const [selectedBot, setSelectedBot] = useState<TradingBot | null>(null);
@@ -52,18 +65,38 @@ export default function BotsPage() {
   const [statusLoading, setStatusLoading] = useState(false);
   const [tradesLoading, setTradesLoading] = useState(false);
   
-  // Sorting state
-  const [sortField, setSortField] = useState<SortField | null>(null);
-  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  // Sorting state - initialize from URL
+  const [sortField, setSortField] = useState<SortField | null>(
+    (searchParams.get("sort") as SortField) || null
+  );
+  const [sortDirection, setSortDirection] = useState<SortDirection>(
+    (searchParams.get("direction") as SortDirection) || "asc"
+  );
   
   // Action loading states
   const [actionLoading, setActionLoading] = useState<Record<number, string>>({});
   
-  // Filter states
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [strategyFilter, setStrategyFilter] = useState<string>("all");
-  const [symbolFilter, setSymbolFilter] = useState<string>("");
-  const [searchQuery, setSearchQuery] = useState<string>("");
+  // Filter states - initialize from URL
+  const [statusFilter, setStatusFilter] = useState<string>(
+    searchParams.get("status") || "all"
+  );
+  const [strategyFilter, setStrategyFilter] = useState<string>(
+    searchParams.get("strategy") || "all"
+  );
+  const [symbolFilter, setSymbolFilter] = useState<string>(
+    searchParams.get("symbol") || ""
+  );
+  const [searchQuery, setSearchQuery] = useState<string>(
+    searchParams.get("search") || ""
+  );
+  
+  // Pagination state - initialize from URL
+  const [currentPage, setCurrentPage] = useState<number>(
+    parseInt(searchParams.get("page") || "1", 10)
+  );
+  const [pageSize, setPageSize] = useState<number>(
+    parseInt(searchParams.get("pageSize") || "10", 10)
+  );
   
   // Create Bot Form state
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -73,10 +106,30 @@ export default function BotsPage() {
   
   // Filters Modal state
   const [showFiltersModal, setShowFiltersModal] = useState(false);
+  
+  // Update URL when filters/sort/pagination change
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (statusFilter !== "all") params.set("status", statusFilter);
+    if (strategyFilter !== "all") params.set("strategy", strategyFilter);
+    if (symbolFilter) params.set("symbol", symbolFilter);
+    if (searchQuery) params.set("search", searchQuery);
+    if (sortField) {
+      params.set("sort", sortField);
+      params.set("direction", sortDirection);
+    }
+    if (currentPage > 1) params.set("page", currentPage.toString());
+    if (pageSize !== 10) params.set("pageSize", pageSize.toString());
+    
+    const newUrl = params.toString() ? `?${params.toString()}` : "";
+    router.replace(`/bots${newUrl}`, { scroll: false });
+  }, [statusFilter, strategyFilter, symbolFilter, searchQuery, sortField, sortDirection, currentPage, pageSize, router]);
 
-  // Fetch bots
-  const fetchBots = useCallback(async () => {
+  // Fetch bots with retry functionality
+  const fetchBots = useCallback(async (retryAttempt = 0): Promise<void> => {
     setLoading(true);
+    setError(null);
+    
     try {
       const token = localStorage.getItem("auth_token") || "";
       if (!token) {
@@ -97,17 +150,46 @@ export default function BotsPage() {
         const data = await response.json();
         setBots(Array.isArray(data) ? data : []);
         setError(null);
+        retryCountRef.current = 0; // Reset retry count on success
       } else {
         const errorData = await response.json().catch(() => ({}));
-        setError(errorData.detail || "Failed to load bots");
+        const errorMessage = errorData.detail || "Failed to load bots";
+        setError(errorMessage);
+        
+        // Retry on network errors or 5xx errors
+        if (retryAttempt < maxRetries && (response.status >= 500 || response.status === 0)) {
+          retryCountRef.current = retryAttempt + 1;
+          const delay = Math.min(1000 * Math.pow(2, retryAttempt), 5000); // Exponential backoff
+          setTimeout(() => {
+            fetchBots(retryAttempt + 1);
+          }, delay);
+          return;
+        }
       }
     } catch (err) {
       console.error("Error fetching bots:", err);
-      setError("Failed to load bots");
+      const errorMessage = err instanceof Error ? err.message : "Failed to load bots";
+      setError(errorMessage);
+      
+      // Retry on network errors
+      if (retryAttempt < maxRetries) {
+        retryCountRef.current = retryAttempt + 1;
+        const delay = Math.min(1000 * Math.pow(2, retryAttempt), 5000); // Exponential backoff
+        setTimeout(() => {
+          fetchBots(retryAttempt + 1);
+        }, delay);
+        return;
+      }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [maxRetries]);
+  
+  // Manual retry function
+  const retryFetch = useCallback(() => {
+    retryCountRef.current = 0;
+    fetchBots(0);
+  }, [fetchBots]);
 
   useEffect(() => {
     fetchBots();
@@ -252,6 +334,24 @@ export default function BotsPage() {
     
     return filtered;
   }, [bots, statusFilter, strategyFilter, symbolFilter, searchQuery, sortField, sortDirection]);
+  
+  // Paginated bots
+  const paginatedBots = useMemo(() => {
+    const startIndex = (currentPage - 1) * pageSize;
+    const endIndex = startIndex + pageSize;
+    return filteredAndSortedBots.slice(startIndex, endIndex);
+  }, [filteredAndSortedBots, currentPage, pageSize]);
+  
+  // Pagination info
+  const totalPages = Math.ceil(filteredAndSortedBots.length / pageSize);
+  const totalItems = filteredAndSortedBots.length;
+  
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    if (currentPage > totalPages && totalPages > 0) {
+      setCurrentPage(1);
+    }
+  }, [totalPages, currentPage]);
 
   // Handle sort
   const handleSort = (field: SortField) => {
@@ -398,77 +498,78 @@ export default function BotsPage() {
     }
   };
 
-  if (loading) {
+  if (loading && bots.length === 0) {
     return (
-      <div style={layoutStyle}>
-        {/* Header */}
-        <div style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: "24px",
-        }}>
-          <h1 style={{ 
-            color: colors.primary, 
-            fontSize: "32px", 
-            fontWeight: "bold",
-            margin: 0,
-          }}>
-            Trading Bots Management
-          </h1>
-        </div>
-        
-        {/* Loading State */}
-        <div style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: "60px 20px",
-          color: colors.secondaryText,
-        }}>
+      <ErrorBoundary>
+        <div style={layoutStyle}>
+          {/* Header */}
           <div style={{
-            width: "40px",
-            height: "40px",
-            border: `4px solid ${colors.border}`,
-            borderTopColor: colors.primary,
-            borderRadius: "50%",
-            animation: "spin 1s linear infinite",
-            marginBottom: "16px",
-          }}></div>
-          <div style={{ fontSize: "16px", fontWeight: "500" }}>Loading bots...</div>
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: "24px",
+          }}>
+            <h1 style={{ 
+              color: colors.primary, 
+              fontSize: "32px", 
+              fontWeight: "bold",
+              margin: 0,
+            }}>
+              Trading Bots Management
+            </h1>
+          </div>
+          
+          {/* Loading State with Skeleton */}
+          <div style={mainLayoutStyle}>
+            <div style={{ width: "320px", flexShrink: 0 }}>
+              <div style={panelStyle}>
+                <SkeletonLoader type="card" />
+              </div>
+            </div>
+            <div style={{ flex: "1", minWidth: "0" }}>
+              <div style={panelStyle}>
+                <SkeletonLoader type="table" lines={5} />
+              </div>
+            </div>
+            <div style={{ width: "320px", flexShrink: 0 }}>
+              <div style={panelStyle}>
+                <SkeletonLoader type="card" />
+              </div>
+            </div>
+          </div>
         </div>
-        
-        {/* Add spin animation */}
-        <style>{`
-          @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-          }
-        `}</style>
-      </div>
+      </ErrorBoundary>
     );
   }
 
   return (
-    <div style={layoutStyle}>
+    <ErrorBoundary>
+      <div style={layoutStyle}>
       {/* Header with Title and Action Buttons */}
       <div style={{
         display: "flex",
+        flexDirection: isMobile ? "column" : "row",
         justifyContent: "space-between",
-        alignItems: "center",
+        alignItems: isMobile ? "flex-start" : "center",
+        gap: isMobile ? "16px" : "0",
         marginBottom: "24px",
       }}>
         <h1 style={{ 
           color: colors.primary, 
-          fontSize: "32px", 
+          fontSize: isMobile ? "24px" : isTablet ? "28px" : "32px", 
           fontWeight: "bold",
           margin: 0,
         }}>
           Trading Bots Management
         </h1>
         
-        <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+        <div style={{ 
+          display: "flex", 
+          gap: "12px", 
+          alignItems: "center",
+          flexWrap: isMobile ? "wrap" : "nowrap",
+          width: isMobile ? "100%" : "auto",
+        }}>
           {/* Refresh Button */}
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             {/* Search Input */}
@@ -484,7 +585,8 @@ export default function BotsPage() {
                 borderRadius: "8px",
                 color: colors.text,
                 fontSize: "14px",
-                minWidth: "200px",
+                minWidth: isMobile ? "100%" : "200px",
+                width: isMobile ? "100%" : "auto",
               }}
             />
             
@@ -581,7 +683,7 @@ export default function BotsPage() {
         </div>
       </div>
 
-      {/* Error Message */}
+      {/* Error Message with Retry */}
       {error && (
         <div style={{
           padding: "16px",
@@ -589,20 +691,42 @@ export default function BotsPage() {
           border: "2px solid rgba(239, 68, 68, 0.5)",
           borderRadius: "8px",
           marginBottom: "24px",
-          color: colors.error,
-          fontSize: "14px",
-          fontWeight: "500",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: "12px",
         }}>
-          <strong>⚠️ Error:</strong> {error}
+          <div style={{ color: colors.error, fontSize: "14px", fontWeight: "500", flex: 1 }}>
+            <strong>⚠️ Error:</strong> {error}
+            {retryCountRef.current > 0 && (
+              <span style={{ color: colors.secondaryText, fontSize: "12px", marginLeft: "8px" }}>
+                (Retry attempt {retryCountRef.current}/{maxRetries})
+              </span>
+            )}
+          </div>
+          <button
+            onClick={retryFetch}
+            style={{
+              padding: "6px 12px",
+              backgroundColor: colors.error,
+              border: "none",
+              borderRadius: "6px",
+              color: colors.text,
+              fontSize: "12px",
+              fontWeight: "600",
+              cursor: "pointer",
+            }}
+          >
+            Retry
+          </button>
         </div>
       )}
 
-      {/* Main Layout - Full Width Layout Pattern */}
-      <div style={mainLayoutStyle}>
+      {/* Main Layout - Responsive Layout Pattern */}
+      <div style={getResponsiveLayoutStyle(isMobile, isTablet)}>
         {/* Left Panel - Stats */}
         <div style={{
-          width: "320px",
-          flexShrink: 0,
+          ...(isMobile ? { width: "100%" } : isTablet ? { width: "100%", order: 1 } : { width: "320px", flexShrink: 0 }),
           display: "flex",
           flexDirection: "column",
           gap: "12px",
@@ -613,32 +737,49 @@ export default function BotsPage() {
 
         {/* Center Panel - Bot List */}
         <div style={{
-          flex: "1",
-          minWidth: "0",
+          ...(isMobile ? { width: "100%", order: 2 } : isTablet ? { width: "100%", order: 2 } : { flex: "1", minWidth: "0" }),
           display: "flex",
           flexDirection: "column",
           gap: "12px",
         }}>
           {/* Bot List Panel */}
-          <BotListTable
-            bots={filteredAndSortedBots}
-            selectedBot={selectedBot}
-            sortField={sortField}
-            sortDirection={sortDirection}
-            actionLoading={actionLoading}
-            onBotSelect={setSelectedBot}
-            onSort={handleSort}
-            onStartBot={handleStartBot}
-            onStopBot={handleStopBot}
-            onEditBot={handleEditBot}
-            onDeleteBot={handleDeleteBot}
-          />
+          <ErrorBoundary>
+            {loading ? (
+              <div style={getResponsivePanelStyle(isMobile, isTablet)}>
+                <h3 style={{ color: colors.primary, marginBottom: "12px", fontSize: isMobile ? "16px" : "18px", fontWeight: "600" }}>
+                  Bot List
+                </h3>
+                <SkeletonLoader type="table" lines={5} />
+              </div>
+            ) : (
+              <BotListTable
+                bots={paginatedBots}
+                selectedBot={selectedBot}
+                sortField={sortField}
+                sortDirection={sortDirection}
+                actionLoading={actionLoading}
+                onBotSelect={setSelectedBot}
+                onSort={handleSort}
+                onStartBot={handleStartBot}
+                onStopBot={handleStopBot}
+                onEditBot={handleEditBot}
+                onDeleteBot={handleDeleteBot}
+                currentPage={currentPage}
+                pageSize={pageSize}
+                totalItems={totalItems}
+                onPageChange={setCurrentPage}
+                onPageSizeChange={setPageSize}
+                showPagination={totalItems > pageSize}
+                isMobile={isMobile}
+                isTablet={isTablet}
+              />
+            )}
+          </ErrorBoundary>
         </div>
 
         {/* Right Panel - Bot Details Panel */}
         <div style={{
-          width: "320px",
-          flexShrink: 0,
+          ...(isMobile ? { width: "100%", order: 3 } : isTablet ? { width: "100%", order: 3 } : { width: "320px", flexShrink: 0 }),
           display: "flex",
           flexDirection: "column",
           gap: "12px",
@@ -653,6 +794,8 @@ export default function BotsPage() {
             onStopBot={handleStopBot}
             onEditBot={handleEditBot}
             onDeleteBot={handleDeleteBot}
+            isMobile={isMobile}
+            isTablet={isTablet}
           />
         </div>
       </div>
@@ -715,6 +858,21 @@ export default function BotsPage() {
         onClose={() => setEditingBot(null)}
         onSuccess={handleEditSuccess}
       />
-    </div>
+      </div>
+    </ErrorBoundary>
+  );
+}
+
+export default function BotsPage() {
+  return (
+    <Suspense fallback={
+      <div style={layoutStyle}>
+        <div style={{ textAlign: "center", padding: "40px", color: colors.secondaryText }}>
+          Loading...
+        </div>
+      </div>
+    }>
+      <BotsPageContent />
+    </Suspense>
   );
 }

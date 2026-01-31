@@ -9,6 +9,15 @@ interface BotPerformancePanelProps {
 }
 
 export default function BotPerformancePanel({ botStatus, loading }: BotPerformancePanelProps) {
+  // Debug log
+  if (typeof window !== "undefined") {
+    console.log("[BotPerformancePanel] Rendering with:", { 
+      hasBotStatus: !!botStatus, 
+      loading,
+      botStatusData: botStatus 
+    });
+  }
+
   if (loading) {
     return (
       <div style={panelStyle}>
@@ -160,14 +169,35 @@ export default function BotPerformancePanel({ botStatus, loading }: BotPerforman
           borderRadius: "6px",
           border: `1px solid ${colors.border}`,
         }}>
+          {/* 1. Current Capital (میزان سرمایه کل) */}
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
             <span style={{ color: colors.secondaryText, fontSize: "11px" }}>Current Capital</span>
-            <span style={{ color: colors.text, fontWeight: "600", fontSize: "14px" }}>
+            <span style={{ color: colors.text, fontWeight: "700", fontSize: "14px" }}>
               {botStatus.current_capital.toFixed(2)} USDT
             </span>
           </div>
+          
+          {/* 2. Locked in Positions (سرمایه خریداری شده/قفل شده) */}
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", marginBottom: "4px" }}>
+            <span style={{ color: colors.secondaryText }}>Locked in Positions</span>
+            <span style={{ color: colors.warning || "#f59e0b", fontWeight: "600" }}>
+              {botStatus.locked_capital.toFixed(2)} USDT
+            </span>
+          </div>
+          
+          {/* 3. Available Balance (الباقی سرمایه) */}
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", marginBottom: "4px" }}>
+            <span style={{ color: colors.secondaryText }}>Available Balance</span>
+            <span style={{ 
+              color: botStatus.available_balance > 0 ? colors.success : colors.error, 
+              fontWeight: "600" 
+            }}>
+              {botStatus.available_balance.toFixed(2)} USDT
+            </span>
+          </div>
+          
           {initialCapital !== botStatus.current_capital && (
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", marginTop: "4px", paddingTop: "4px", borderTop: `1px solid ${colors.border}` }}>
               <span style={{ color: colors.secondaryText }}>Initial Capital</span>
               <span style={{ color: colors.secondaryText }}>
                 {initialCapital.toFixed(2)} USDT

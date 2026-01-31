@@ -7,6 +7,8 @@ import PredictionStats from "@/components/predictions/PredictionStats";
 import PredictionTable from "@/components/predictions/PredictionTable";
 import PredictionPagination from "@/components/predictions/PredictionPagination";
 import GetPredictionModal from "@/components/predictions/GetPredictionModal";
+import SinglePredictionModal from "@/components/predictions/SinglePredictionModal";
+import { ErrorMessage, SuccessMessage, LoadingSpinner, Breadcrumb } from "@/components/shared";
 
 interface Prediction {
     id: number;
@@ -69,6 +71,7 @@ export default function PredictionsPage() {
 
     // Get Prediction Modal
     const [showGetPredictionModal, setShowGetPredictionModal] = useState(false);
+    const [showSinglePredictionModal, setShowSinglePredictionModal] = useState(false);
     const [showBatchPredictionModal, setShowBatchPredictionModal] = useState(false);
     const [showFiltersModal, setShowFiltersModal] = useState(false);
     const [getPredictionSymbol, setGetPredictionSymbol] = useState<string>("");
@@ -427,7 +430,29 @@ export default function PredictionsPage() {
                             e.currentTarget.style.backgroundColor = "#FFAE00";
                         }}
                     >
-                        + Get Prediction
+                        + Get Predictions (Multiple)
+                    </button>
+                    <button
+                        onClick={() => setShowSinglePredictionModal(true)}
+                        style={{
+                            padding: "12px 24px",
+                            backgroundColor: "#10b981",
+                            color: "#fff",
+                            border: "none",
+                            borderRadius: "8px",
+                            cursor: "pointer",
+                            fontSize: "16px",
+                            fontWeight: "600",
+                            transition: "all 0.2s ease",
+                        }}
+                        onMouseEnter={(e) => {
+                            e.currentTarget.style.backgroundColor = "#059669";
+                        }}
+                        onMouseLeave={(e) => {
+                            e.currentTarget.style.backgroundColor = "#10b981";
+                        }}
+                    >
+                        🎯 Single Prediction
                     </button>
                     <button
                         onClick={() => setShowBatchPredictionModal(true)}
@@ -474,20 +499,16 @@ export default function PredictionsPage() {
                 onFilterChange={() => setOffset(0)}
             />
 
+            {/* Breadcrumb */}
+            <Breadcrumb />
+
             {/* Error */}
             {error && (
-                <div
-                    style={{
-                        backgroundColor: "rgba(239, 68, 68, 0.1)",
-                        border: "1px solid rgba(239, 68, 68, 0.3)",
-                        borderRadius: "8px",
-                        padding: "16px",
-                        marginBottom: "24px",
-                        color: "#ef4444",
-                    }}
-                >
-                    {error}
-                </div>
+                <ErrorMessage
+                    message={error}
+                    onDismiss={() => setError(null)}
+                    onRetry={fetchPredictions}
+                />
             )}
 
             {/* Stats */}
@@ -534,6 +555,15 @@ export default function PredictionsPage() {
                 error={getPredictionError}
                 result={getPredictionResult}
                 onGetPrediction={handleGetPrediction}
+                apiUrl={apiUrl}
+            />
+
+            {/* Single Prediction Modal */}
+            <SinglePredictionModal
+                isOpen={showSinglePredictionModal}
+                onClose={() => setShowSinglePredictionModal(false)}
+                accounts={accounts}
+                selectedAccountId={selectedAccountId}
                 apiUrl={apiUrl}
             />
 

@@ -171,19 +171,31 @@ function TrainingJobsTable({
     const confirmCancel = async () => {
         if (!cancelConfirmJob) return;
 
+        const jobId = cancelConfirmJob;
+        
+        if (processingJobs.has(jobId)) return;
+        
+        setProcessingJobs(prev => new Set(prev).add(jobId));
         try {
-            const result = await cancelTraining(cancelConfirmJob);
+            const result = await cancelTraining(jobId);
             const message = result.message || "Training job cancelled successfully";
             showToast("success", message);
             // Refresh jobs list after a short delay to see updated status
             setTimeout(() => {
                 fetchJobs(false);
             }, 500);
-            setCancelConfirmJob(null);
+            setCancelConfirmJob(null); // Close modal after success
         } catch (err) {
             const errorMessage = err instanceof Error ? err.message : "Error cancelling training job";
             showToast("error", errorMessage);
             console.error("Cancel training job error:", err);
+            // Don't close modal on error so user can try again
+        } finally {
+            setProcessingJobs(prev => {
+                const next = new Set(prev);
+                next.delete(jobId);
+                return next;
+            });
         }
     };
 
@@ -195,7 +207,6 @@ function TrainingJobsTable({
         if (!deleteConfirmJob) return;
         
         const jobId = deleteConfirmJob;
-        setDeleteConfirmJob(null);
         
         if (processingJobs.has(jobId)) return;
         
@@ -204,10 +215,12 @@ function TrainingJobsTable({
             const result = await deleteTraining(jobId);
             showToast("success", result.message || "Training job deleted successfully");
             fetchJobs(); // Refresh the list
+            setDeleteConfirmJob(null); // Close modal after success
         } catch (err) {
             const errorMessage = err instanceof Error ? err.message : "Failed to delete training job";
             showToast("error", errorMessage);
             console.error(err);
+            // Don't close modal on error so user can try again
         } finally {
             setProcessingJobs(prev => {
                 const next = new Set(prev);
@@ -479,7 +492,7 @@ function TrainingJobsTable({
                                         </td>
                                         <td style={{ padding: "8px 4px", textAlign: "center" }}>
                                             <div style={{ display: "flex", flexDirection: "column", gap: "2px", alignItems: "center" }}>
-                                                <StatusBadge status={job.status as any} size="small" />
+                                            <StatusBadge status={job.status as any} size="small" />
                                                 {job.parent_job_id && (
                                                     <div style={{ 
                                                         fontSize: "8px", 
@@ -583,8 +596,8 @@ function TrainingJobsTable({
                                                                 <>⏳ Pausing...</>
                                                             ) : (
                                                                 <>
-                                                                    <MdPause style={{ display: "inline", marginRight: "2px", verticalAlign: "middle" }} />
-                                                                    Pause
+                                                            <MdPause style={{ display: "inline", marginRight: "2px", verticalAlign: "middle" }} />
+                                                            Pause
                                                                 </>
                                                             )}
                                                         </button>
@@ -718,8 +731,8 @@ function TrainingJobsTable({
                                                                     <>⏳ Resuming...</>
                                                                 ) : (
                                                                     <>
-                                                                        <MdPlayArrow style={{ display: "inline", marginRight: "2px", verticalAlign: "middle" }} />
-                                                                        Resume
+                                                                <MdPlayArrow style={{ display: "inline", marginRight: "2px", verticalAlign: "middle" }} />
+                                                                Resume
                                                                     </>
                                                                 )}
                                                             </button>

@@ -1,6 +1,7 @@
 "use client";
 
-import { TradingBot } from "./types";
+import { useState, useEffect } from "react";
+import { TradingBot, BotStatus } from "./types";
 import { colors, panelStyle } from "./constants";
 import BotStatusIndicator from "./BotStatusIndicator";
 import BotStatusBadge from "./BotStatusBadge";
@@ -8,19 +9,23 @@ import SymbolBadge from "./SymbolBadge";
 
 interface BotInfoPanelProps {
   bot: TradingBot;
-  onStartBot: () => void;
-  onStopBot: () => void;
-  onEditBot: () => void;
-  onDeleteBot: () => void;
+  botStatus?: BotStatus | null;  // Optional bot status for symbol stats
 }
 
 export default function BotInfoPanel({
   bot,
-  onStartBot,
-  onStopBot,
-  onEditBot,
-  onDeleteBot,
+  botStatus,
 }: BotInfoPanelProps) {
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, []);
+
   const getStatusColor = (status: string) => {
     switch (status.toLowerCase()) {
       case "active":
@@ -86,6 +91,8 @@ export default function BotInfoPanel({
             </span>
           </div>
           
+          {/* Note: Available balance will be shown in BotPerformancePanel when botStatus is available */}
+          
           {bot.started_at && (
             <div style={{ display: "flex", justifyContent: "space-between" }}>
               <span style={{ color: colors.secondaryText, fontSize: "13px" }}>Started:</span>
@@ -96,87 +103,24 @@ export default function BotInfoPanel({
           )}
           
           {bot.created_at && (
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ color: colors.secondaryText, fontSize: "13px" }}>Created:</span>
-              <span style={{ color: colors.text, fontSize: "12px" }}>
-                {new Date(bot.created_at).toLocaleString()}
-              </span>
-            </div>
+            <>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span style={{ color: colors.secondaryText, fontSize: "13px" }}>Created:</span>
+                <span style={{ color: colors.text, fontSize: "12px" }}>
+                  {new Date(bot.created_at).toLocaleString()}
+                </span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span style={{ color: colors.secondaryText, fontSize: "13px" }}>Current Time:</span>
+                <span style={{ color: colors.primary, fontSize: "12px", fontWeight: "600" }}>
+                  {currentTime.toLocaleString()}
+                </span>
+              </div>
+            </>
           )}
         </div>
       </div>
 
-      {/* Quick Actions */}
-      <div style={panelStyle}>
-        <h3 style={{ color: colors.primary, marginBottom: "12px", fontSize: "18px", fontWeight: "600" }}>
-          Quick Actions
-        </h3>
-        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-          {bot.status === "active" ? (
-            <button
-              onClick={onStopBot}
-              style={{
-                padding: "8px 16px",
-                backgroundColor: colors.error,
-                border: "none",
-                borderRadius: "6px",
-                color: colors.text,
-                fontWeight: "600",
-                cursor: "pointer",
-                fontSize: "12px",
-              }}
-            >
-              Stop Bot
-            </button>
-          ) : (
-            <button
-              onClick={onStartBot}
-              style={{
-                padding: "8px 16px",
-                backgroundColor: colors.success,
-                border: "none",
-                borderRadius: "6px",
-                color: colors.text,
-                fontWeight: "600",
-                cursor: "pointer",
-                fontSize: "12px",
-              }}
-            >
-              Start Bot
-            </button>
-          )}
-          <button
-            onClick={onEditBot}
-            style={{
-              padding: "8px 16px",
-              backgroundColor: colors.primary,
-              border: "none",
-              borderRadius: "6px",
-              color: colors.background,
-              fontWeight: "600",
-              cursor: "pointer",
-              fontSize: "12px",
-            }}
-          >
-            Edit Bot
-          </button>
-          <button
-            onClick={onDeleteBot}
-            style={{
-              padding: "8px 16px",
-              backgroundColor: "transparent",
-              border: "1px solid rgba(239, 68, 68, 0.5)",
-              borderRadius: "6px",
-              color: colors.error,
-              fontWeight: "600",
-              cursor: "pointer",
-              fontSize: "12px",
-            }}
-          >
-            Delete Bot
-          </button>
-        </div>
-      </div>
 
       {/* Configuration Summary */}
       <div style={panelStyle}>
@@ -228,13 +172,80 @@ export default function BotInfoPanel({
           )}
           
           <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: `1px solid ${colors.border}` }}>
-            <div style={{ color: colors.secondaryText, fontSize: "13px", marginBottom: "4px" }}>
+            <div style={{ color: colors.secondaryText, fontSize: "13px", marginBottom: "8px" }}>
               Trading Symbols:
             </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
-              {bot.symbols.map(symbol => (
-                <SymbolBadge key={symbol} symbol={symbol} size="small" />
-              ))}
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              {bot.symbols.map(symbol => {
+                const symbolStat = botStatus?.symbol_stats?.[symbol];
+                return (
+                  <div 
+                    key={symbol}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      padding: "6px 8px",
+                      backgroundColor: colors.background,
+                      borderRadius: "6px",
+                      border: `1px solid ${colors.border}`,
+                    }}
+                  >
+                    <SymbolBadge symbol={symbol} size="small" />
+                    <div style={{ display: "flex", flexDirection: "column", gap: "4px", alignItems: "flex-end", fontSize: "10px", minWidth: "120px" }}>
+                      {symbolStat && symbolStat.total_quantity > 0 && (
+                        <>
+                          <div style={{ display: "flex", justifyContent: "space-between", width: "100%", gap: "8px" }}>
+                            <span style={{ color: colors.secondaryText }}>Qty:</span>
+                            <span style={{ color: colors.text, fontWeight: "600" }}>
+                              {symbolStat.total_quantity.toFixed(4)}
+                            </span>
+                          </div>
+                          {symbolStat.total_cost_at_entry > 0 && (
+                            <div style={{ display: "flex", justifyContent: "space-between", width: "100%", gap: "8px" }}>
+                              <span style={{ color: colors.secondaryText }}>Entry Value:</span>
+                              <span style={{ color: colors.text }}>
+                                {symbolStat.total_cost_at_entry.toFixed(2)} USDT
+                              </span>
+                            </div>
+                          )}
+                          {symbolStat.current_value > 0 && (
+                            <div style={{ display: "flex", justifyContent: "space-between", width: "100%", gap: "8px" }}>
+                              <span style={{ color: colors.secondaryText }}>Current Value:</span>
+                              <span style={{ 
+                                color: symbolStat.current_value >= symbolStat.total_cost_at_entry ? colors.success : colors.error,
+                                fontWeight: "600"
+                              }}>
+                                {symbolStat.current_value.toFixed(2)} USDT
+                              </span>
+                            </div>
+                          )}
+                        </>
+                      )}
+                      {symbolStat && symbolStat.total_pnl !== 0 && (
+                        <div style={{ 
+                          display: "flex", 
+                          justifyContent: "space-between", 
+                          width: "100%", 
+                          gap: "8px",
+                          marginTop: "4px",
+                          paddingTop: "4px",
+                          borderTop: `1px solid ${colors.border}`
+                        }}>
+                          <span style={{ color: colors.secondaryText }}>PnL:</span>
+                          <span style={{ 
+                            color: symbolStat.total_pnl >= 0 ? colors.success : colors.error, 
+                            fontWeight: "700",
+                            fontSize: "11px"
+                          }}>
+                            {symbolStat.total_pnl >= 0 ? "+" : ""}{symbolStat.total_pnl.toFixed(2)} USDT
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>

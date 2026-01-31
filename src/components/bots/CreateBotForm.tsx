@@ -39,6 +39,7 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
   const [currenciesLoading, setCurrenciesLoading] = useState(false);
   const [investmentMode, setInvestmentMode] = useState<"amount" | "percentage">("amount");
   const lastChangedField = useRef<"amount" | "percentage" | null>(null);
+  const previousCapitalRef = useRef<string>("");
   
   // Source currency states (for selling other currencies)
   const [useSourceCurrency, setUseSourceCurrency] = useState(false);
@@ -538,25 +539,34 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
 
   // Update capital when percentage changes (only in percentage mode)
   useEffect(() => {
-    if (investmentMode === "percentage" && balance && capitalPercentage && lastChangedField.current === "percentage") {
-      const percentage = parseFloat(capitalPercentage);
-      if (!isNaN(percentage) && percentage >= 0 && percentage <= 100) {
-        const calculatedAmount = (balance.free * percentage) / 100;
-        setCapital(calculatedAmount.toFixed(8));
-        lastChangedField.current = null;
-      } else if (capitalPercentage === "") {
-        setCapital("");
-        lastChangedField.current = null;
+    if (investmentMode === "percentage" && (balance || paperTrading) && capitalPercentage) {
+      // Only update if user changed percentage, or if paperTrading/balance changed
+      if (lastChangedField.current === "percentage" || lastChangedField.current === null) {
+        const percentage = parseFloat(capitalPercentage);
+        if (!isNaN(percentage) && percentage >= 0 && percentage <= 100) {
+          const availableBalance = paperTrading ? 1000 : (balance?.free || 0);
+          const calculatedAmount = (availableBalance * percentage) / 100;
+          setCapital(calculatedAmount.toFixed(8));
+          if (lastChangedField.current === "percentage") {
+            lastChangedField.current = null;
+          }
+        } else if (capitalPercentage === "") {
+          setCapital("");
+          if (lastChangedField.current === "percentage") {
+            lastChangedField.current = null;
+          }
+        }
       }
     }
-  }, [capitalPercentage, balance, investmentMode]);
+  }, [capitalPercentage, balance, investmentMode, paperTrading]);
 
   // Update percentage when amount changes (only in amount mode)
   useEffect(() => {
-    if (investmentMode === "amount" && balance && capital && lastChangedField.current === "amount") {
+    if (investmentMode === "amount" && (balance || paperTrading) && capital && lastChangedField.current === "amount") {
       const amount = parseFloat(capital);
-      if (!isNaN(amount) && balance.free > 0) {
-        const calculatedPercentage = (amount / balance.free) * 100;
+      const availableBalance = paperTrading ? 1000 : (balance?.free || 0);
+      if (!isNaN(amount) && availableBalance > 0) {
+        const calculatedPercentage = (amount / availableBalance) * 100;
         setCapitalPercentage(calculatedPercentage.toFixed(2));
         lastChangedField.current = null;
       } else if (capital === "") {
@@ -564,7 +574,7 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
         lastChangedField.current = null;
       }
     }
-  }, [capital, balance, investmentMode]);
+  }, [capital, balance, investmentMode, paperTrading]);
 
   useEffect(() => {
     if (isOpen) {
@@ -605,6 +615,59 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
       setAvailableSymbols([]);
     }
   }, [exchangeAccountId, selectedQuoteCurrency, fetchAvailableSymbols]);
+
+  // Set capital to 1000 when paper trading is enabled
+  useEffect(() => {
+    if (paperTrading && !useSourceCurrency) {
+      // Save previous capital value if it exists and is not 1000
+      const currentCapital = capital || "";
+      if (currentCapital && currentCapital !== "1000" && currentCapital !== "" && !previousCapitalRef.current) {
+        previousCapitalRef.current = currentCapital;
+      }
+      // Set to 1000 if not already set
+      if (currentCapital !== "1000") {
+        setCapital("1000");
+      }
+    } else if (!paperTrading && !useSourceCurrency && previousCapitalRef.current) {
+      // Restore previous capital when paper trading is disabled
+      setCapital(previousCapitalRef.current);
+      previousCapitalRef.current = "";
+    }
+  }, [paperTrading, useSourceCurrency]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Disable source currency option when paper trading is enabled
+  useEffect(() => {
+    if (paperTrading && useSourceCurrency) {
+      setUseSourceCurrency(false);
+      setSourceCurrency("");
+      setSourceAmount("");
+    }
+  }, [paperTrading, useSourceCurrency]);
+
+  // Recalculate when paperTrading or balance changes (if in percentage mode)
+  useEffect(() => {
+    if (investmentMode === "percentage" && (balance || paperTrading) && capitalPercentage && !isNaN(parseFloat(capitalPercentage))) {
+      const percentage = parseFloat(capitalPercentage);
+      if (percentage >= 0 && percentage <= 100) {
+        const availableBalance = paperTrading ? 1000 : (balance?.free || 0);
+        const calculatedAmount = (availableBalance * percentage) / 100;
+        // Only update if different to avoid infinite loops
+        if (Math.abs(parseFloat(capital) - calculatedAmount) > 0.00000001) {
+          setCapital(calculatedAmount.toFixed(8));
+        }
+      }
+    } else if (investmentMode === "amount" && (balance || paperTrading) && capital && !isNaN(parseFloat(capital))) {
+      const amount = parseFloat(capital);
+      const availableBalance = paperTrading ? 1000 : (balance?.free || 0);
+      if (availableBalance > 0) {
+        const calculatedPercentage = (amount / availableBalance) * 100;
+        // Only update if different to avoid infinite loops
+        if (Math.abs(parseFloat(capitalPercentage || "0") - calculatedPercentage) > 0.01) {
+          setCapitalPercentage(calculatedPercentage.toFixed(2));
+        }
+      }
+    }
+  }, [paperTrading, balance, investmentMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSubmit = async () => {
     // Validation
@@ -652,9 +715,18 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
         setFormError("Valid initial capital is required");
         return;
       }
-      if (balance && parseFloat(capital) > balance.free) {
-        setFormError(`Insufficient balance. Available: ${balance.free.toFixed(8)} ${selectedQuoteCurrency}`);
-        return;
+      if (!paperTrading) {
+        const availableBalance = balance?.free || 0;
+        if (parseFloat(capital) > availableBalance) {
+          setFormError(`Insufficient balance. Available: ${availableBalance.toFixed(8)} ${selectedQuoteCurrency}`);
+          return;
+        }
+      } else {
+        // In paper trading mode, validate against 1000
+        if (parseFloat(capital) > 1000) {
+          setFormError(`Insufficient balance. Available: 1000.00000000 ${selectedQuoteCurrency}`);
+          return;
+        }
       }
     }
     if (selectedSymbols.length === 0) {
@@ -920,7 +992,7 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
                 </div>
 
                 {/* Balance Display */}
-                {selectedQuoteCurrency && balance !== null && (
+                {selectedQuoteCurrency && (balance !== null || paperTrading) && (
                   <div style={{
                     padding: "12px",
                     backgroundColor: colors.background,
@@ -930,48 +1002,73 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
                       <span style={{ color: colors.secondaryText, fontSize: "12px" }}>Available Balance:</span>
                       <span style={{ color: colors.text, fontSize: "14px", fontWeight: "600" }}>
-                        {balanceLoading ? "Loading..." : `${balance.free.toFixed(8)} ${selectedQuoteCurrency}`}
+                        {balanceLoading && !paperTrading ? "Loading..." : (
+                          paperTrading 
+                            ? `1000.00000000 ${selectedQuoteCurrency}`
+                            : `${balance?.free.toFixed(8) || "0.00000000"} ${selectedQuoteCurrency}`
+                        )}
                       </span>
                     </div>
-                    {balance.used > 0 && (
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <span style={{ color: colors.secondaryText, fontSize: "12px" }}>In Orders:</span>
-                        <span style={{ color: colors.secondaryText, fontSize: "12px" }}>
-                          {balance.used.toFixed(8)} {selectedQuoteCurrency}
-                        </span>
-                      </div>
-                    )}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ color: colors.secondaryText, fontSize: "12px" }}>In Orders:</span>
+                      <span style={{ color: colors.secondaryText, fontSize: "12px" }}>
+                        {paperTrading 
+                          ? `0.00000000 ${selectedQuoteCurrency}`
+                          : `${(balance?.used || 0).toFixed(8)} ${selectedQuoteCurrency}`
+                        }
+                      </span>
+                    </div>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "4px" }}>
                       <span style={{ color: colors.secondaryText, fontSize: "12px" }}>Total Balance:</span>
                       <span style={{ color: colors.text, fontSize: "12px" }}>
-                        {balance.total.toFixed(8)} {selectedQuoteCurrency}
+                        {paperTrading 
+                          ? `1000.00000000 ${selectedQuoteCurrency}`
+                          : `${balance?.total.toFixed(8) || "0.00000000"} ${selectedQuoteCurrency}`
+                        }
                       </span>
                     </div>
                   </div>
                 )}
 
-                {/* Source Currency Option */}
+                {/* Paper Trading Option */}
                 <div style={{ marginTop: "16px" }}>
-                  <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", marginBottom: "12px" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
                     <input
                       type="checkbox"
-                      checked={useSourceCurrency}
-                      onChange={(e) => {
-                        setUseSourceCurrency(e.target.checked);
-                        if (!e.target.checked) {
-                          setSourceCurrency("");
-                          setSourceAmount("");
-                        }
-                      }}
+                      checked={paperTrading}
+                      onChange={(e) => setPaperTrading(e.target.checked)}
                       style={{ width: "18px", height: "18px", cursor: "pointer" }}
                     />
-                    <span style={{ color: colors.text, fontSize: "14px", fontWeight: "500" }}>
-                      Sell another currency to invest
-                    </span>
+                    <span style={{ color: colors.text, fontSize: "14px" }}>Paper Trading (Demo Mode)</span>
                   </label>
                   <p style={{ color: colors.secondaryText, fontSize: "12px", marginTop: "4px", marginLeft: "26px" }}>
-                    If you don't have enough {selectedQuoteCurrency || "quote currency"}, you can sell another currency you own
+                    Simulate trading without real money
                   </p>
+                </div>
+
+                {/* Source Currency Option - Only show if NOT in paper trading mode */}
+                {!paperTrading && (
+                  <div style={{ marginTop: "16px" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", marginBottom: "12px" }}>
+                      <input
+                        type="checkbox"
+                        checked={useSourceCurrency}
+                        onChange={(e) => {
+                          setUseSourceCurrency(e.target.checked);
+                          if (!e.target.checked) {
+                            setSourceCurrency("");
+                            setSourceAmount("");
+                          }
+                        }}
+                        style={{ width: "18px", height: "18px", cursor: "pointer" }}
+                      />
+                      <span style={{ color: colors.text, fontSize: "14px", fontWeight: "500" }}>
+                        Sell another currency to invest
+                      </span>
+                    </label>
+                    <p style={{ color: colors.secondaryText, fontSize: "12px", marginTop: "4px", marginLeft: "26px" }}>
+                      If you don't have enough {selectedQuoteCurrency || "quote currency"}, you can sell another currency you own
+                    </p>
 
                   {useSourceCurrency && (
                     <div style={{ marginTop: "16px", display: "flex", flexDirection: "column", gap: "12px" }}>
@@ -1143,7 +1240,8 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
                       )}
                     </div>
                   )}
-                </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1232,7 +1330,7 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
                             lastChangedField.current = "percentage";
                             setCapitalPercentage(e.target.value);
                           }}
-                          disabled={!selectedQuoteCurrency || !balance}
+                          disabled={!selectedQuoteCurrency || (!balance && !paperTrading)}
                           style={{
                             flex: 1,
                             padding: "10px 12px",
@@ -1241,28 +1339,28 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
                             borderRadius: "8px",
                             color: colors.text,
                             fontSize: "14px",
-                            opacity: selectedQuoteCurrency && balance ? 1 : 0.6,
+                            opacity: selectedQuoteCurrency && (balance || paperTrading) ? 1 : 0.6,
                           }}
                         />
                         <span style={{ color: colors.secondaryText, fontSize: "14px" }}>%</span>
-                        {balance && capitalPercentage && !isNaN(parseFloat(capitalPercentage)) && (
+                        {(balance || paperTrading) && capitalPercentage && !isNaN(parseFloat(capitalPercentage)) && (
                           <span style={{ color: colors.text, fontSize: "12px", minWidth: "100px" }}>
-                            = {(balance.free * parseFloat(capitalPercentage) / 100).toFixed(8)} {selectedQuoteCurrency}
+                            = {((paperTrading ? 1000 : (balance?.free || 0)) * parseFloat(capitalPercentage) / 100).toFixed(8)} {selectedQuoteCurrency}
                           </span>
                         )}
                       </div>
                     )}
                     
-                    {selectedQuoteCurrency && balance && (
+                    {selectedQuoteCurrency && (balance || paperTrading) && (
                       <p style={{ color: colors.secondaryText, fontSize: "12px", marginTop: "4px" }}>
-                        Available: {balance.free.toFixed(8)} {selectedQuoteCurrency}
+                        Available: {paperTrading ? "1000.00000000" : balance?.free.toFixed(8) || "0.00000000"} {selectedQuoteCurrency}
                       </p>
                     )}
                   </div>
                 )}
 
-                {/* Show info when using source currency */}
-                {useSourceCurrency && sourceCurrency && (
+                {/* Show info when using source currency - Only show if NOT in paper trading mode */}
+                {!paperTrading && useSourceCurrency && sourceCurrency && (
                   <div style={{
                     padding: "12px",
                     backgroundColor: colors.background,
@@ -1522,20 +1620,6 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
                   </div>
                 </div>
 
-                <div>
-                  <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={paperTrading}
-                      onChange={(e) => setPaperTrading(e.target.checked)}
-                      style={{ width: "18px", height: "18px", cursor: "pointer" }}
-                    />
-                    <span style={{ color: colors.text, fontSize: "14px" }}>Paper Trading (Demo Mode)</span>
-                  </label>
-                  <p style={{ color: colors.secondaryText, fontSize: "12px", marginTop: "4px", marginLeft: "26px" }}>
-                    Simulate trading without real money
-                  </p>
-                </div>
               </div>
             </div>
 
@@ -1584,6 +1668,92 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
             overflowY: "auto",
             paddingRight: "8px",
           }}>
+            {/* Real-time Preview Section */}
+            <div>
+              <h3 style={{ color: colors.primary, marginBottom: "16px", fontSize: "18px", fontWeight: "600" }}>
+                Preview
+              </h3>
+              <div style={{
+                padding: "16px",
+                backgroundColor: colors.background,
+                border: `1px solid ${colors.border}`,
+                borderRadius: "8px",
+                fontSize: "12px",
+              }}>
+                <div style={{ marginBottom: "8px" }}>
+                  <span style={{ color: colors.secondaryText }}>Name: </span>
+                  <span style={{ color: colors.text, fontWeight: "500" }}>
+                    {botName || "Untitled Bot"}
+                  </span>
+                </div>
+                <div style={{ marginBottom: "8px" }}>
+                  <span style={{ color: colors.secondaryText }}>Exchange: </span>
+                  <span style={{ color: colors.text, fontWeight: "500" }}>
+                    {exchangeAccounts.find(acc => acc.id.toString() === exchangeAccountId)?.exchange_name || "Not selected"}
+                  </span>
+                </div>
+                <div style={{ marginBottom: "8px" }}>
+                  <span style={{ color: colors.secondaryText }}>Capital: </span>
+                  <span style={{ color: colors.text, fontWeight: "500" }}>
+                    {capital ? `$${parseFloat(capital).toLocaleString()}` : "Not set"}
+                  </span>
+                </div>
+                <div style={{ marginBottom: "8px" }}>
+                  <span style={{ color: colors.secondaryText }}>Risk Per Trade: </span>
+                  <span style={{ color: colors.text, fontWeight: "500" }}>
+                    {riskPerTrade ? `${riskPerTrade}%` : "Not set"}
+                  </span>
+                </div>
+                <div style={{ marginBottom: "8px" }}>
+                  <span style={{ color: colors.secondaryText }}>Symbols: </span>
+                  <span style={{ color: colors.text, fontWeight: "500" }}>
+                    {selectedSymbols.length > 0 ? selectedSymbols.join(", ") : "None selected"}
+                  </span>
+                </div>
+                <div style={{ marginBottom: "8px" }}>
+                  <span style={{ color: colors.secondaryText }}>Strategy: </span>
+                  <span style={{ color: colors.text, fontWeight: "500" }}>
+                    {[
+                      { id: "prediction_based", name: "Prediction Based" },
+                      { id: "confidence_weighted", name: "Confidence Weighted" },
+                      { id: "multi_model_voting", name: "Multi-Model Voting" },
+                      { id: "jump_enhanced", name: "Jump Enhanced" },
+                      { id: "regime_adaptive", name: "Regime Adaptive" },
+                      { id: "multi_timeframe_fusion", name: "Multi-Timeframe Fusion" },
+                      { id: "mean_reversion", name: "Mean Reversion" },
+                      { id: "trend_following", name: "Trend Following" },
+                    ].find(s => s.id === selectedStrategy)?.name || "Not selected"}
+                  </span>
+                </div>
+                <div style={{ marginBottom: "8px" }}>
+                  <span style={{ color: colors.secondaryText }}>Stop Loss: </span>
+                  <span style={{ color: colors.text, fontWeight: "500" }}>
+                    {stopLoss ? `${stopLoss}%` : "Not set"}
+                  </span>
+                </div>
+                <div style={{ marginBottom: "8px" }}>
+                  <span style={{ color: colors.secondaryText }}>Take Profit: </span>
+                  <span style={{ color: colors.text, fontWeight: "500" }}>
+                    {takeProfit ? `${takeProfit}%` : "Not set"}
+                  </span>
+                </div>
+                <div style={{ marginBottom: "8px" }}>
+                  <span style={{ color: colors.secondaryText }}>Paper Trading: </span>
+                  <span style={{ color: colors.text, fontWeight: "500" }}>
+                    {paperTrading ? "Yes" : "No"}
+                  </span>
+                </div>
+                {hasDuration && (
+                  <div>
+                    <span style={{ color: colors.secondaryText }}>Duration: </span>
+                    <span style={{ color: colors.text, fontWeight: "500" }}>
+                      {durationHours ? `${durationHours} hours` : "Not set"}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+
             {/* Strategy Selection Section */}
             <div>
               <h3 style={{ color: colors.primary, marginBottom: "16px", fontSize: "18px", fontWeight: "600" }}>

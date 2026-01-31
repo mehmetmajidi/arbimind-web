@@ -53,6 +53,16 @@ export interface StartTrainingResponse {
     job_id: string;
     message?: string;
     filter_details?: FilterStatus;
+    sub_jobs?: Array<{
+        model_type: string;
+        job_id: string;
+        command?: string;
+        pid?: number;
+        status?: string;
+        log_file?: string;
+        error_file?: string;
+        error?: string;
+    }>;
 }
 
 export interface VolatilityMetrics {

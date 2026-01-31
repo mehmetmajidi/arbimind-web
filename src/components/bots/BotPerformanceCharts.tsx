@@ -33,6 +33,8 @@ interface BotPerformanceChartsProps {
     current_capital: number;
     capital: number;
   } | null;
+  isMobile?: boolean;
+  isTablet?: boolean;
 }
 
 // Custom Tooltip for dark theme
@@ -97,7 +99,13 @@ const renderCustomLabel = (props: {
   );
 };
 
-export default function BotPerformanceCharts({ bot, trades, botStatus }: BotPerformanceChartsProps) {
+export default function BotPerformanceCharts({ 
+  bot, 
+  trades, 
+  botStatus,
+  isMobile = false,
+  isTablet = false,
+}: BotPerformanceChartsProps) {
   // Prepare P&L over time data (Line Chart)
   const pnlOverTimeData = useMemo(() => {
     const closedTrades = trades
@@ -255,125 +263,124 @@ export default function BotPerformanceCharts({ bot, trades, botStatus }: BotPerf
         Performance Charts
       </h3>
 
+      {/* Grid: Responsive Charts */}
+      <div style={{ 
+        display: "grid", 
+        gridTemplateColumns: isMobile 
+          ? "1fr" 
+          : isTablet 
+            ? "repeat(2, 1fr)" 
+            : "repeat(4, 1fr)", 
+        gap: "12px" 
+      }}>
       {/* P&L Over Time (Line Chart) */}
-      <div style={{ marginBottom: "24px" }}>
-        <h4 style={{ color: colors.text, marginBottom: "12px", fontSize: "14px", fontWeight: "500" }}>
+        <div>
+          <h4 style={{ color: colors.text, marginBottom: "8px", fontSize: "12px", fontWeight: "500" }}>
           P&L Over Time
         </h4>
         {pnlOverTimeData.length > 0 ? (
           <div style={chartStyle}>
-            <ResponsiveContainer width="100%" height={250}>
-              <LineChart data={pnlOverTimeData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart data={pnlOverTimeData} margin={{ top: 5, right: 10, left: 5, bottom: 5 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={gridStyle.stroke} />
                 <XAxis
                   dataKey="date"
                   stroke={axisStyle.stroke}
-                  style={{ fontSize: axisStyle.fontSize }}
+                    style={{ fontSize: "10px" }}
                   tick={{ fill: colors.secondaryText }}
+                    angle={-45}
+                    textAnchor="end"
+                    height={50}
                 />
                 <YAxis
                   stroke={axisStyle.stroke}
-                  style={{ fontSize: axisStyle.fontSize }}
+                    style={{ fontSize: "10px" }}
                   tick={{ fill: colors.secondaryText }}
                   tickFormatter={(value) => `${value >= 0 ? "+" : ""}${value.toFixed(0)}`}
+                    width={40}
                 />
                 <Tooltip content={<CustomTooltip />} />
-                <Legend
-                  wrapperStyle={{ color: colors.text, fontSize: "12px" }}
-                  iconType="line"
-                />
                 <Line
                   type="monotone"
                   dataKey="cumulativePnl"
                   name="Cumulative P&L"
                   stroke={colors.primary}
                   strokeWidth={2}
-                  dot={{ fill: colors.primary, r: 3 }}
-                  activeDot={{ r: 5 }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="pnl"
-                  name="Daily P&L"
-                  stroke={colors.info}
-                  strokeWidth={1.5}
-                  strokeDasharray="5 5"
-                  dot={{ fill: colors.info, r: 2 }}
+                    dot={false}
+                    activeDot={{ r: 4 }}
                 />
               </LineChart>
             </ResponsiveContainer>
           </div>
         ) : (
           <div style={{
-            height: "250px",
+              height: "200px",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             color: colors.secondaryText,
+              fontSize: "11px",
             ...chartStyle,
           }}>
-            No data available
+              No data
           </div>
         )}
       </div>
 
-      {/* Grid: Win Rate (Bar Chart) and Trade Distribution (Pie Chart) */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "24px" }}>
         {/* Win Rate (Bar Chart) */}
         <div>
-          <h4 style={{ color: colors.text, marginBottom: "12px", fontSize: "14px", fontWeight: "500" }}>
-            Win Rate by Period
+          <h4 style={{ color: colors.text, marginBottom: "8px", fontSize: "12px", fontWeight: "500" }}>
+            Win Rate
           </h4>
           {winRateData.length > 0 ? (
             <div style={chartStyle}>
-              <ResponsiveContainer width="100%" height={250}>
-                <BarChart data={winRateData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={winRateData} margin={{ top: 5, right: 10, left: 5, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={gridStyle.stroke} />
                   <XAxis
                     dataKey="period"
                     stroke={axisStyle.stroke}
-                    style={{ fontSize: "11px" }}
+                    style={{ fontSize: "9px" }}
                     tick={{ fill: colors.secondaryText }}
                     angle={-45}
                     textAnchor="end"
-                    height={60}
+                    height={50}
                   />
                   <YAxis
                     stroke={axisStyle.stroke}
-                    style={{ fontSize: axisStyle.fontSize }}
+                    style={{ fontSize: "10px" }}
                     tick={{ fill: colors.secondaryText }}
                     tickFormatter={(value) => `${value}%`}
+                    width={35}
                   />
                   <Tooltip content={<CustomTooltip />} />
-                  <Legend
-                    wrapperStyle={{ color: colors.text, fontSize: "12px" }}
-                  />
                   <Bar dataKey="winRate" name="Win Rate %" fill={colors.success} radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           ) : (
             <div style={{
-              height: "250px",
+              height: "200px",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               color: colors.secondaryText,
+              fontSize: "11px",
               ...chartStyle,
             }}>
-              No data available
+              No data
             </div>
           )}
         </div>
 
         {/* Trade Distribution (Pie Chart) */}
         <div>
-          <h4 style={{ color: colors.text, marginBottom: "12px", fontSize: "14px", fontWeight: "500" }}>
+          <h4 style={{ color: colors.text, marginBottom: "8px", fontSize: "12px", fontWeight: "500" }}>
             Trade Distribution
           </h4>
           {tradeDistributionData.length > 0 ? (
             <div style={chartStyle}>
-              <ResponsiveContainer width="100%" height={250}>
+              <ResponsiveContainer width="100%" height={200}>
                 <PieChart>
                   <Pie
                     data={tradeDistributionData}
@@ -381,7 +388,7 @@ export default function BotPerformanceCharts({ bot, trades, botStatus }: BotPerf
                     cy="50%"
                     labelLine={false}
                     label={renderCustomLabel as (props: unknown) => ReactElement | null}
-                    outerRadius={80}
+                    outerRadius={60}
                     fill="#8884d8"
                     dataKey="value"
                   >
@@ -394,36 +401,37 @@ export default function BotPerformanceCharts({ bot, trades, botStatus }: BotPerf
                     formatter={(value: number) => `${value} trades`}
                   />
                   <Legend
-                    wrapperStyle={{ color: colors.text, fontSize: "12px" }}
+                    wrapperStyle={{ color: colors.text, fontSize: "10px" }}
                     iconType="circle"
+                    iconSize={8}
                   />
                 </PieChart>
               </ResponsiveContainer>
             </div>
           ) : (
             <div style={{
-              height: "250px",
+              height: "200px",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               color: colors.secondaryText,
+              fontSize: "11px",
               ...chartStyle,
             }}>
-              No data available
+              No data
             </div>
           )}
-        </div>
       </div>
 
       {/* Capital Over Time (Area Chart) */}
       <div>
-        <h4 style={{ color: colors.text, marginBottom: "12px", fontSize: "14px", fontWeight: "500" }}>
+          <h4 style={{ color: colors.text, marginBottom: "8px", fontSize: "12px", fontWeight: "500" }}>
           Capital Over Time
         </h4>
         {capitalOverTimeData.length > 0 ? (
           <div style={chartStyle}>
-            <ResponsiveContainer width="100%" height={250}>
-              <AreaChart data={capitalOverTimeData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+              <ResponsiveContainer width="100%" height={200}>
+                <AreaChart data={capitalOverTimeData} margin={{ top: 5, right: 10, left: 5, bottom: 5 }}>
                 <defs>
                   <linearGradient id="colorCapital" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor={colors.primary} stopOpacity={0.3} />
@@ -434,19 +442,20 @@ export default function BotPerformanceCharts({ bot, trades, botStatus }: BotPerf
                 <XAxis
                   dataKey="date"
                   stroke={axisStyle.stroke}
-                  style={{ fontSize: axisStyle.fontSize }}
+                    style={{ fontSize: "10px" }}
                   tick={{ fill: colors.secondaryText }}
+                    angle={-45}
+                    textAnchor="end"
+                    height={50}
                 />
                 <YAxis
                   stroke={axisStyle.stroke}
-                  style={{ fontSize: axisStyle.fontSize }}
+                    style={{ fontSize: "10px" }}
                   tick={{ fill: colors.secondaryText }}
                   tickFormatter={(value) => `${value.toFixed(0)}`}
+                    width={40}
                 />
                 <Tooltip content={<CustomTooltip />} />
-                <Legend
-                  wrapperStyle={{ color: colors.text, fontSize: "12px" }}
-                />
                 <Area
                   type="monotone"
                   dataKey="capital"
@@ -460,16 +469,18 @@ export default function BotPerformanceCharts({ bot, trades, botStatus }: BotPerf
           </div>
         ) : (
           <div style={{
-            height: "250px",
+              height: "200px",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             color: colors.secondaryText,
+              fontSize: "11px",
             ...chartStyle,
           }}>
-            No data available
+              No data
           </div>
         )}
+        </div>
       </div>
     </div>
   );

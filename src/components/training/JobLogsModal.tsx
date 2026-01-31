@@ -1,8 +1,11 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { MdClose, MdDownload, MdSearch, MdExpandMore, MdExpandLess, MdInfo } from "react-icons/md";
+import { MdClose, MdDownload, MdSearch, MdExpandMore, MdExpandLess, MdInfo, MdRefresh } from "react-icons/md";
 import { getJobLogs, getTrainingJobStatus } from "@/lib/trainingApi";
+import { apiGet } from "@/lib/apiClient";
+import { handleApiError } from "@/lib/errorHandler";
+import { ErrorMessage } from "@/components/shared";
 import type { TrainingJob } from "@/types/training";
 
 interface JobLogsModalProps {
@@ -28,25 +31,81 @@ export default function JobLogsModal({
     const [expanded, setExpanded] = useState(true);
     const [showJobInfo, setShowJobInfo] = useState(false);
     const [jobInfo, setJobInfo] = useState<TrainingJob | null>(null);
+    const [retryCount, setRetryCount] = useState(0);
+    const [isRefreshing, setIsRefreshing] = useState(false);
     const logContainerRef = useRef<HTMLDivElement>(null);
     const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-    const fetchLogs = useCallback(async () => {
+    const fetchLogs = useCallback(async (isManualRefresh = false) => {
+        if (isManualRefresh) {
+            setIsRefreshing(true);
+        } else if (!loading) {
+            setLoading(true);
+        }
+
         try {
-            const data = await getJobLogs(jobId, 10000);
+            const data = await apiGet<{ job_id: string; status: string; log: string; error_log: string }>(
+                `/train/logs/${jobId}?lines=10000`,
+                {
+                    retry: {
+                        maxRetries: 3,
+                        retryDelay: 1000,
+                        retryCondition: (error) => {
+                            // Retry on network errors or 5xx errors
+                            if (error instanceof TypeError && error.message.includes("fetch")) {
+                                return true;
+                            }
+                            if (error && typeof error === "object" && "status" in error) {
+                                const status = (error as any).status;
+                                return status >= 500 || status === 0;
+                            }
+                            return false;
+                        },
+                        onRetry: (attempt) => {
+                            setRetryCount(attempt);
+                        },
+                    },
+                    errorContext: {
+                        component: "JobLogsModal",
+                        action: "fetchLogs",
+                        additionalData: { jobId },
+                    },
+                }
+            );
+
             const combinedLogs = [
                 data.log || "",
                 data.error_log || "",
-            ].filter(Boolean).join("\n");
-            setLogs(combinedLogs);
-            setError(null);
+            ]
+                .filter(Boolean)
+                .join("\n");
+
+            if (combinedLogs.trim()) {
+                setLogs(combinedLogs);
+                setError(null);
+            } else {
+                // No logs yet - show informative message
+                const statusMessage = data.status === "running"
+                    ? "[INFO] Training is in progress. Logs will appear here once the training script starts writing output.\n"
+                    : `[INFO] No logs available yet. Job status: ${data.status}\n`;
+                setLogs(statusMessage);
+                setError(null);
+            }
+            setRetryCount(0);
         } catch (err) {
-            setError(err instanceof Error ? err.message : "Error fetching logs");
-            console.error(err);
+            const errorMessage = handleApiError(err);
+            setError(errorMessage);
+            console.error("Error fetching logs:", err);
+            
+            // If it's a 404, show a more helpful message
+            if (err && typeof err === "object" && "status" in err && (err as any).status === 404) {
+                setError(`Training job '${jobId}' not found. It may have been deleted or never started.`);
+            }
         } finally {
             setLoading(false);
+            setIsRefreshing(false);
         }
-    }, [jobId]);
+    }, [jobId, loading]);
 
     const fetchJobInfo = useCallback(async () => {
         try {
@@ -70,7 +129,7 @@ export default function JobLogsModal({
         if (!isOpen || !autoRefresh) return;
 
         const interval = setInterval(() => {
-            fetchLogs();
+            fetchLogs(false); // Don't show loading spinner on auto-refresh
         }, 3000); // Refresh every 3 seconds
 
         return () => clearInterval(interval);
@@ -137,21 +196,31 @@ export default function JobLogsModal({
     if (!isOpen) return null;
 
     return (
-        <div
-            style={{
-                position: "fixed",
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                backgroundColor: "rgba(0, 0, 0, 0.8)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                zIndex: 2000,
-            }}
-            onClick={onClose}
-        >
+        <>
+            <style>{`
+                @keyframes spin {
+                    from { transform: rotate(0deg); }
+                    to { transform: rotate(360deg); }
+                }
+                .refresh-spinning {
+                    animation: spin 1s linear infinite;
+                }
+            `}</style>
+            <div
+                style={{
+                    position: "fixed",
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: "rgba(0, 0, 0, 0.8)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    zIndex: 2000,
+                }}
+                onClick={onClose}
+            >
             <div
                 style={{
                     backgroundColor: "#1a1a1a",
@@ -211,8 +280,33 @@ export default function JobLogsModal({
                     </div>
                     <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
                         <button
+                            onClick={() => fetchLogs(true)}
+                            disabled={isRefreshing}
+                            style={{
+                                padding: "6px 12px",
+                                backgroundColor: "rgba(59, 130, 246, 0.1)",
+                                color: "#3b82f6",
+                                border: "1px solid rgba(59, 130, 246, 0.3)",
+                                borderRadius: "6px",
+                                fontSize: "12px",
+                                fontWeight: "600",
+                                cursor: isRefreshing ? "not-allowed" : "pointer",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "4px",
+                                opacity: isRefreshing ? 0.5 : 1,
+                            }}
+                            title="Refresh logs"
+                        >
+                            <MdRefresh 
+                                size={16} 
+                                className={isRefreshing ? "refresh-spinning" : ""}
+                            />
+                            {isRefreshing ? "Refreshing..." : "Refresh"}
+                        </button>
+                        <button
                             onClick={handleDownload}
-                            disabled={!logs}
+                            disabled={!logs || logs.trim().startsWith("[INFO]")}
                             style={{
                                 padding: "6px 12px",
                                 backgroundColor: "rgba(255, 174, 0, 0.1)",
@@ -221,10 +315,11 @@ export default function JobLogsModal({
                                 borderRadius: "6px",
                                 fontSize: "12px",
                                 fontWeight: "600",
-                                cursor: logs ? "pointer" : "not-allowed",
+                                cursor: logs && !logs.trim().startsWith("[INFO]") ? "pointer" : "not-allowed",
                                 display: "flex",
                                 alignItems: "center",
                                 gap: "4px",
+                                opacity: logs && !logs.trim().startsWith("[INFO]") ? 1 : 0.5,
                             }}
                         >
                             <MdDownload size={16} />
@@ -395,17 +490,34 @@ export default function JobLogsModal({
                         color: "#ededed",
                     }}
                 >
-                    {loading ? (
+                    {loading && !isRefreshing ? (
                         <div style={{ color: "#888", textAlign: "center", padding: "40px" }}>
-                            Loading logs...
+                            <div style={{ marginBottom: "12px" }}>Loading logs...</div>
+                            {retryCount > 0 && (
+                                <div style={{ fontSize: "11px", color: "#666" }}>
+                                    Retry attempt {retryCount}/3
+                                </div>
+                            )}
                         </div>
                     ) : error ? (
-                        <div style={{ color: "#ef4444", padding: "20px" }}>
-                            Error: {error}
+                        <div style={{ padding: "20px" }}>
+                            <ErrorMessage
+                                message={error}
+                                onDismiss={() => setError(null)}
+                                onRetry={() => fetchLogs(true)}
+                                retryCount={retryCount}
+                                maxRetries={3}
+                                showDetails={true}
+                            />
                         </div>
-                    ) : !logs ? (
+                    ) : !logs || logs.trim() === "" ? (
                         <div style={{ color: "#888", textAlign: "center", padding: "40px" }}>
-                            No logs available
+                            <div style={{ marginBottom: "12px" }}>No logs available yet</div>
+                            <div style={{ fontSize: "11px", color: "#666" }}>
+                                {jobInfo?.status === "running"
+                                    ? "Logs will appear here once the training script starts writing output."
+                                    : `Job status: ${jobInfo?.status || "unknown"}`}
+                            </div>
                         </div>
                     ) : (
                         <pre
@@ -421,6 +533,7 @@ export default function JobLogsModal({
                 </div>
             </div>
         </div>
+        </>
     );
 }
 
