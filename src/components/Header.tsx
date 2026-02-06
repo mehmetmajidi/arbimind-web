@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useExchange } from "@/contexts/ExchangeContext";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { MdMenuOpen, MdExpandMore } from "react-icons/md";
 import { useState, useRef, useEffect } from "react";
 import HealthCheck from "./HealthCheck";
@@ -16,6 +16,7 @@ interface HeaderProps {
 export default function Header({ sidebarWidth, onToggleSidebar, isSidebarCollapsed }: HeaderProps) {
     const { accounts, selectedAccountId, setSelectedAccountId, loading } = useExchange();
     const pathname = usePathname();
+    const router = useRouter();
     const isAuthPage = pathname === "/login" || pathname === "/register" || pathname === "/forgot-password" || pathname === "/reset-password";
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
@@ -33,9 +34,12 @@ export default function Header({ sidebarWidth, onToggleSidebar, isSidebarCollaps
         "/performance",
     ].some(path => pathname === path || pathname?.startsWith(path + "/"));
 
-    // Get selected account
+    // Check if Demo Exchange is selected (ID = -999)
+    const isDemoMode = selectedAccountId === -999;
+
+    // Get selected account or demo mode
     const selectedAccount = accounts.find(acc => acc.id === selectedAccountId);
-    const exchangeName = selectedAccount?.exchange_name || "";
+    const exchangeName = isDemoMode ? "DEMO EXCHANGE" : (selectedAccount?.exchange_name || "");
 
     // Close dropdown when clicking outside
     useEffect(() => {
@@ -253,36 +257,73 @@ export default function Header({ sidebarWidth, onToggleSidebar, isSidebarCollaps
                                         No accounts available
                                     </div>
                                 ) : (
-                                    accounts.map((acc) => (
+                                    <>
+                                        {/* Demo Exchange Option */}
                                         <div
-                                            key={acc.id}
                                             onClick={() => {
-                                                setSelectedAccountId(acc.id);
+                                                setSelectedAccountId(-999); // Demo Exchange ID
                                                 setIsDropdownOpen(false);
+                                                // Navigate to market page if not already there
+                                                if (!pathname?.startsWith("/market") && !pathname?.startsWith("/trading")) {
+                                                    router.push("/market");
+                                                }
                                             }}
                                             style={{
                                                 padding: "12px 16px",
-                                                color: selectedAccountId === acc.id ? "#FFAE00" : "#ededed",
+                                                color: isDemoMode ? "#FFAE00" : "#ededed",
                                                 fontSize: "14px",
                                                 cursor: "pointer",
-                                                backgroundColor: selectedAccountId === acc.id ? "rgba(255, 174, 0, 0.1)" : "transparent",
-                                                fontWeight: selectedAccountId === acc.id ? "600" : "400",
+                                                backgroundColor: isDemoMode ? "rgba(255, 174, 0, 0.1)" : "transparent",
+                                                fontWeight: isDemoMode ? "600" : "400",
                                                 transition: "all 0.2s ease",
+                                                borderBottom: accounts.length > 0 ? "1px solid rgba(255, 174, 0, 0.2)" : "none",
                                             }}
                                             onMouseEnter={(e) => {
-                                                if (selectedAccountId !== acc.id) {
+                                                if (!isDemoMode) {
                                                     e.currentTarget.style.backgroundColor = "rgba(255, 174, 0, 0.05)";
                                                 }
                                             }}
                                             onMouseLeave={(e) => {
-                                                if (selectedAccountId !== acc.id) {
+                                                if (!isDemoMode) {
                                                     e.currentTarget.style.backgroundColor = "transparent";
                                                 }
                                             }}
                                         >
-                                            {(acc.exchange_name || "Unknown").toUpperCase()}
+                                            DEMO EXCHANGE
                                         </div>
-                                    ))
+                                        
+                                        {/* Regular Exchange Accounts */}
+                                        {accounts.map((acc) => (
+                                            <div
+                                                key={acc.id}
+                                                onClick={() => {
+                                                    setSelectedAccountId(acc.id);
+                                                    setIsDropdownOpen(false);
+                                                }}
+                                                style={{
+                                                    padding: "12px 16px",
+                                                    color: !isDemoMode && selectedAccountId === acc.id ? "#FFAE00" : "#ededed",
+                                                    fontSize: "14px",
+                                                    cursor: "pointer",
+                                                    backgroundColor: !isDemoMode && selectedAccountId === acc.id ? "rgba(255, 174, 0, 0.1)" : "transparent",
+                                                    fontWeight: !isDemoMode && selectedAccountId === acc.id ? "600" : "400",
+                                                    transition: "all 0.2s ease",
+                                                }}
+                                                onMouseEnter={(e) => {
+                                                    if (!isDemoMode && selectedAccountId !== acc.id) {
+                                                        e.currentTarget.style.backgroundColor = "rgba(255, 174, 0, 0.05)";
+                                                    }
+                                                }}
+                                                onMouseLeave={(e) => {
+                                                    if (!isDemoMode && selectedAccountId !== acc.id) {
+                                                        e.currentTarget.style.backgroundColor = "transparent";
+                                                    }
+                                                }}
+                                            >
+                                                {(acc.exchange_name || "Unknown").toUpperCase()}
+                                            </div>
+                                        ))}
+                                    </>
                                 )}
                             </div>
                         )}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { PriceWidget, MainChart, OrderPanel, TradingPanel, PricePredictionsPanel, ActiveOrders, ArbitragePanel } from "@/components/market";
+import { PriceWidget, MainChart, OrderPanel, TradingPanel, PricePredictionsPanel, ActiveOrders, ArbitragePanel, DemoPortfolioStats, DemoExchangeBadge } from "@/components/market";
 import type { ActiveOrdersRef } from "@/components/market/ActiveOrders";
 import type { TradingPanelRef } from "@/components/market/TradingPanel";
 import { Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, ComposedChart, Area } from "recharts";
@@ -598,21 +598,22 @@ export default function MarketPage() {
             const lastCandleTime = lastCandle.t > 1000000000000 ? lastCandle.t / 1000 : lastCandle.t;
             const lastCandleStartTime = Math.floor(lastCandleTime / timeframeDuration) * timeframeDuration;
             
-            console.log("🕯️ Candle update check:", {
-                now: new Date(now * 1000).toISOString(),
-                lastCandleTime: new Date(lastCandleTime * 1000).toISOString(),
-                lastCandleStartTime: new Date(lastCandleStartTime * 1000).toISOString(),
-                currentCandleStartTime: new Date(currentCandleStartTime * 1000).toISOString(),
-                timeframe,
-                timeframeDuration,
-                isNewTimeframe: currentCandleStartTime > lastCandleStartTime,
-            });
+            // Debug logging - only log when creating new candle
+            // console.debug("🕯️ Candle update check:", {
+            //     now: new Date(now * 1000).toISOString(),
+            //     lastCandleTime: new Date(lastCandleTime * 1000).toISOString(),
+            //     lastCandleStartTime: new Date(lastCandleStartTime * 1000).toISOString(),
+            //     currentCandleStartTime: new Date(currentCandleStartTime * 1000).toISOString(),
+            //     timeframe,
+            //     timeframeDuration,
+            //     isNewTimeframe: currentCandleStartTime > lastCandleStartTime,
+            // });
             
             const updated = [...sortedData];
             
             // Check if we need to create a new candle for the current timeframe
             if (currentCandleStartTime > lastCandleStartTime) {
-                console.log("🆕 Creating new candle for timeframe:", new Date(currentCandleStartTime * 1000).toISOString());
+                console.debug("🆕 Creating new candle for timeframe:", new Date(currentCandleStartTime * 1000).toISOString());
                 // New timeframe started - create new candle with current price
                 const newCandleTimestamp = currentCandleStartTime * 1000; // Convert to milliseconds
                 
@@ -745,7 +746,7 @@ export default function MarketPage() {
 
     // Fetch predictions (with loading state - called when "Get Predict" is clicked)
     const fetchPredictions = useCallback(async () => {
-        if (!selectedAccountId || !selectedSymbol || selectedHorizons.length === 0) {
+        if (!selectedAccountId || !selectedSymbol) {
             setPredictions({});
             return;
         }
@@ -758,15 +759,21 @@ export default function MarketPage() {
         isCheckingRef.current = true;
         setPredictionsLoading(true);
         setError(null); // Clear any previous errors
+        
+        // Calculate horizons parameter outside try block so it's accessible in catch
+        const supportedHorizons = ["10m", "20m", "30m", "1h", "4h", "24h"];
+        const validHorizons = selectedHorizons.length > 0 
+            ? selectedHorizons.filter((h) => supportedHorizons.includes(h))
+            : [];
+        // Use default horizons if none selected or all invalid
+        const horizonsParam = validHorizons.length > 0 ? validHorizons.join(",") : "10m,30m,1h,4h,24h";
+        
         try {
             const token = localStorage.getItem("auth_token") || "";
             if (!token) return;
 
             const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
             const encodedSymbol = encodeURIComponent(selectedSymbol);
-            const supportedHorizons = ["10m", "20m", "30m", "1h", "4h", "24h"];
-            const validHorizons = selectedHorizons.filter((h) => supportedHorizons.includes(h));
-            const horizonsParam = validHorizons.length > 0 ? validHorizons.join(",") : "10m,30m,1h";
 
             const response = await fetch(`${apiUrl}/predictions/symbol/${encodedSymbol}?horizons=${horizonsParam}&exchange_account_id=${selectedAccountId}`, {
                 headers: { Authorization: `Bearer ${token}` },
@@ -783,21 +790,42 @@ export default function MarketPage() {
                     }
                 }
 
+                console.log("✅ Predictions fetched successfully:", { 
+                    symbol: selectedSymbol, 
+                    accountId: selectedAccountId,
+                    horizons: horizonsParam,
+                    predictionsCount: Object.keys(validPredictions).length,
+                    predictions: validPredictions
+                });
+
                 setPredictions(validPredictions);
                 setError(null);
             } else {
                 const errorData = await response.json().catch(() => ({}));
                 const errorMsg = errorData.detail || `Failed to fetch predictions (${response.status})`;
-                console.error("Failed to fetch predictions:", response.status, errorMsg);
+                console.error("❌ Failed to fetch predictions:", { 
+                    status: response.status, 
+                    error: errorMsg,
+                    symbol: selectedSymbol,
+                    accountId: selectedAccountId,
+                    horizons: horizonsParam
+                });
 
                 if (response.status === 400 || response.status === 503) {
                     setError(`Prediction error: ${errorMsg}`);
                 } else if (response.status === 429) {
                     setError("Rate limit exceeded. Please wait a moment and try again.");
+                } else {
+                    setError(`Failed to fetch predictions: ${errorMsg}`);
                 }
             }
         } catch (error) {
-            console.error("Error fetching predictions:", error);
+            console.error("❌ Error fetching predictions:", { 
+                error,
+                symbol: selectedSymbol,
+                accountId: selectedAccountId,
+                horizons: horizonsParam
+            });
             setError(`Network error: ${error instanceof Error ? error.message : "Unknown error"}`);
         } finally {
             setPredictionsLoading(false);
@@ -1013,8 +1041,18 @@ export default function MarketPage() {
         );
     }
 
+    // Responsive layout - simple check without hooks to avoid React error #310
+    const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
+    const isDemoExchange = selectedAccountId === -999;
+
     return (
-        <div style={{ padding: "0 16px", maxWidth: "1870px", margin: "0 auto", color: "#ededed" }}>
+        <div style={{ padding: isMobile ? "8px" : "0 16px", maxWidth: "1870px", margin: "0 auto", color: "#ededed" }}>
+            {/* Demo Exchange Badge */}
+            {isDemoExchange && (
+                <div style={{ marginBottom: "12px", display: "flex", justifyContent: "flex-end" }}>
+                    <DemoExchangeBadge size="medium" />
+                </div>
+            )}
 
             {error && (
                 <div
@@ -1152,10 +1190,10 @@ export default function MarketPage() {
             </div> */}
 
             {/* Trading Panel, Main Chart and Predictions Side by Side */}
-            <div id="main-chart" style={{marginTop: "8px", marginBottom: "8px", display: "flex", gap: "0.5rem", alignItems: "flex-start", height: "calc(100vh - 200px)", minHeight: "600px" }}>
+            <div id="main-chart" style={{marginTop: "8px", marginBottom: "8px", display: "flex", gap: "0.5rem", alignItems: "flex-start", height: isMobile ? "auto" : "calc(100vh - 200px)", minHeight: isMobile ? "auto" : "600px", flexDirection: isMobile ? "column" : "row" }}>
                 {/* Trading Panel - Left Side */}
                 {/* Always render TradingPanel so it can fetch currencies and auto-select symbol */}
-                    <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "12px", width: isMobile ? "100%" : "auto" }}>
                         <TradingPanel
                             ref={tradingPanelRef}
                         selectedSymbol={selectedSymbol || ""}
@@ -1173,6 +1211,7 @@ export default function MarketPage() {
                                 predictions={predictions}
                                 predictionsLoading={predictionsLoading}
                                 onRefreshPredictions={fetchPredictions}
+                                error={error}
                             />
                         )}
                     </div>
@@ -1224,7 +1263,7 @@ export default function MarketPage() {
 
                 {/* Right Side Panel */}
                 {selectedSymbol && (
-                    <div style={{ width: "320px", flexShrink: 0, display: "flex", flexDirection: "column", gap: "12px" }}>
+                    <div style={{ width: isMobile ? "100%" : "320px", flexShrink: 0, display: "flex", flexDirection: "column", gap: "12px" }}>
                         {/* Order Panel */}
                         <OrderPanel 
                             selectedSymbol={selectedSymbol}
@@ -1237,6 +1276,11 @@ export default function MarketPage() {
                             ref={activeOrdersRef}
                             selectedSymbol={selectedSymbol}
                         />
+
+                        {/* Demo Portfolio Stats */}
+                        {isDemoExchange && (
+                            <DemoPortfolioStats />
+                        )}
 
                         {/* Accuracy Stats */}
                       {/*   {accuracyStats && accuracyStats.total_predictions > 0 && (

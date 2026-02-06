@@ -37,9 +37,11 @@ export default function JobLogsModal({
     const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
     const fetchLogs = useCallback(async (isManualRefresh = false) => {
+        // Don't reset loading state on manual refresh - keep existing logs visible
         if (isManualRefresh) {
             setIsRefreshing(true);
-        } else if (!loading) {
+        } else {
+            // Only set loading on initial fetch or auto-refresh when modal first opens
             setLoading(true);
         }
 
@@ -102,10 +104,13 @@ export default function JobLogsModal({
                 setError(`Training job '${jobId}' not found. It may have been deleted or never started.`);
             }
         } finally {
-            setLoading(false);
+            // Only reset loading state if it's not a manual refresh
+            if (!isManualRefresh) {
+                setLoading(false);
+            }
             setIsRefreshing(false);
         }
-    }, [jobId, loading]);
+    }, [jobId]);
 
     const fetchJobInfo = useCallback(async () => {
         try {
@@ -129,11 +134,14 @@ export default function JobLogsModal({
         if (!isOpen || !autoRefresh) return;
 
         const interval = setInterval(() => {
-            fetchLogs(false); // Don't show loading spinner on auto-refresh
+            // Only auto-refresh if not manually refreshing and logs are already loaded
+            if (!isRefreshing && !loading) {
+                fetchLogs(false); // Don't show loading spinner on auto-refresh
+            }
         }, 3000); // Refresh every 3 seconds
 
         return () => clearInterval(interval);
-    }, [isOpen, autoRefresh, fetchLogs]);
+    }, [isOpen, autoRefresh, fetchLogs, isRefreshing, loading]);
 
     // Auto-scroll to bottom
     useEffect(() => {

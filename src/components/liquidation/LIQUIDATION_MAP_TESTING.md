@@ -291,3 +291,108 @@
 
 **وضعیت نهایی**: ✅ **تمام تست‌ها و بررسی‌ها انجام شده است**
 
+---
+
+## 🆕 تست‌های جدید با Real Data (2025-01-20)
+
+### ✅ تست با داده‌های واقعی از Backend
+
+#### چک‌لیست تست:
+
+**1. تست با Real Exchange Account:**
+- [ ] اطمینان از اینکه user یک real exchange account دارد
+- [ ] تست با symbols مختلف (BTC, ETH, SOL, etc.)
+- [ ] تست با timeframes مختلف (1h, 4h, 1d, 1w)
+- [ ] بررسی نمایش داده‌های واقعی در نمودار
+- [ ] بررسی metadata display (data_source, last_updated, confidence_score)
+
+**2. تست Data Quality:**
+- [ ] بررسی اینکه داده‌ها منطقی هستند (مثلاً liquidations > 0)
+- [ ] بررسی current_price با قیمت واقعی بازار
+- [ ] بررسی exchange breakdown (باید Binance یا exchanges دیگر باشد)
+- [ ] بررسی price buckets (باید در محدوده منطقی باشند)
+
+**3. تست Cache Behavior:**
+- [ ] بررسی cache hit/miss در console
+- [ ] بررسی TTL برای timeframes مختلف (1h: 60s, 4h: 180s, 1d: 300s, 1w: 600s)
+- [ ] بررسی refresh functionality
+
+---
+
+### ✅ تست Error Handling (بهبود یافته)
+
+#### چک‌لیست تست:
+
+**1. Network Errors:**
+- [ ] قطع کردن internet connection
+- [ ] بررسی نمایش "🌐 Network Error"
+- [ ] بررسی retry logic (3 attempts با exponential backoff)
+- [ ] بررسی timeout handling (30 seconds)
+
+**2. HTTP Status Codes:**
+- [ ] `401`: بررسی redirect به login
+- [ ] `404`: بررسی نمایش "⚠️ Endpoint Not Available"
+- [ ] `429`: بررسی نمایش "⏱️ Rate Limit Exceeded"
+- [ ] `500-599`: بررسی نمایش "🔧 Server Error"
+
+**3. Error Messages:**
+- [ ] بررسی user-friendly messages
+- [ ] بررسی error descriptions
+- [ ] بررسی visual indicators (emoji + رنگ)
+
+---
+
+### ✅ تست Compatibility با Mock Data (Fallback)
+
+#### چک‌لیست تست:
+
+**1. Demo Exchange:**
+- [ ] تست با demo account
+- [ ] بررسی نمایش mock data
+- [ ] بررسی exchange breakdown (باید "DEMO" باشد)
+- [ ] بررسی compatibility با component
+
+**2. Fallback Behavior:**
+- [ ] تست fallback به mock data در صورت خطا
+- [ ] بررسی اینکه component بدون crash کار می‌کند
+- [ ] بررسی نمایش مناسب برای mock data
+
+**3. Data Format Compatibility:**
+- [ ] بررسی اینکه mock data format با real data format match می‌کند
+- [ ] بررسی optional fields (metadata) - باید gracefully handle شود
+
+---
+
+### ✅ تست Performance با حجم زیاد داده
+
+#### چک‌لیست تست:
+
+**1. Large Dataset:**
+- [ ] تست با symbols که liquidations زیادی دارند (BTC, ETH)
+- [ ] تست با timeframe 1w (بیشترین داده)
+- [ ] بررسی render time (< 500ms)
+- [ ] بررسی memory usage
+
+**2. Multiple Requests:**
+- [ ] تست تغییر سریع symbol/timeframe
+- [ ] بررسی debounce behavior (300ms)
+- [ ] بررسی cleanup در unmount
+
+**3. Cache Performance:**
+- [ ] بررسی cache hit rate
+- [ ] بررسی cache size
+- [ ] بررسی TTL behavior
+
+---
+
+## 📊 خلاصه تست‌های جدید
+
+| دسته | وضعیت | توضیحات |
+|------|-------|----------|
+| تست با Real Data | 📋 راهنمای تست | چک‌لیست تهیه شد |
+| تست Error Handling | 📋 راهنمای تست | چک‌لیست تهیه شد |
+| تست Compatibility | 📋 راهنمای تست | چک‌لیست تهیه شد |
+| تست Performance | 📋 راهنمای تست | چک‌لیست تهیه شد |
+
+**نکته**: این تست‌ها نیاز به manual testing دارند. می‌توان در آینده automated tests اضافه کرد.
+

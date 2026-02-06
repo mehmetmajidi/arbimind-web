@@ -253,7 +253,35 @@ const LiquidationMap = forwardRef<{ handleExport: () => void }, LiquidationMapPr
     }
 
     if (error) {
+        // Improved error detection
         const is404Error = error.includes("404") || error.includes("not found") || error.includes("not implemented");
+        const isNetworkError = error.includes("network") || error.includes("connection") || error.includes("timeout");
+        const isRateLimitError = error.includes("rate limit") || error.includes("429");
+        const isServerError = error.includes("500") || error.includes("server error");
+        
+        // Determine error type and message
+        let errorTitle = "❌ Error";
+        let errorColor = "#ef4444";
+        let errorDescription = null;
+        
+        if (is404Error) {
+            errorTitle = "⚠️ Endpoint Not Available";
+            errorColor = "#f59e0b";
+            errorDescription = "The liquidation map API endpoint needs to be implemented in the backend.";
+        } else if (isNetworkError) {
+            errorTitle = "🌐 Network Error";
+            errorColor = "#f59e0b";
+            errorDescription = "Please check your internet connection and try again.";
+        } else if (isRateLimitError) {
+            errorTitle = "⏱️ Rate Limit Exceeded";
+            errorColor = "#f59e0b";
+            errorDescription = "Too many requests. Please wait a moment and try again.";
+        } else if (isServerError) {
+            errorTitle = "🔧 Server Error";
+            errorColor = "#ef4444";
+            errorDescription = "The server encountered an error. Please try again later.";
+        }
+        
         return (
             <div
                 style={{
@@ -263,22 +291,22 @@ const LiquidationMap = forwardRef<{ handleExport: () => void }, LiquidationMapPr
                     flexDirection: "column",
                     alignItems: "center",
                     justifyContent: "center",
-                    color: is404Error ? "#f59e0b" : "#ef4444",
+                    color: errorColor,
                     fontSize: "14px",
                     padding: "20px",
                     textAlign: "center",
                     gap: "8px",
                 }}
             >
-                <div style={{ fontWeight: "600", marginBottom: "4px" }}>
-                    {is404Error ? "⚠️ Endpoint Not Available" : "❌ Error"}
+                <div style={{ fontWeight: "600", marginBottom: "4px", fontSize: "16px" }}>
+                    {errorTitle}
                 </div>
-                <div style={{ color: "#888", fontSize: "12px" }}>
+                <div style={{ color: "#888", fontSize: "12px", maxWidth: "500px" }}>
                     {error}
                 </div>
-                {is404Error && (
+                {errorDescription && (
                     <div style={{ color: "#666", fontSize: "11px", marginTop: "8px", maxWidth: "400px" }}>
-                        The liquidation map API endpoint needs to be implemented in the backend.
+                        {errorDescription}
                     </div>
                 )}
             </div>
@@ -302,6 +330,43 @@ const LiquidationMap = forwardRef<{ handleExport: () => void }, LiquidationMapPr
             </div>
         );
     }
+
+    // Format last updated time
+    const formatLastUpdated = useCallback((timestamp?: number): string => {
+        if (!timestamp) return "";
+        const date = new Date(timestamp);
+        const now = new Date();
+        const diffMs = now.getTime() - date.getTime();
+        const diffMins = Math.floor(diffMs / 60000);
+        const diffHours = Math.floor(diffMs / 3600000);
+        const diffDays = Math.floor(diffMs / 86400000);
+        
+        if (diffMins < 1) return "Just now";
+        if (diffMins < 60) return `${diffMins}m ago`;
+        if (diffHours < 24) return `${diffHours}h ago`;
+        if (diffDays < 7) return `${diffDays}d ago`;
+        return date.toLocaleDateString();
+    }, []);
+
+    // Get data source display text
+    const getDataSourceText = useCallback((source?: string): string => {
+        if (!source) return "";
+        const sourceMap: Record<string, string> = {
+            "WebSocket": "Real-time",
+            "Historical": "Historical",
+            "CryptoQuant": "CryptoQuant",
+            "Hybrid": "Hybrid",
+        };
+        return sourceMap[source] || source;
+    }, []);
+
+    // Get confidence indicator
+    const getConfidenceIndicator = useCallback((score?: number): { text: string; color: string } => {
+        if (score === undefined || score === null) return { text: "", color: "" };
+        if (score >= 0.8) return { text: "High", color: "#22c55e" };
+        if (score >= 0.5) return { text: "Medium", color: "#f59e0b" };
+        return { text: "Low", color: "#ef4444" };
+    }, []);
 
     return (
         <div 
@@ -327,6 +392,56 @@ const LiquidationMap = forwardRef<{ handleExport: () => void }, LiquidationMapPr
                     }}
                 >
                     Current Price: ${data.current_price.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                </div>
+            )}
+
+            {/* Metadata Info (optional) */}
+            {(data.data_source || data.last_updated || data.confidence_score !== undefined) && (
+                <div
+                    style={{
+                        position: "absolute",
+                        top: "16px",
+                        right: "16px",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "4px",
+                        backgroundColor: "rgba(0, 0, 0, 0.6)",
+                        border: "1px solid rgba(255, 255, 255, 0.1)",
+                        borderRadius: "6px",
+                        padding: "8px 12px",
+                        fontSize: "10px",
+                        color: "#888",
+                        zIndex: 10,
+                        maxWidth: "200px",
+                    }}
+                >
+                    {data.data_source && (
+                        <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                            <span style={{ color: "#666" }}>Source:</span>
+                            <span style={{ color: "#22c55e", fontWeight: "500" }}>
+                                {getDataSourceText(data.data_source)}
+                            </span>
+                        </div>
+                    )}
+                    {data.last_updated && (
+                        <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                            <span style={{ color: "#666" }}>Updated:</span>
+                            <span style={{ color: "#888" }}>
+                                {formatLastUpdated(data.last_updated)}
+                            </span>
+                        </div>
+                    )}
+                    {data.confidence_score !== undefined && (
+                        <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                            <span style={{ color: "#666" }}>Confidence:</span>
+                            <span style={{ 
+                                color: getConfidenceIndicator(data.confidence_score).color,
+                                fontWeight: "500"
+                            }}>
+                                {getConfidenceIndicator(data.confidence_score).text}
+                            </span>
+                        </div>
+                    )}
                 </div>
             )}
 

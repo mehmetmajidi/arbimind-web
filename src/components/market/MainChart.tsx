@@ -1187,11 +1187,11 @@ export default function MainChart({
         const loadCooldown = 1000; // 1 second cooldown
         
         if (!oldestTimestamp) {
-            console.log("Pagination listener: No oldestTimestamp yet");
+            console.debug("Pagination listener: No oldestTimestamp yet");
             return;
         }
         
-        console.log("Setting up pagination listener with oldestTimestamp:", oldestTimestamp);
+        console.debug("Setting up pagination listener with oldestTimestamp:", oldestTimestamp);
         
         // Helper function to convert Time to number
         const timeToNumber = (time: Time): number => {
@@ -1249,23 +1249,20 @@ export default function MainChart({
             const closeThresholdPercent = 0.3;
             const closeThresholdSeconds = oldestVisibleSeconds - (visibleRangeSeconds * closeThresholdPercent);
             
-            // Debug logging
+            // Debug logging - only log when actually triggering to reduce console spam
             const distanceFromOldest = oldestVisibleSeconds - visibleStartSeconds;
             const percentFromOldest = visibleRangeSeconds > 0 ? (distanceFromOldest / visibleRangeSeconds) * 100 : 0;
             const shouldTrigger = visibleStartSeconds <= thresholdSeconds || visibleStartSeconds <= closeThresholdSeconds;
             
-            // Only log when close to threshold to reduce console spam
-            if (percentFromOldest < 100 || shouldTrigger) {
-                console.log("Pagination check:", {
+            // Only log when actually triggering pagination (not on every check)
+            // Use console.debug instead of console.log to reduce noise
+            if (shouldTrigger && !loadingMore && !isLoadingRef.current) {
+                console.debug("Pagination check - triggering load:", {
                     visibleStart: visibleStartSeconds,
                     oldest: oldestVisibleSeconds,
                     distance: distanceFromOldest,
                     percent: percentFromOldest.toFixed(1) + "%",
                     threshold: thresholdSeconds,
-                    closeThreshold: closeThresholdSeconds,
-                    shouldTrigger: shouldTrigger,
-                    loadingMore: loadingMore,
-                    isLoading: isLoadingRef.current
                 });
             }
             
@@ -1274,7 +1271,7 @@ export default function MainChart({
             if (shouldTrigger) {
                 isLoadingRef.current = true;
                 lastLoadTime = now;
-                console.log("🚀 Triggering load more. Visible start:", visibleStartSeconds, "Oldest:", oldestVisibleSeconds, "Threshold:", thresholdSeconds, "Close threshold:", closeThresholdSeconds, "Range:", visibleRangeSeconds);
+                console.debug("🚀 Triggering load more. Visible start:", visibleStartSeconds, "Oldest:", oldestVisibleSeconds, "Threshold:", thresholdSeconds);
                 // onLoadMore expects milliseconds
                 onLoadMore(Math.floor(oldestVisibleSeconds * 1000));
                 setTimeout(() => {

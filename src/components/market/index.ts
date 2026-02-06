@@ -6,3 +6,5 @@ export { default as ArbitragePanel } from "./ArbitragePanel";
 export { default as SymbolSelector } from "./SymbolSelector";
 export { default as TradingPanel } from "./TradingPanel";
 export { default as PricePredictionsPanel } from "./PricePredictionsPanel";
+export { default as DemoExchangeBadge } from "./DemoExchangeBadge";
+export { default as DemoPortfolioStats } from "./DemoPortfolioStats";

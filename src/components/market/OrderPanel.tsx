@@ -194,6 +194,18 @@ export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced
     const checkTradingPermissions = useCallback(async () => {
         if (!selectedAccountId) {
             setTradingPermission(null);
+            setCheckingPermission(false);
+            return;
+        }
+
+        // Demo Exchange doesn't need permission check - always allow trading
+        if (selectedAccountId === -999) {
+            setCheckingPermission(false);
+            setTradingPermission({
+                has_trading_permission: true,
+                message: "Demo Exchange - Trading enabled",
+                exchange_name: "DEMO",
+            });
             return;
         }
 

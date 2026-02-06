@@ -12,12 +12,14 @@ interface PricePredictionsPanelProps {
     } | null>;
     predictionsLoading: boolean;
     onRefreshPredictions: () => void;
+    error?: string | null;
 }
 
 export default function PricePredictionsPanel({
     predictions,
     predictionsLoading,
     onRefreshPredictions,
+    error,
 }: PricePredictionsPanelProps) {
     const hasPredictions = Object.keys(predictions).length > 0;
 
@@ -127,9 +129,15 @@ export default function PricePredictionsPanel({
                 </div>
             ) : (
                 <div style={{ padding: "20px", textAlign: "center" }}>
-                    <div style={{ color: "#888", fontSize: "12px", marginBottom: "12px" }}>
-                        No predictions
-                    </div>
+                    {error ? (
+                        <div style={{ color: "#ef4444", fontSize: "12px", marginBottom: "12px" }}>
+                            {error}
+                        </div>
+                    ) : (
+                        <div style={{ color: "#888", fontSize: "12px", marginBottom: "12px" }}>
+                            No predictions
+                        </div>
+                    )}
                     <button
                         onClick={onRefreshPredictions}
                         disabled={predictionsLoading}

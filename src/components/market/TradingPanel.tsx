@@ -71,9 +71,7 @@ const TradingPanel = forwardRef<TradingPanelRef, TradingPanelProps>(({
     const { selectedAccountId, accounts } = useExchange();
     const [balance, setBalance] = useState<Balance | null>(null);
     const [balanceLoading, setBalanceLoading] = useState(false);
-    const [baseCurrencies, setBaseCurrencies] = useState<string[]>([]);
-    const [quoteCurrencies, setQuoteCurrencies] = useState<string[]>([]);
-    const [availableSymbols, setAvailableSymbols] = useState<string[]>([]); // For Kraken: full symbols like "AAVE/USD"
+    const [availableSymbols, setAvailableSymbols] = useState<string[]>([]); // Full symbols like "BTC/USDT"
     const [currenciesLoading, setCurrenciesLoading] = useState(false);
     const [tickerData, setTickerData] = useState<TickerData | null>(null);
     const [tickerLoading, setTickerLoading] = useState(false);
@@ -209,8 +207,6 @@ const TradingPanel = forwardRef<TradingPanelRef, TradingPanelProps>(({
     const fetchCurrencies = useCallback(async () => {
         if (!selectedAccountId) {
             console.log("⚠️ No selectedAccountId, clearing currencies");
-            setBaseCurrencies([]);
-            setQuoteCurrencies([]);
             setAvailableSymbols([]);
             return;
         }
@@ -252,8 +248,6 @@ const TradingPanel = forwardRef<TradingPanelRef, TradingPanelProps>(({
                         
                             console.log("✅ Fetched Kraken symbols:", { symbols: symbols.length, markets: markets.length });
                             setAvailableSymbols(symbols);
-                            setBaseCurrencies([]); // Clear base/quote for Kraken
-                            setQuoteCurrencies([]);
                             setCurrenciesLoading(false);
                             return;
                         }
@@ -301,8 +295,6 @@ const TradingPanel = forwardRef<TradingPanelRef, TradingPanelProps>(({
                         });
                         
                         setAvailableSymbols(fullSymbols);
-                        setBaseCurrencies([]); // Clear base/quote
-                        setQuoteCurrencies([]);
                         setCurrenciesLoading(false);
                         return;
                     } else {
@@ -320,76 +312,10 @@ const TradingPanel = forwardRef<TradingPanelRef, TradingPanelProps>(({
                 console.error("Error fetching symbols from database:", symbolsError);
             }
 
-            // Strategy 1: If we have exchange_id, use the new endpoint to get both assets and quote currencies
-            if (exchangeId) {
-                try {
-                    const currenciesResponse = await fetch(`${apiUrl}/exchange/exchanges/${exchangeId}/currencies`, {
-                            headers: { Authorization: `Bearer ${token}` },
-                    });
-
-                    if (currenciesResponse.ok) {
-                        const currenciesData = await currenciesResponse.json();
-                        
-                        // Extract assets (base currencies)
-                        const assets = currenciesData.assets?.map((asset: { asset_code: string }) => asset.asset_code) || [];
-                        
-                        // Extract quote currencies
-                        const quotes = currenciesData.quote_currencies?.map((qc: { currency_code: string }) => qc.currency_code) || [];
-                        
-                        if (assets.length > 0 || quotes.length > 0) {
-                            console.log("✅ Fetched currencies:", { bases: assets.length, quotes: quotes.length });
-                            setBaseCurrencies(assets.sort());
-                            setQuoteCurrencies(quotes.sort());
-                            setCurrenciesLoading(false);
-                        return;
-                    }
-                }
-                } catch (exchangeError) {
-                    console.warn("Error fetching currencies by exchange_id:", exchangeError);
-                }
-            }
-
-            // Strategy 2: Fallback - extract base/quote from currencies (only if symbols failed)
-            // This is now a fallback, as we prefer full symbols
-
-            // Strategy 3: Try currencies from database (if symbols failed)
-            try {
-                const [baseResponse, quoteResponse] = await Promise.all([
-                    fetch(`${apiUrl}/exchange/currencies?exchange_account_id=${selectedAccountId}&currency_type=base&active_only=true`, {
-                        headers: { Authorization: `Bearer ${token}` },
-                    }),
-                    fetch(`${apiUrl}/exchange/currencies?exchange_account_id=${selectedAccountId}&currency_type=quote&active_only=true`, {
-                        headers: { Authorization: `Bearer ${token}` },
-                    }),
-                ]);
-
-                if (baseResponse.ok && quoteResponse.ok) {
-                    const baseData = await baseResponse.json();
-                    const quoteData = await quoteResponse.json();
-                    
-                    const bases = baseData.currencies?.map((c: { currency_code: string }) => c.currency_code) || [];
-                    const quotes = quoteData.currencies?.map((c: { currency_code: string }) => c.currency_code) || [];
-                    
-                    if (bases.length > 0 && quotes.length > 0) {
-                        console.log("✅ Fetched currencies from database:", { bases: bases.length, quotes: quotes.length });
-                        setBaseCurrencies(bases);
-                        setQuoteCurrencies(quotes);
-                        setCurrenciesLoading(false);
-                        return;
-                    }
-                }
-            } catch (currencyError) {
-                console.warn("Error fetching currencies:", currencyError);
-            }
-
-            // If all failed, set empty arrays
-            setBaseCurrencies([]);
-            setQuoteCurrencies([]);
+            // If all failed, set empty array
             setAvailableSymbols([]);
         } catch (error) {
             console.error("Error fetching currencies:", error);
-            setBaseCurrencies([]);
-            setQuoteCurrencies([]);
             setAvailableSymbols([]);
         } finally {
             setCurrenciesLoading(false);
@@ -406,34 +332,18 @@ const TradingPanel = forwardRef<TradingPanelRef, TradingPanelProps>(({
     useEffect(() => {
         if (!currenciesLoading && selectedAccountId) {
             // Check if current symbol is valid
-            const isSymbolValid = selectedSymbol && (
-                availableSymbols.includes(selectedSymbol) ||
-                (baseCurrencies.length > 0 && quoteCurrencies.length > 0 && selectedSymbol.includes("/"))
-            );
+            const isSymbolValid = selectedSymbol && availableSymbols.includes(selectedSymbol);
             
-            if (!isSymbolValid) {
+            if (!isSymbolValid && availableSymbols.length > 0) {
                 // Current symbol is not valid or not selected - select first available
-            if (availableSymbols.length > 0) {
                 const firstSymbol = availableSymbols[0];
-                    if (firstSymbol && firstSymbol !== selectedSymbol) {
-                        console.log("🔄 Auto-selecting first symbol (symbol not available or not selected):", firstSymbol);
+                if (firstSymbol && firstSymbol !== selectedSymbol) {
+                    console.log("🔄 Auto-selecting first symbol (symbol not available or not selected):", firstSymbol);
                     onSymbolChange(firstSymbol);
-                }
-            } else if (baseCurrencies.length > 0 && quoteCurrencies.length > 0) {
-                // Fallback: if no symbols available, use base/quote combination
-                const firstBase = baseCurrencies[0];
-                const firstQuote = quoteCurrencies[0];
-                if (firstBase && firstQuote) {
-                    const newSymbol = `${firstBase}/${firstQuote}`;
-                        if (newSymbol !== selectedSymbol) {
-                    console.log("🔄 Auto-selecting first symbol (fallback):", newSymbol);
-                    onSymbolChange(newSymbol);
-                        }
-                    }
                 }
             }
         }
-    }, [availableSymbols, baseCurrencies, quoteCurrencies, currenciesLoading, selectedSymbol, selectedAccountId, onSymbolChange]);
+    }, [availableSymbols, currenciesLoading, selectedSymbol, selectedAccountId, onSymbolChange]);
 
     // Fetch ticker data (24h High, Low, Bid, Ask)
     const fetchTickerData = useCallback(async () => {
@@ -722,139 +632,46 @@ const TradingPanel = forwardRef<TradingPanelRef, TradingPanelProps>(({
             {/* Asset Selection and Current Price */}
             <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                 {/* Symbol Selector - Single dropdown for all exchanges */}
-                {availableSymbols.length > 0 ? (
-                    <select
-                        value={selectedSymbol || ""}
-                        onChange={(e) => {
-                            onSymbolChange(e.target.value);
-                        }}
-                        disabled={currenciesLoading || availableSymbols.length === 0}
-                        style={{
-                            width: "100%",
-                            padding: "8px 12px",
-                            backgroundColor: "#2a2a2a",
-                            border: "1px solid rgba(255, 174, 0, 0.2)",
-                            borderRadius: "6px",
-                            color: "#ffffff",
-                            fontSize: "14px",
-                            fontWeight: "500",
-                            outline: "none",
-                            cursor: currenciesLoading || availableSymbols.length === 0 ? "not-allowed" : "pointer",
-                        }}
-                        onFocus={(e) => (e.target.style.borderColor = "#FFAE00")}
-                        onBlur={(e) => (e.target.style.borderColor = "rgba(255, 174, 0, 0.2)")}
-                    >
-                        {currenciesLoading ? (
-                            <option value="">Loading...</option>
-                        ) : availableSymbols.length === 0 ? (
-                            <option value="">No symbols available</option>
-                        ) : (
-                            <>
-                                {!availableSymbols.includes(selectedSymbol) && selectedSymbol && (
-                                    <option value={selectedSymbol} style={{ backgroundColor: "#1a1a1a", color: "#ffffff" }}>
-                                        {selectedSymbol}
-                                    </option>
-                                )}
-                                {availableSymbols.map((symbol) => (
-                                    <option key={symbol} value={symbol} style={{ backgroundColor: "#1a1a1a", color: "#ffffff" }}>
-                                        {symbol}
-                                    </option>
-                                ))}
-                            </>
-                        )}
-                    </select>
-                ) : (
-                    // Fallback: Show two dropdowns only if symbols are not available
-                <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                    <select
-                        value={base || ""}
-                        onChange={(e) => {
-                            const newBase = e.target.value;
-                            if (newBase && quote) {
-                                onSymbolChange(`${newBase}/${quote}`);
-                            }
-                        }}
-                        disabled={currenciesLoading || baseCurrencies.length === 0}
-                        style={{
-                            flex: 1,
-                            padding: "8px 12px",
-                            backgroundColor: "#2a2a2a",
-                            border: "1px solid rgba(255, 174, 0, 0.2)",
-                            borderRadius: "6px",
-                            color: "#ffffff",
-                            fontSize: "14px",
-                            fontWeight: "500",
-                            outline: "none",
-                            cursor: currenciesLoading || baseCurrencies.length === 0 ? "not-allowed" : "pointer",
-                        }}
-                        onFocus={(e) => (e.target.style.borderColor = "#FFAE00")}
-                        onBlur={(e) => (e.target.style.borderColor = "rgba(255, 174, 0, 0.2)")}
-                    >
-                        {currenciesLoading ? (
-                            <option value="">Loading...</option>
-                        ) : baseCurrencies.length === 0 ? (
-                            <option value="">No currencies</option>
-                        ) : (
-                            <>
-                                {!baseCurrencies.includes(base) && base && (
-                                    <option value={base} style={{ backgroundColor: "#1a1a1a", color: "#ffffff" }}>
-                                        {base}
-                                    </option>
-                                )}
-                                {baseCurrencies.map((currency) => (
-                                    <option key={currency} value={currency} style={{ backgroundColor: "#1a1a1a", color: "#ffffff" }}>
-                                        {currency}
-                                    </option>
-                                ))}
-                            </>
-                        )}
-                    </select>
-                    <div style={{ color: "#888888", fontSize: "18px" }}>/</div>
-                    <select
-                        value={quote || ""}
-                        onChange={(e) => {
-                            const newQuote = e.target.value;
-                            if (base && newQuote) {
-                                onSymbolChange(`${base}/${newQuote}`);
-                            }
-                        }}
-                        disabled={currenciesLoading || quoteCurrencies.length === 0}
-                        style={{
-                            flex: 1,
-                            padding: "8px 12px",
-                            backgroundColor: "#2a2a2a",
-                            border: "1px solid rgba(255, 174, 0, 0.2)",
-                            borderRadius: "6px",
-                            color: "#ffffff",
-                            fontSize: "14px",
-                            fontWeight: "500",
-                            outline: "none",
-                            cursor: currenciesLoading || quoteCurrencies.length === 0 ? "not-allowed" : "pointer",
-                        }}
-                        onFocus={(e) => (e.target.style.borderColor = "#FFAE00")}
-                        onBlur={(e) => (e.target.style.borderColor = "rgba(255, 174, 0, 0.2)")}
-                    >
-                        {currenciesLoading ? (
-                            <option value="">Loading...</option>
-                        ) : quoteCurrencies.length === 0 ? (
-                            <option value="">No currencies</option>
-                        ) : (
-                            <>
-                                {!quoteCurrencies.includes(quote) && quote && (
-                                    <option value={quote} style={{ backgroundColor: "#1a1a1a", color: "#ffffff" }}>
-                                        {quote}
-                                    </option>
-                                )}
-                                {quoteCurrencies.map((currency) => (
-                                    <option key={currency} value={currency} style={{ backgroundColor: "#1a1a1a", color: "#ffffff" }}>
-                                        {currency}
-                                    </option>
-                                ))}
-                            </>
-                        )}
-                    </select>
-                </div>
-                )}
+                <select
+                    value={selectedSymbol || ""}
+                    onChange={(e) => {
+                        onSymbolChange(e.target.value);
+                    }}
+                    disabled={currenciesLoading || availableSymbols.length === 0}
+                    style={{
+                        width: "100%",
+                        padding: "8px 12px",
+                        backgroundColor: "#2a2a2a",
+                        border: "1px solid rgba(255, 174, 0, 0.2)",
+                        borderRadius: "6px",
+                        color: "#ffffff",
+                        fontSize: "14px",
+                        fontWeight: "500",
+                        outline: "none",
+                        cursor: currenciesLoading || availableSymbols.length === 0 ? "not-allowed" : "pointer",
+                    }}
+                    onFocus={(e) => (e.target.style.borderColor = "#FFAE00")}
+                    onBlur={(e) => (e.target.style.borderColor = "rgba(255, 174, 0, 0.2)")}
+                >
+                    {currenciesLoading ? (
+                        <option value="">Loading...</option>
+                    ) : availableSymbols.length === 0 ? (
+                        <option value="">No symbols available</option>
+                    ) : (
+                        <>
+                            {!availableSymbols.includes(selectedSymbol) && selectedSymbol && (
+                                <option value={selectedSymbol} style={{ backgroundColor: "#1a1a1a", color: "#ffffff" }}>
+                                    {selectedSymbol}
+                                </option>
+                            )}
+                            {availableSymbols.map((symbol) => (
+                                <option key={symbol} value={symbol} style={{ backgroundColor: "#1a1a1a", color: "#ffffff" }}>
+                                    {symbol}
+                                </option>
+                            ))}
+                        </>
+                    )}
+                </select>
 
                 {/* Current Price Display */}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>

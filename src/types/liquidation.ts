@@ -28,6 +28,12 @@ export interface LiquidationMapResponse {
     data: LiquidationData[];
     /** List of exchanges included in the data */
     exchanges: string[];
+    /** Data source (optional) - e.g., "WebSocket", "Historical", "CryptoQuant", "Hybrid" */
+    data_source?: string;
+    /** Last update timestamp in milliseconds (optional) */
+    last_updated?: number;
+    /** Confidence score (0-1) indicating data quality/reliability (optional) */
+    confidence_score?: number;
 }
 
 /**
