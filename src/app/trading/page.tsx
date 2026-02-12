@@ -41,7 +41,7 @@ interface Position {
 
 interface Balance {
      exchange: string;
-     balances: Record<string, { free: number; used: number; total: number }>;
+     balances: Record<string, { free?: number; available?: number; used: number; total: number }>;
 }
 
 interface Trade {
@@ -119,7 +119,7 @@ export default function TradingPage() {
           setLoading(false);
      }, []);
 
-     // Fetch orders
+     // Fetch orders (use /trading/orders/exchange for Demo so demo orders from DemoOrder table are shown)
      const fetchOrders = useCallback(async () => {
           if (!selectedAccountId) return;
 
@@ -129,8 +129,12 @@ export default function TradingPage() {
                if (!token) return;
 
                const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+               const isDemoExchange = selectedAccountId === -999;
+               const url = isDemoExchange
+                    ? `${apiUrl}/trading/orders/exchange?exchange_account_id=${selectedAccountId}&limit=50`
+                    : `${apiUrl}/trading/orders?exchange_account_id=${selectedAccountId}&limit=50`;
 
-               const response = await fetch(`${apiUrl}/trading/orders?exchange_account_id=${selectedAccountId}&limit=50`, {
+               const response = await fetch(url, {
                     headers: { Authorization: `Bearer ${token}` },
                });
 
@@ -724,14 +728,15 @@ export default function TradingPage() {
                if (!token) return;
 
                const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-               const response = await fetch(`${apiUrl}/trading/orders/${orderId}`, {
+               const params = selectedAccountId != null ? `?exchange_account_id=${selectedAccountId}` : "";
+               const response = await fetch(`${apiUrl}/trading/orders/${orderId}${params}`, {
                     method: "DELETE",
                     headers: { Authorization: `Bearer ${token}` },
                });
 
                if (response.ok) {
                     await fetchOrders();
+                    await fetchBalance();
                } else {
                     const errorData = await response.json().catch(() => ({}));
                     setError(errorData.detail || "Failed to cancel order");
@@ -869,7 +874,7 @@ export default function TradingPage() {
                               }}
                          >
                               <div style={{ fontSize: "13px", color: "#888", marginBottom: "8px", fontWeight: "500" }}>Total Balance</div>
-                              <div style={{ fontSize: "24px", fontWeight: "bold", color: "#FFAE00" }}>{totalBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+                              <div style={{ fontSize: "24px", fontWeight: "bold", color: "#FFAE00" }}>{(totalBalance ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
                          </div>
                          <div
                               style={{
@@ -1371,10 +1376,10 @@ export default function TradingPage() {
                                                   >
                                                        <div style={{ fontWeight: "bold", marginBottom: "8px", color: "#FFAE00", fontSize: "16px" }}>{currency}</div>
                                                        <div style={{ fontSize: "13px", color: "#888", marginBottom: "4px" }}>
-                                                            Free: <span style={{ color: "#ededed" }}>{amounts.free.toLocaleString(undefined, { maximumFractionDigits: 8 })}</span>
+                                                            Free: <span style={{ color: "#ededed" }}>{(amounts.free ?? amounts.available ?? 0).toLocaleString(undefined, { maximumFractionDigits: 8 })}</span>
                                                        </div>
                                                        <div style={{ fontSize: "13px", color: "#888", marginBottom: "8px" }}>
-                                                            Used: <span style={{ color: "#ededed" }}>{amounts.used.toLocaleString(undefined, { maximumFractionDigits: 8 })}</span>
+                                                            Used: <span style={{ color: "#ededed" }}>{(amounts.used ?? 0).toLocaleString(undefined, { maximumFractionDigits: 8 })}</span>
                                                        </div>
                                                        <div
                                                             style={{
@@ -1386,7 +1391,7 @@ export default function TradingPage() {
                                                                  color: "#FFAE00",
                                                             }}
                                                        >
-                                                            Total: {amounts.total.toLocaleString(undefined, { maximumFractionDigits: 8 })}
+                                                            Total: {(amounts.total ?? 0).toLocaleString(undefined, { maximumFractionDigits: 8 })}
                                                        </div>
                                                   </div>
                                              ))}

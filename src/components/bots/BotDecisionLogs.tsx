@@ -45,42 +45,59 @@ export default function BotDecisionLogs({ botId, enabled = true }: BotDecisionLo
     });
   }, []);
 
-  // Fetch decision logs from API
+  // Fetch decision logs from API (with timeout so we don't hang on "Loading...")
   const fetchDecisionLogs = useCallback(async () => {
     if (!botId || !enabled) return;
 
+    const token = localStorage.getItem("auth_token") || "";
+    if (!token) {
+      setIsLoading(false);
+      return;
+    }
+
     try {
       setIsLoading(true);
-      const token = localStorage.getItem("auth_token") || "";
-      if (!token) return;
+      setError(null);
 
-      const apiUrl = typeof window !== "undefined" 
-        ? "http://localhost:8000" 
+      const apiUrl = typeof window !== "undefined"
+        ? "http://localhost:8000"
         : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-      // Try to fetch recent decision logs
-      // Note: This endpoint might need to be created on backend
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+
       const response = await fetch(`${apiUrl}/bots/${botId}/decision-logs?limit=50`, {
         headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
 
       if (response.ok) {
         const data = await response.json();
-        // Backend returns array directly, not wrapped in {logs: [...]}
         if (Array.isArray(data)) {
           setLogs(data);
-        } else if (Array.isArray(data.logs)) {
-          // Fallback for old format
+        } else if (data && Array.isArray(data.logs)) {
           setLogs(data.logs);
+        } else {
+          setLogs([]);
         }
         setError(null);
-      } else if (response.status !== 404) {
-        // 404 is OK if endpoint doesn't exist yet
-        throw new Error(`Failed to fetch logs: ${response.status}`);
+      } else if (response.status === 404) {
+        setLogs([]);
+      } else {
+        setError(`Failed to load (${response.status})`);
+        setLogs([]);
       }
     } catch (err) {
-      // Silently fail - endpoint might not exist yet
-      console.debug("Decision logs endpoint not available:", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("abort")) {
+        setError("Request timed out");
+      } else {
+        setError("Could not load. Check connection.");
+        console.debug("Decision logs endpoint not available:", err);
+      }
+      setLogs([]);
     } finally {
       setIsLoading(false);
     }
@@ -312,15 +329,32 @@ export default function BotDecisionLogs({ botId, enabled = true }: BotDecisionLo
             📊 Bot Decisions
           </h3>
           {error && (
-            <span style={{
-              fontSize: "12px",
-              color: colors.error,
-              padding: "4px 8px",
-              backgroundColor: "rgba(239, 68, 68, 0.15)",
-              borderRadius: "4px",
-            }}>
-              {error}
-            </span>
+            <>
+              <span style={{
+                fontSize: "12px",
+                color: colors.error,
+                padding: "4px 8px",
+                backgroundColor: "rgba(239, 68, 68, 0.15)",
+                borderRadius: "4px",
+              }}>
+                {error}
+              </span>
+              <button
+                type="button"
+                onClick={() => { setError(null); fetchDecisionLogs(); }}
+                style={{
+                  fontSize: "12px",
+                  padding: "4px 10px",
+                  backgroundColor: "transparent",
+                  border: `1px solid ${colors.primary}`,
+                  borderRadius: "4px",
+                  color: colors.primary,
+                  cursor: "pointer",
+                }}
+              >
+                Retry
+              </button>
+            </>
           )}
         </div>
         <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
@@ -387,6 +421,24 @@ export default function BotDecisionLogs({ botId, enabled = true }: BotDecisionLo
             <span style={{ fontSize: "12px", marginTop: "8px", display: "block" }}>
               Decisions will be displayed after the bot starts
             </span>
+            {error && (
+              <button
+                type="button"
+                onClick={() => { setError(null); fetchDecisionLogs(); }}
+                style={{
+                  marginTop: "16px",
+                  padding: "8px 16px",
+                  backgroundColor: colors.primary,
+                  border: "none",
+                  borderRadius: "6px",
+                  color: "#fff",
+                  fontSize: "13px",
+                  cursor: "pointer",
+                }}
+              >
+                Retry loading
+              </button>
+            )}
           </div>
         ) : (
           logs.map((log) => (

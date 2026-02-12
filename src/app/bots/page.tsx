@@ -258,6 +258,15 @@ function BotsPageContent() {
     }
   }, [selectedBot, fetchBotStatus, fetchBotTrades]);
 
+  // When status says there are open positions but the trades list doesn't show them, refetch trades (keeps Current Positions in sync)
+  useEffect(() => {
+    if (!selectedBot || !botStatus || botStatus.open_positions <= 0) return;
+    const openCount = botTrades.filter(t => String(t.status || "").toLowerCase() === "open").length;
+    if (openCount < botStatus.open_positions) {
+      fetchBotTrades(selectedBot.id);
+    }
+  }, [selectedBot, botStatus?.open_positions, botTrades, fetchBotTrades]);
+
   // Filter and sort bots
   const filteredAndSortedBots = useMemo(() => {
     // Apply filters

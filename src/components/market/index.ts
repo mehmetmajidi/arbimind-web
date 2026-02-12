@@ -8,3 +8,4 @@ export { default as TradingPanel } from "./TradingPanel";
 export { default as PricePredictionsPanel } from "./PricePredictionsPanel";
 export { default as DemoExchangeBadge } from "./DemoExchangeBadge";
 export { default as DemoPortfolioStats } from "./DemoPortfolioStats";
+export { default as DemoWallet } from "./DemoWallet";

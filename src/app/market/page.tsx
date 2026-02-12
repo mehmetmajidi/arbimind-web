@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { PriceWidget, MainChart, OrderPanel, TradingPanel, PricePredictionsPanel, ActiveOrders, ArbitragePanel, DemoPortfolioStats, DemoExchangeBadge } from "@/components/market";
+import { PriceWidget, MainChart, OrderPanel, TradingPanel, PricePredictionsPanel, ActiveOrders, ArbitragePanel, DemoPortfolioStats, DemoWallet } from "@/components/market";
 import type { ActiveOrdersRef } from "@/components/market/ActiveOrders";
 import type { TradingPanelRef } from "@/components/market/TradingPanel";
+import type { OrderPanelRef } from "@/components/market/OrderPanel";
 import { Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, ComposedChart, Area } from "recharts";
 import { useExchange } from "@/contexts/ExchangeContext";
 
@@ -95,9 +96,37 @@ export default function MarketPage() {
     } | null>(null);
     const [showAccuracyHistory, setShowAccuracyHistory] = useState(false);
     
-    // Refs for ActiveOrders and TradingPanel to refresh after order placement
+    // Refs for ActiveOrders, TradingPanel, OrderPanel to refresh after order placement/cancel
     const activeOrdersRef = useRef<ActiveOrdersRef | null>(null);
     const tradingPanelRef = useRef<TradingPanelRef | null>(null);
+    const orderPanelRef = useRef<OrderPanelRef | null>(null);
+
+    // Single fetch for Demo Wallet – shared by DemoWallet and DemoPortfolioStats (faster load)
+    const [demoWallet, setDemoWallet] = useState<Record<string, unknown> | null>(null);
+    const [demoWalletLoading, setDemoWalletLoading] = useState(false);
+    const [demoWalletError, setDemoWalletError] = useState<string | null>(null);
+    const fetchDemoWallet = useCallback(async () => {
+        const token = localStorage.getItem("auth_token");
+        if (!token) return;
+        const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        setDemoWalletLoading(true);
+        setDemoWalletError(null);
+        try {
+            const res = await fetch(`${apiUrl}/demo/wallet`, { headers: { Authorization: `Bearer ${token}` } });
+            if (!res.ok) throw new Error("Failed to fetch wallet");
+            const data = await res.json();
+            setDemoWallet(data);
+        } catch (e) {
+            setDemoWalletError(e instanceof Error ? e.message : "Failed to load wallet");
+            setDemoWallet(null);
+        } finally {
+            setDemoWalletLoading(false);
+        }
+    }, []);
+    useEffect(() => {
+        if (selectedAccountId === -999) fetchDemoWallet();
+        else { setDemoWallet(null); setDemoWalletError(null); }
+    }, [selectedAccountId, fetchDemoWallet]);
     
     // Callback to refresh ActiveOrders and TradingPanel when order is placed
     const handleOrderPlaced = useCallback(() => {
@@ -107,6 +136,12 @@ export default function MarketPage() {
         if (tradingPanelRef.current) {
             tradingPanelRef.current.refreshBalance();
         }
+    }, []);
+
+    // Callback to refresh balance when order is cancelled (so Available/In Orders update in market)
+    const handleOrderCancelled = useCallback(() => {
+        orderPanelRef.current?.refreshBalance();
+        tradingPanelRef.current?.refreshBalance();
     }, []);
     
     // Load saved symbol when account changes (if account didn't change, keep current symbol)
@@ -1047,13 +1082,6 @@ export default function MarketPage() {
 
     return (
         <div style={{ padding: isMobile ? "8px" : "0 16px", maxWidth: "1870px", margin: "0 auto", color: "#ededed" }}>
-            {/* Demo Exchange Badge */}
-            {isDemoExchange && (
-                <div style={{ marginBottom: "12px", display: "flex", justifyContent: "flex-end" }}>
-                    <DemoExchangeBadge size="medium" />
-                </div>
-            )}
-
             {error && (
                 <div
                     style={{
@@ -1266,6 +1294,7 @@ export default function MarketPage() {
                     <div style={{ width: isMobile ? "100%" : "320px", flexShrink: 0, display: "flex", flexDirection: "column", gap: "12px" }}>
                         {/* Order Panel */}
                         <OrderPanel 
+                            ref={orderPanelRef}
                             selectedSymbol={selectedSymbol}
                             currentPrice={currentPrice}
                             onOrderPlaced={handleOrderPlaced}
@@ -1275,11 +1304,23 @@ export default function MarketPage() {
                         <ActiveOrders 
                             ref={activeOrdersRef}
                             selectedSymbol={selectedSymbol}
+                            onOrderCancelled={handleOrderCancelled}
                         />
 
-                        {/* Demo Portfolio Stats */}
+                        {/* Demo Wallet – uses shared fetch so Wallet + Portfolio Stats load once */}
                         {isDemoExchange && (
-                            <DemoPortfolioStats />
+                            <DemoWallet
+                                wallet={demoWallet}
+                                loading={demoWalletLoading}
+                                error={demoWalletError}
+                                onRefetch={fetchDemoWallet}
+                                onWalletReset={() => { orderPanelRef.current?.refreshBalance(); tradingPanelRef.current?.refreshBalance(); }}
+                            />
+                        )}
+
+                        {/* Demo Portfolio Stats – uses same wallet data, no second fetch */}
+                        {isDemoExchange && (
+                            <DemoPortfolioStats wallet={demoWallet} loading={demoWalletLoading} error={demoWalletError} />
                         )}
 
                         {/* Accuracy Stats */}

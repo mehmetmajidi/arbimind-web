@@ -191,9 +191,18 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
 
       if (quoteResponse.ok) {
         const data = await quoteResponse.json();
-        const currencies = data.currencies || [];
+        let currencies = data.currencies || [];
+        // Demo Exchange: ensure USDT is always available (fallback if API returns empty)
+        if (accountId === "-999" && currencies.length === 0) {
+          currencies = [{ currency_code: "USDT", currency_name: "Tether" }];
+        }
         setQuoteCurrencies(currencies);
         // Reset selected currency when exchange changes
+        setSelectedQuoteCurrency("");
+        setBalance(null);
+      } else if (accountId === "-999") {
+        // Demo Exchange: show USDT even when API fails
+        setQuoteCurrencies([{ currency_code: "USDT", currency_name: "Tether" }]);
         setSelectedQuoteCurrency("");
         setBalance(null);
       }
@@ -261,7 +270,17 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
       const data = await response.json();
       console.log("Balance response:", data);
       
-      const balances = data.balances || {};
+      const rawBalances = data.balances || {};
+      // Normalize: API may return "available", frontend uses "free"
+      const balances: Record<string, { free: number; used: number; total: number }> = {};
+      for (const [key, val] of Object.entries(rawBalances)) {
+        const b = (val || {}) as { free?: number; available?: number; used?: number; total?: number };
+        balances[key] = {
+          free: b.free ?? b.available ?? 0,
+          used: b.used ?? 0,
+          total: b.total ?? 0,
+        };
+      }
       console.log("Parsed balances:", balances);
       console.log("Available currencies:", Object.keys(balances));
       
@@ -506,6 +525,23 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
     }
   }, [exchangeAccountId, fetchAllBalances]);
 
+  // Demo Exchange: force paper trading on and use virtual balance from API (not hardcoded 1000)
+  const isDemoAccount = exchangeAccountId === "-999";
+  const effectiveAvailable = isDemoAccount ? (balance?.free ?? 0) : (paperTrading ? 1000 : (balance?.free ?? 0));
+  const effectiveTotal = isDemoAccount ? (balance?.total ?? 0) : (paperTrading ? 1000 : (balance?.total ?? 0));
+  const effectiveUsed = isDemoAccount ? (balance?.used ?? 0) : (paperTrading ? 0 : (balance?.used ?? 0));
+  useEffect(() => {
+    if (isDemoAccount) {
+      setPaperTrading(true);
+    }
+  }, [isDemoAccount]);
+  // When Demo Exchange balance loads, set capital default from actual balance (don't force 1000)
+  useEffect(() => {
+    if (isDemoAccount && balance !== null && (balance?.free ?? 0) > 0 && (!capital || capital === "1000")) {
+      setCapital((balance.free ?? 0).toFixed(8));
+    }
+  }, [isDemoAccount, balance]);
+
   // Update balance for selected quote currency when it changes
   useEffect(() => {
     if (selectedQuoteCurrency && allBalances) {
@@ -544,7 +580,7 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
       if (lastChangedField.current === "percentage" || lastChangedField.current === null) {
         const percentage = parseFloat(capitalPercentage);
         if (!isNaN(percentage) && percentage >= 0 && percentage <= 100) {
-          const availableBalance = paperTrading ? 1000 : (balance?.free || 0);
+          const availableBalance = effectiveAvailable;
           const calculatedAmount = (availableBalance * percentage) / 100;
           setCapital(calculatedAmount.toFixed(8));
           if (lastChangedField.current === "percentage") {
@@ -558,13 +594,13 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
         }
       }
     }
-  }, [capitalPercentage, balance, investmentMode, paperTrading]);
+  }, [capitalPercentage, balance, investmentMode, paperTrading, effectiveAvailable]);
 
   // Update percentage when amount changes (only in amount mode)
   useEffect(() => {
     if (investmentMode === "amount" && (balance || paperTrading) && capital && lastChangedField.current === "amount") {
       const amount = parseFloat(capital);
-      const availableBalance = paperTrading ? 1000 : (balance?.free || 0);
+      const availableBalance = effectiveAvailable;
       if (!isNaN(amount) && availableBalance > 0) {
         const calculatedPercentage = (amount / availableBalance) * 100;
         setCapitalPercentage(calculatedPercentage.toFixed(2));
@@ -574,7 +610,7 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
         lastChangedField.current = null;
       }
     }
-  }, [capital, balance, investmentMode, paperTrading]);
+  }, [capital, balance, investmentMode, paperTrading, effectiveAvailable]);
 
   useEffect(() => {
     if (isOpen) {
@@ -606,6 +642,18 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
     }
   }, [isOpen, fetchExchangeAccounts]);
 
+  // Demo: auto-select USDT so symbol list loads (Demo has no quote list until we default it)
+  useEffect(() => {
+    if (exchangeAccountId === "-999" && quoteCurrencies.length > 0 && !selectedQuoteCurrency) {
+      const hasUsdt = quoteCurrencies.some((c: { currency_code: string }) =>
+        (c.currency_code || "").toUpperCase() === "USDT"
+      );
+      if (hasUsdt) {
+        setSelectedQuoteCurrency("USDT");
+      }
+    }
+  }, [exchangeAccountId, quoteCurrencies, selectedQuoteCurrency]);
+
   // Fetch symbols when exchange account or quote currency is selected
   useEffect(() => {
     if (exchangeAccountId && selectedQuoteCurrency) {
@@ -616,8 +664,9 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
     }
   }, [exchangeAccountId, selectedQuoteCurrency, fetchAvailableSymbols]);
 
-  // Set capital to 1000 when paper trading is enabled
+  // Set capital to 1000 when paper trading is enabled (skip for Demo Exchange - use balance from API)
   useEffect(() => {
+    if (isDemoAccount) return;
     if (paperTrading && !useSourceCurrency) {
       // Save previous capital value if it exists and is not 1000
       const currentCapital = capital || "";
@@ -633,7 +682,7 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
       setCapital(previousCapitalRef.current);
       previousCapitalRef.current = "";
     }
-  }, [paperTrading, useSourceCurrency]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [paperTrading, useSourceCurrency, isDemoAccount]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Disable source currency option when paper trading is enabled
   useEffect(() => {
@@ -649,7 +698,7 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
     if (investmentMode === "percentage" && (balance || paperTrading) && capitalPercentage && !isNaN(parseFloat(capitalPercentage))) {
       const percentage = parseFloat(capitalPercentage);
       if (percentage >= 0 && percentage <= 100) {
-        const availableBalance = paperTrading ? 1000 : (balance?.free || 0);
+        const availableBalance = effectiveAvailable;
         const calculatedAmount = (availableBalance * percentage) / 100;
         // Only update if different to avoid infinite loops
         if (Math.abs(parseFloat(capital) - calculatedAmount) > 0.00000001) {
@@ -658,7 +707,7 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
       }
     } else if (investmentMode === "amount" && (balance || paperTrading) && capital && !isNaN(parseFloat(capital))) {
       const amount = parseFloat(capital);
-      const availableBalance = paperTrading ? 1000 : (balance?.free || 0);
+      const availableBalance = effectiveAvailable;
       if (availableBalance > 0) {
         const calculatedPercentage = (amount / availableBalance) * 100;
         // Only update if different to avoid infinite loops
@@ -667,7 +716,7 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
         }
       }
     }
-  }, [paperTrading, balance, investmentMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [paperTrading, balance, investmentMode, effectiveAvailable]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSubmit = async () => {
     // Validation
@@ -722,9 +771,9 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
           return;
         }
       } else {
-        // In paper trading mode, validate against 1000
-        if (parseFloat(capital) > 1000) {
-          setFormError(`Insufficient balance. Available: 1000.00000000 ${selectedQuoteCurrency}`);
+        // In paper/demo mode, validate against effective available balance
+        if (parseFloat(capital) > effectiveAvailable) {
+          setFormError(`Insufficient balance. Available: ${effectiveAvailable.toFixed(8)} ${selectedQuoteCurrency}`);
           return;
         }
       }
@@ -947,7 +996,9 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
                   >
                     <option value="">Select Exchange</option>
                     {exchangeAccounts.map(acc => (
-                      <option key={acc.id} value={acc.id}>{acc.exchange_name}</option>
+                      <option key={acc.id} value={acc.id}>
+                        {acc.id === -999 ? "Demo Exchange" : acc.exchange_name}
+                      </option>
                     ))}
                   </select>
                   {exchangeAccounts.length === 0 && (
@@ -991,7 +1042,7 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
                   )}
                 </div>
 
-                {/* Balance Display */}
+                {/* Balance Display - Demo Exchange shows real VirtualWallet balance from API */}
                 {selectedQuoteCurrency && (balance !== null || paperTrading) && (
                   <div style={{
                     padding: "12px",
@@ -1002,49 +1053,25 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
                       <span style={{ color: colors.secondaryText, fontSize: "12px" }}>Available Balance:</span>
                       <span style={{ color: colors.text, fontSize: "14px", fontWeight: "600" }}>
-                        {balanceLoading && !paperTrading ? "Loading..." : (
-                          paperTrading 
-                            ? `1000.00000000 ${selectedQuoteCurrency}`
-                            : `${balance?.free.toFixed(8) || "0.00000000"} ${selectedQuoteCurrency}`
+                        {balanceLoading && (isDemoAccount || !paperTrading) ? "Loading..." : (
+                          `${effectiveAvailable.toFixed(8)} ${selectedQuoteCurrency}`
                         )}
                       </span>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <span style={{ color: colors.secondaryText, fontSize: "12px" }}>In Orders:</span>
                       <span style={{ color: colors.secondaryText, fontSize: "12px" }}>
-                        {paperTrading 
-                          ? `0.00000000 ${selectedQuoteCurrency}`
-                          : `${(balance?.used || 0).toFixed(8)} ${selectedQuoteCurrency}`
-                        }
+                        {`${effectiveUsed.toFixed(8)} ${selectedQuoteCurrency}`}
                       </span>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "4px" }}>
                       <span style={{ color: colors.secondaryText, fontSize: "12px" }}>Total Balance:</span>
                       <span style={{ color: colors.text, fontSize: "12px" }}>
-                        {paperTrading 
-                          ? `1000.00000000 ${selectedQuoteCurrency}`
-                          : `${balance?.total.toFixed(8) || "0.00000000"} ${selectedQuoteCurrency}`
-                        }
+                        {balanceLoading && (isDemoAccount || !paperTrading) ? "..." : `${effectiveTotal.toFixed(8)} ${selectedQuoteCurrency}`}
                       </span>
                     </div>
                   </div>
                 )}
-
-                {/* Paper Trading Option */}
-                <div style={{ marginTop: "16px" }}>
-                  <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={paperTrading}
-                      onChange={(e) => setPaperTrading(e.target.checked)}
-                      style={{ width: "18px", height: "18px", cursor: "pointer" }}
-                    />
-                    <span style={{ color: colors.text, fontSize: "14px" }}>Paper Trading (Demo Mode)</span>
-                  </label>
-                  <p style={{ color: colors.secondaryText, fontSize: "12px", marginTop: "4px", marginLeft: "26px" }}>
-                    Simulate trading without real money
-                  </p>
-                </div>
 
                 {/* Source Currency Option - Only show if NOT in paper trading mode */}
                 {!paperTrading && (
@@ -1345,7 +1372,7 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
                         <span style={{ color: colors.secondaryText, fontSize: "14px" }}>%</span>
                         {(balance || paperTrading) && capitalPercentage && !isNaN(parseFloat(capitalPercentage)) && (
                           <span style={{ color: colors.text, fontSize: "12px", minWidth: "100px" }}>
-                            = {((paperTrading ? 1000 : (balance?.free || 0)) * parseFloat(capitalPercentage) / 100).toFixed(8)} {selectedQuoteCurrency}
+                            = {(effectiveAvailable * parseFloat(capitalPercentage) / 100).toFixed(8)} {selectedQuoteCurrency}
                           </span>
                         )}
                       </div>
@@ -1353,7 +1380,7 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
                     
                     {selectedQuoteCurrency && (balance || paperTrading) && (
                       <p style={{ color: colors.secondaryText, fontSize: "12px", marginTop: "4px" }}>
-                        Available: {paperTrading ? "1000.00000000" : balance?.free.toFixed(8) || "0.00000000"} {selectedQuoteCurrency}
+                        Available: {effectiveAvailable.toFixed(8)} {selectedQuoteCurrency}
                       </p>
                     )}
                   </div>

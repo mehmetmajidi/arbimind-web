@@ -88,6 +88,13 @@ export default function EditBotForm({ isOpen, bot, onClose, onSuccess }: EditBot
     }
   }, [isOpen, bot, fetchExchangeAccounts, fetchAvailableSymbols]);
 
+  const isDemoAccount = exchangeAccountId === "-999";
+  useEffect(() => {
+    if (isDemoAccount) {
+      setPaperTrading(true);
+    }
+  }, [isDemoAccount]);
+
   const handleSubmit = async () => {
     if (!bot) return;
 
@@ -326,7 +333,9 @@ export default function EditBotForm({ isOpen, bot, onClose, onSuccess }: EditBot
             >
               <option value="">Select Exchange</option>
               {exchangeAccounts.map(acc => (
-                <option key={acc.id} value={acc.id}>{acc.exchange_name}</option>
+                <option key={acc.id} value={acc.id}>
+                {acc.id === -999 ? "Demo Exchange" : acc.exchange_name}
+              </option>
               ))}
             </select>
           </div>
@@ -549,17 +558,20 @@ export default function EditBotForm({ isOpen, bot, onClose, onSuccess }: EditBot
           </div>
 
           <div>
-            <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: isDemoAccount ? "default" : "pointer" }}>
               <input
                 type="checkbox"
                 checked={paperTrading}
-                onChange={(e) => setPaperTrading(e.target.checked)}
-                style={{ width: "18px", height: "18px", cursor: "pointer" }}
+                onChange={(e) => !isDemoAccount && setPaperTrading(e.target.checked)}
+                disabled={isDemoAccount}
+                style={{ width: "18px", height: "18px", cursor: isDemoAccount ? "default" : "pointer" }}
               />
               <span style={{ color: colors.text, fontSize: "14px" }}>Paper Trading (Demo Mode)</span>
             </label>
             <p style={{ color: colors.secondaryText, fontSize: "12px", marginTop: "4px", marginLeft: "26px" }}>
-              Simulate trading without real money
+              {isDemoAccount
+                ? "Demo Exchange uses virtual balance only."
+                : "Simulate trading without real money"}
             </p>
           </div>
         </div>

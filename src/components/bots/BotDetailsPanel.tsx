@@ -142,9 +142,9 @@ export default function BotDetailsPanel({
         </h3>
         {tradesLoading ? (
           <div style={{ color: colors.secondaryText, fontSize: "14px" }}>Loading...</div>
-        ) : botTrades.filter(t => t.status === "open").length > 0 ? (
+        ) : botTrades.filter(t => String(t.status || "").toLowerCase() === "open").length > 0 ? (
           <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-            {botTrades.filter(t => t.status === "open").slice(0, 5).map((trade) => (
+            {botTrades.filter(t => String(t.status || "").toLowerCase() === "open").slice(0, 5).map((trade) => (
               <div
                 key={trade.id}
                 style={{

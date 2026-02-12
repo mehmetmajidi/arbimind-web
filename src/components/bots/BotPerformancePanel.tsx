@@ -195,6 +195,24 @@ export default function BotPerformancePanel({ botStatus, loading }: BotPerforman
               {botStatus.available_balance.toFixed(2)} USDT
             </span>
           </div>
+
+          {/* Warning when locked exceeds capital (e.g. from old run or wallet overwrite) */}
+          {botStatus.locked_capital > botStatus.current_capital && (
+            <div style={{
+              marginTop: "8px",
+              padding: "8px",
+              fontSize: "11px",
+              color: colors.error,
+              backgroundColor: "rgba(239, 68, 68, 0.12)",
+              borderRadius: "6px",
+              border: `1px solid ${colors.error}`,
+            }}>
+              Locked in positions ({botStatus.locked_capital.toFixed(0)} USDT) is higher than current capital ({botStatus.current_capital.toFixed(0)} USDT). This can happen from a previous run. From the next run, the bot will not open new positions beyond the configured capital.
+              <div style={{ marginTop: "6px", fontWeight: "600" }}>
+                Stop the bot and start it again so that new positions respect the {botStatus.current_capital.toFixed(0)} USDT limit.
+              </div>
+            </div>
+          )}
           
           {initialCapital !== botStatus.current_capital && (
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", marginTop: "4px", paddingTop: "4px", borderTop: `1px solid ${colors.border}` }}>

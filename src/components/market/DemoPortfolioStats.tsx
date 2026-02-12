@@ -17,52 +17,62 @@ interface PortfolioStats {
   avg_trade_duration?: number;
 }
 
+interface DemoPortfolioStatsProps {
+  /** When provided, use this instead of fetching (shared with Demo Wallet for faster load). */
+  wallet?: Record<string, unknown> | null;
+  loading?: boolean;
+  error?: string | null;
+}
+
 /**
- * Component to display Demo Exchange portfolio statistics.
- * 
- * Shows key metrics like win rate, total P&L, and trade statistics.
+ * Demo Exchange portfolio statistics.
+ * When wallet/loading/error are passed, uses them (no second fetch).
  */
-export default function DemoPortfolioStats() {
+export default function DemoPortfolioStats({ wallet: walletProp, loading: loadingProp, error: errorProp }: DemoPortfolioStatsProps = {}) {
   const { selectedAccountId } = useExchange();
   const [stats, setStats] = useState<PortfolioStats | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [loadingInternal, setLoadingInternal] = useState(false);
+  const [errorInternal, setErrorInternal] = useState<string | null>(null);
 
-  // Only show for Demo Exchange
   const isDemoExchange = selectedAccountId === -999;
+  const isControlled = walletProp !== undefined;
+  const loading = isControlled ? (loadingProp ?? false) : loadingInternal;
+  const error = isControlled ? (errorProp ?? null) : errorInternal;
 
   useEffect(() => {
     if (!isDemoExchange) {
       setStats(null);
       return;
     }
-
+    if (isControlled) {
+      if (walletProp && !loading && !error) {
+        setStats({
+          total_trades: 0,
+          winning_trades: 0,
+          losing_trades: 0,
+          win_rate: 0,
+          total_pnl: parseFloat(String((walletProp as Record<string, unknown>).total_pnl || "0")),
+          total_pnl_percent: parseFloat(String((walletProp as Record<string, unknown>).total_pnl_percent || "0")),
+        });
+      } else {
+        setStats(null);
+      }
+      return;
+    }
     const fetchStats = async () => {
-      setLoading(true);
-      setError(null);
+      setLoadingInternal(true);
+      setErrorInternal(null);
       try {
         const token = localStorage.getItem("auth_token");
-        if (!token) {
-          throw new Error("Not authenticated");
-        }
-
-        // Get wallet first to get user_id context
-        const walletResponse = await fetch("http://localhost:8000/demo/wallet", {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
+        if (!token) throw new Error("Not authenticated");
+        const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        const walletResponse = await fetch(`${apiUrl}/demo/wallet`, {
+          headers: { Authorization: `Bearer ${token}` },
         });
-
-        if (!walletResponse.ok) {
-          throw new Error("Failed to fetch wallet");
-        }
-
-        // Portfolio stats are calculated in background tasks
-        // For now, we'll show wallet-based stats
+        if (!walletResponse.ok) throw new Error("Failed to fetch wallet");
         const wallet = await walletResponse.json();
-        
         setStats({
-          total_trades: 0, // Would need separate endpoint
+          total_trades: 0,
           winning_trades: 0,
           losing_trades: 0,
           win_rate: 0,
@@ -70,14 +80,13 @@ export default function DemoPortfolioStats() {
           total_pnl_percent: parseFloat(wallet.total_pnl_percent || "0"),
         });
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load stats");
+        setErrorInternal(err instanceof Error ? err.message : "Failed to load stats");
       } finally {
-        setLoading(false);
+        setLoadingInternal(false);
       }
     };
-
     fetchStats();
-  }, [isDemoExchange]);
+  }, [isDemoExchange, isControlled, walletProp, loading, error]);
 
   if (!isDemoExchange) {
     return null;

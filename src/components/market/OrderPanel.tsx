@@ -1,9 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, forwardRef, useImperativeHandle } from "react";
 import { useExchange } from "@/contexts/ExchangeContext";
 import MessageModal, { MessageModalType } from "@/components/common/MessageModal";
 import ConfirmPlaceOrderModal from "./ConfirmPlaceOrderModal";
+
+export interface OrderPanelRef {
+    refreshBalance: () => void;
+}
 
 interface OrderPanelProps {
     selectedSymbol: string;
@@ -13,10 +17,10 @@ interface OrderPanelProps {
 
 interface Balance {
     exchange: string;
-    balances: Record<string, { free: number; used: number; total: number }>;
+    balances: Record<string, { free?: number; available?: number; used: number; total: number }>;
 }
 
-export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced }: OrderPanelProps) {
+const OrderPanel = forwardRef<OrderPanelRef, OrderPanelProps>(function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced }, ref) {
     const { selectedAccountId, accounts } = useExchange();
     const [orderType, setOrderType] = useState<"market" | "limit" | "stop">("limit");
     const [side, setSide] = useState<"buy" | "sell">("buy");
@@ -190,6 +194,10 @@ export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced
         fetchBalance();
     }, [fetchBalance]);
 
+    useImperativeHandle(ref, () => ({
+        refreshBalance: fetchBalance,
+    }), [fetchBalance]);
+
     // Check trading permissions
     const checkTradingPermissions = useCallback(async () => {
         if (!selectedAccountId) {
@@ -258,6 +266,33 @@ export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced
 
     // Get available balance for current symbol
     const getAvailableBalance = useCallback(() => {
+        // For Demo Exchange, always use wallet balance
+        if (selectedAccountId === -999) {
+            if (!balance || !selectedSymbol || !balance.balances) {
+                return 0;
+            }
+            
+            const [base, quote] = selectedSymbol.split("/");
+            const currency = side === "buy" ? quote : base;
+            
+            // Try exact match first
+            let currencyBalance = balance.balances[currency];
+            
+            // If not found, try case-insensitive match
+            if (!currencyBalance) {
+                const currencyUpper = currency.toUpperCase();
+                const foundKey = Object.keys(balance.balances).find(
+                    key => key.toUpperCase() === currencyUpper
+                );
+                if (foundKey) {
+                    currencyBalance = balance.balances[foundKey];
+                }
+            }
+            
+            // For Demo Exchange, use 'available' or 'total' field
+            return currencyBalance?.available || currencyBalance?.total || 0;
+        }
+        
         // If paper trading is enabled, return 1000 in the quote currency
         if (paperTrading) {
             return 1000;
@@ -288,10 +323,37 @@ export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced
         // This can happen if BTCTurk API doesn't return currencies with 0 balance
         // In this case, return 0
         return currencyBalance?.free || 0;
-    }, [balance, selectedSymbol, side, paperTrading]);
+    }, [balance, selectedSymbol, side, paperTrading, selectedAccountId]);
     
     // Get total balance for current symbol
     const getTotalBalance = useCallback(() => {
+        // For Demo Exchange, always use wallet balance
+        if (selectedAccountId === -999) {
+            if (!balance || !selectedSymbol || !balance.balances) {
+                return 0;
+            }
+            
+            const [base, quote] = selectedSymbol.split("/");
+            const currency = side === "buy" ? quote : base;
+            
+            // Try exact match first
+            let currencyBalance = balance.balances[currency];
+            
+            // If not found, try case-insensitive match
+            if (!currencyBalance) {
+                const currencyUpper = currency.toUpperCase();
+                const foundKey = Object.keys(balance.balances).find(
+                    key => key.toUpperCase() === currencyUpper
+                );
+                if (foundKey) {
+                    currencyBalance = balance.balances[foundKey];
+                }
+            }
+            
+            // For Demo Exchange, use 'total' field
+            return currencyBalance?.total || 0;
+        }
+        
         // If paper trading is enabled, return 1000 in the quote currency
         if (paperTrading) {
             return 1000;
@@ -317,7 +379,7 @@ export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced
         }
         
         return currencyBalance?.total || 0;
-    }, [balance, selectedSymbol, side, paperTrading]);
+    }, [balance, selectedSymbol, side, paperTrading, selectedAccountId]);
 
     // Handle percentage slider
     const handlePercentageChange = useCallback((value: number) => {
@@ -851,7 +913,8 @@ export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced
                         const currency = side === "buy" ? quote : base;
                         const availableBalance = getAvailableBalance();
                         const totalBalance = getTotalBalance();
-                        const inOrders = paperTrading ? 0 : (balance ? (() => {
+                        // For Demo Exchange, inOrders is always 0
+                        const inOrders = (selectedAccountId === -999 || paperTrading) ? 0 : (balance ? (() => {
                             let currencyBalance = balance.balances[currency];
                             if (!currencyBalance) {
                                 const currencyUpper = currency.toUpperCase();
@@ -870,7 +933,7 @@ export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced
                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
                                     <span style={{ color: "#888", fontSize: "12px" }}>Available Balance:</span>
                                     <span style={{ color: "#ededed", fontSize: "14px", fontWeight: "600" }}>
-                                        {balanceLoading && !paperTrading ? "Loading..." : (
+                                        {balanceLoading && selectedAccountId !== -999 && !paperTrading ? "Loading..." : (
                                             `${availableBalance.toLocaleString(undefined, { minimumFractionDigits: 8, maximumFractionDigits: 8 })} ${currency}`
                                         )}
                                     </span>
@@ -893,21 +956,23 @@ export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced
                 </div>
             )}
 
-            {/* Paper Trading Option */}
-            <div style={{ marginBottom: "12px" }}>
-                <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
-                    <input
-                        type="checkbox"
-                        checked={paperTrading}
-                        onChange={(e) => setPaperTrading(e.target.checked)}
-                        style={{ width: "18px", height: "18px", cursor: "pointer" }}
-                    />
-                    <span style={{ color: "#ededed", fontSize: "12px" }}>Paper Trading (Demo Mode)</span>
-                </label>
-                <p style={{ color: "#888", fontSize: "10px", marginTop: "4px", marginLeft: "26px" }}>
-                    Simulate trading without real money
-                </p>
-            </div>
+            {/* Paper Trading Option - Only show for real exchanges, not Demo Exchange */}
+            {selectedAccountId !== -999 && (
+                <div style={{ marginBottom: "12px" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
+                        <input
+                            type="checkbox"
+                            checked={paperTrading}
+                            onChange={(e) => setPaperTrading(e.target.checked)}
+                            style={{ width: "18px", height: "18px", cursor: "pointer" }}
+                        />
+                        <span style={{ color: "#ededed", fontSize: "12px" }}>Paper Trading (Demo Mode)</span>
+                    </label>
+                    <p style={{ color: "#888", fontSize: "10px", marginTop: "4px", marginLeft: "26px" }}>
+                        Simulate trading without real money
+                    </p>
+                </div>
+            )}
 
             {/* Percentage Slider */}
             <div style={{ marginBottom: "10px" }}>
@@ -990,5 +1055,6 @@ export default function OrderPanel({ selectedSymbol, currentPrice, onOrderPlaced
             />
         </div>
     );
-}
+});
 
+export default OrderPanel;
