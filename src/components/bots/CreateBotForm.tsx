@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { colors } from "./constants";
+import { getApiUrl } from "@/lib/apiBaseUrl";
 
 interface CreateBotFormProps {
   isOpen: boolean;
@@ -68,9 +69,7 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
       const token = localStorage.getItem("auth_token") || "";
       if (!token) return;
 
-      const apiUrl = typeof window !== "undefined" 
-        ? "http://localhost:8000" 
-        : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const apiUrl = getApiUrl();
 
       const response = await fetch(`${apiUrl}/exchange/accounts`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -111,9 +110,7 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
         return;
       }
 
-      const apiUrl = typeof window !== "undefined" 
-        ? "http://localhost:8000" 
-        : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const apiUrl = getApiUrl();
 
       // Fetch all filtered symbols from exchange account (by volatility and data freshness)
       // Filter by selected quote currency if available
@@ -129,7 +126,13 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
       if (response.ok) {
         const data = await response.json();
         const symbols = data.symbols || [];
-        setAvailableSymbols(symbols);
+        // If API returns empty list, use common symbols so dropdown is never empty
+        const fallback = [
+          "BTC/USDT", "ETH/USDT", "BNB/USDT", "SOL/USDT", "ADA/USDT",
+          "XRP/USDT", "DOT/USDT", "DOGE/USDT", "AVAX/USDT", "MATIC/USDT",
+          "LINK/USDT", "UNI/USDT", "LTC/USDT", "ATOM/USDT", "ETC/USDT",
+        ];
+        setAvailableSymbols(symbols.length > 0 ? symbols : fallback);
         console.log(`Loaded ${symbols.length} filtered symbols from exchange (${data.passed} passed filters out of ${data.total_checked} total)`);
       } else {
         console.warn("Failed to fetch filtered symbols, using fallback");
@@ -168,9 +171,7 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
       const token = localStorage.getItem("auth_token") || "";
       if (!token) return;
 
-      const apiUrl = typeof window !== "undefined" 
-        ? "http://localhost:8000" 
-        : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const apiUrl = getApiUrl();
 
       // Fetch quote currencies
       const quoteResponse = await fetch(
@@ -247,9 +248,7 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
         return;
       }
 
-      const apiUrl = typeof window !== "undefined" 
-        ? "http://localhost:8000" 
-        : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const apiUrl = getApiUrl();
 
       console.log(`Fetching balance for account ${accountId}...`);
       const response = await fetch(
@@ -376,9 +375,7 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
       const token = localStorage.getItem("auth_token") || "";
       if (!token) return;
 
-      const apiUrl = typeof window !== "undefined" 
-        ? "http://localhost:8000" 
-        : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const apiUrl = getApiUrl();
 
       // Convert currencies to symbols (e.g., "FLOKI" -> "FLOKI/USDT")
       // First, get quote currency to build proper symbol
@@ -654,13 +651,20 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
     }
   }, [exchangeAccountId, quoteCurrencies, selectedQuoteCurrency]);
 
+  // Default symbols to show when no account/quote selected (so dropdown is never empty)
+  const defaultSymbols = [
+    "BTC/USDT", "ETH/USDT", "BNB/USDT", "SOL/USDT", "ADA/USDT",
+    "XRP/USDT", "DOT/USDT", "DOGE/USDT", "AVAX/USDT", "MATIC/USDT",
+    "LINK/USDT", "UNI/USDT", "LTC/USDT", "ATOM/USDT", "ETC/USDT",
+  ];
+
   // Fetch symbols when exchange account or quote currency is selected
   useEffect(() => {
     if (exchangeAccountId && selectedQuoteCurrency) {
       fetchAvailableSymbols(exchangeAccountId);
     } else {
-      // Reset to empty when no account or quote currency selected
-      setAvailableSymbols([]);
+      // When no account or quote selected, show default symbols so user can still see a list
+      setAvailableSymbols(defaultSymbols);
     }
   }, [exchangeAccountId, selectedQuoteCurrency, fetchAvailableSymbols]);
 

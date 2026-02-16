@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { SymbolList } from "@/components/symbols";
+import { getApiUrl } from "@/lib/apiBaseUrl";
 
 // Helper function to mask sensitive data (show first 4 and last 4 chars)
 // Currently unused but kept for potential future use
@@ -92,7 +93,7 @@ export default function SettingsPage() {
           setSymbolsLoading(true);
           try {
                const token = localStorage.getItem("auth_token") || "";
-               const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+               const apiUrl = getApiUrl();
                
                const response = await fetch(`${apiUrl}/market/symbols/by-exchange/${encodeURIComponent(exchangeName)}?active_only=${activeOnly}`, {
                     headers: { Authorization: `Bearer ${token}` },
@@ -120,7 +121,7 @@ export default function SettingsPage() {
                     const token = localStorage.getItem("auth_token") || "";
 
                     // Use backend URL - browser makes request, so use localhost
-                    const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+                    const apiUrl = getApiUrl();
 
                     // Check if user is admin
                     try {
@@ -216,7 +217,7 @@ export default function SettingsPage() {
      const refetch = async () => {
           try {
                const token = localStorage.getItem("auth_token") || "";
-               const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+               const apiUrl = getApiUrl();
                const accountsRes = await fetch(`${apiUrl}/exchange/accounts`, {
                     headers: token ? { Authorization: `Bearer ${token}` } : {},
                });
@@ -235,7 +236,7 @@ export default function SettingsPage() {
           try {
                // Get auth token if available
                const token = localStorage.getItem("auth_token") || "";
-               const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+               const apiUrl = getApiUrl();
 
                const response = await fetch(`${apiUrl}/exchange/accounts`, {
                     method: "POST",
@@ -281,7 +282,7 @@ export default function SettingsPage() {
 
           try {
                const token = localStorage.getItem("auth_token") || "";
-               const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+               const apiUrl = getApiUrl();
                const response = await fetch(`${apiUrl}/exchange/accounts/${accountId}/verify`, {
                     method: "POST",
                     headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -328,7 +329,7 @@ export default function SettingsPage() {
 
           try {
                const token = localStorage.getItem("auth_token") || "";
-               const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+               const apiUrl = getApiUrl();
 
                const params = new URLSearchParams();
                params.append("exchange_name", exchangeFormData.exchangeName);
@@ -696,10 +697,7 @@ export default function SettingsPage() {
                                                                                           if (confirm("Are you sure you want to delete this account?")) {
                                                                                                try {
                                                                                                     const token = localStorage.getItem("auth_token") || "";
-                                                                                                    const apiUrl =
-                                                                                                         typeof window !== "undefined"
-                                                                                                              ? "http://localhost:8000"
-                                                                                                              : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+                                                                                                    const apiUrl = getApiUrl();
                                                                                                     const response = await fetch(`${apiUrl}/exchange/accounts/${account.id}`, {
                                                                                                          method: "DELETE",
                                                                                                          headers: token ? { Authorization: `Bearer ${token}` } : {},

@@ -2,10 +2,9 @@
 
 import { LiquidationMapResponse } from "@/types/liquidation";
 import { parseApiError, handleApiError, retryRequest, RetryOptions, type ApiError } from "./errorHandler";
+import { getApiUrl } from "./apiBaseUrl";
 
-const apiUrl = typeof window !== "undefined" 
-    ? (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000")
-    : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const apiUrl = getApiUrl();
 
 // Request timeout in milliseconds (30 seconds)
 const REQUEST_TIMEOUT = 30000;

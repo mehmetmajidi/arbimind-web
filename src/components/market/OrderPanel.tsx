@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef, forwardRef, useImperativeHand
 import { useExchange } from "@/contexts/ExchangeContext";
 import MessageModal, { MessageModalType } from "@/components/common/MessageModal";
 import ConfirmPlaceOrderModal from "./ConfirmPlaceOrderModal";
+import { getApiUrl } from "@/lib/apiBaseUrl";
 
 export interface OrderPanelRef {
     refreshBalance: () => void;
@@ -167,7 +168,7 @@ const OrderPanel = forwardRef<OrderPanelRef, OrderPanelProps>(function OrderPane
                 return;
             }
 
-            const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+            const apiUrl = getApiUrl();
 
             // Fetch balance from the selected account
             const response = await fetch(`${apiUrl}/trading/balance/${selectedAccountId}`, {
@@ -226,7 +227,7 @@ const OrderPanel = forwardRef<OrderPanelRef, OrderPanelProps>(function OrderPane
                 return;
             }
 
-            const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+            const apiUrl = getApiUrl();
 
             const response = await fetch(`${apiUrl}/exchange/accounts/${selectedAccountId}/trading-permissions`, {
                 headers: { Authorization: `Bearer ${token}` },
@@ -440,7 +441,7 @@ const OrderPanel = forwardRef<OrderPanelRef, OrderPanelProps>(function OrderPane
                 return;
             }
 
-            const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+            const apiUrl = getApiUrl();
 
             const response = await fetch(`${apiUrl}/trading/orders/place`, {
                 method: "POST",

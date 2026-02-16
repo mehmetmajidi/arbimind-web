@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
+import { getApiUrl } from "@/lib/apiBaseUrl";
 
 // Add animated gradient styles
 if (typeof document !== "undefined") {
@@ -57,11 +58,7 @@ export default function ForgotPasswordPage() {
         setResetUrl(null);
 
         try {
-            const apiUrl =
-                typeof window !== "undefined"
-                    ? "http://localhost:8000"
-                    : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
+            const apiUrl = getApiUrl();
             const response = await fetch(`${apiUrl}/auth/forgot-password`, {
                 method: "POST",
                 headers: {

@@ -2,24 +2,51 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import {
-  BotInfoPanel,
-  BotPerformanceCharts,
-  BotTradeHistoryTable,
-  BotPositionsList,
-  BotMetricsPanel,
-  BotStatusBadge,
-  ConnectionStatusIndicator,
-  EditBotForm,
-  BotDecisionLogs,
-  TradingBot,
-  BotStatus,
-  BotTrade,
-  colors,
-  layoutStyle,
-  mainLayoutStyle,
-} from "@/components/bots";
+import dynamic from "next/dynamic";
+import type { TradingBot, BotStatus, BotTrade } from "@/components/bots/types";
+import { colors, layoutStyle, mainLayoutStyle } from "@/components/bots/constants";
+import BotStatusBadge from "@/components/bots/BotStatusBadge";
+import ConnectionStatusIndicator from "@/components/bots/ConnectionStatusIndicator";
 import { useBotWebSocket } from "@/hooks/useBotWebSocket";
+import {
+  fetchBot as apiFetchBot,
+  fetchBotStatus as apiFetchBotStatus,
+  fetchBotTrades as apiFetchBotTrades,
+  startBot as apiStartBot,
+  stopBot as apiStopBot,
+  deleteBot as apiDeleteBot,
+} from "@/lib/botsApi";
+
+const panelPlaceholder = { minHeight: 180, backgroundColor: colors.panelBackground, borderRadius: 12, border: `1px solid ${colors.border}` };
+
+const BotInfoPanel = dynamic(
+  () => import("@/components/bots/BotInfoPanel").then((m) => m.default),
+  { ssr: false, loading: () => <div style={panelPlaceholder} /> }
+);
+const BotPerformanceCharts = dynamic(
+  () => import("@/components/bots/BotPerformanceCharts").then((m) => m.default),
+  { ssr: false, loading: () => <div style={{ ...panelPlaceholder, minHeight: 280 }} /> }
+);
+const BotTradeHistoryTable = dynamic(
+  () => import("@/components/bots/BotTradeHistoryTable").then((m) => m.default),
+  { ssr: false, loading: () => <div style={{ ...panelPlaceholder, minHeight: 200 }} /> }
+);
+const BotPositionsList = dynamic(
+  () => import("@/components/bots/BotPositionsList").then((m) => m.default),
+  { ssr: false, loading: () => <div style={{ ...panelPlaceholder, minHeight: 120 }} /> }
+);
+const BotMetricsPanel = dynamic(
+  () => import("@/components/bots/BotMetricsPanel").then((m) => m.default),
+  { ssr: false, loading: () => <div style={{ ...panelPlaceholder, minHeight: 220 }} /> }
+);
+const BotDecisionLogs = dynamic(
+  () => import("@/components/bots/BotDecisionLogs").then((m) => m.default),
+  { ssr: false, loading: () => null }
+);
+const EditBotForm = dynamic(
+  () => import("@/components/bots/EditBotForm").then((m) => m.default),
+  { ssr: false }
+);
 
 /**
  * Bot Detail Page
@@ -41,100 +68,35 @@ export default function BotDetailPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [showEditForm, setShowEditForm] = useState(false);
 
-  // Fetch bot details
   const fetchBot = useCallback(async () => {
     if (!botId) return;
-
     try {
-      const token = localStorage.getItem("auth_token") || "";
-      if (!token) {
-        setError("Please login to view bot details");
-        setLoading(false);
-        return;
-      }
-
-      const apiUrl = typeof window !== "undefined" 
-        ? "http://localhost:8000" 
-        : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-      const response = await fetch(`${apiUrl}/bots/${botId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setBot(data);
-        setError(null);
-      } else if (response.status === 404) {
-        setError("Bot not found");
-      } else {
-        const errorData = await response.json().catch(() => ({}));
-        setError(errorData.detail || "Failed to load bot");
-      }
+      const data = await apiFetchBot(botId);
+      setBot(data);
+      setError(null);
     } catch (err) {
       console.error("Error fetching bot:", err);
-      setError("Failed to load bot");
+      setError(err instanceof Error ? err.message : "Failed to load bot");
     } finally {
       setLoading(false);
     }
   }, [botId]);
 
-  // Fetch bot status
   const fetchBotStatus = useCallback(async () => {
     if (!botId) return;
-
     try {
-      const token = localStorage.getItem("auth_token") || "";
-      if (!token) return;
-
-      const apiUrl = typeof window !== "undefined" 
-        ? "http://localhost:8000" 
-        : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-      const response = await fetch(`${apiUrl}/bots/${botId}/status`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        console.log("[BotStatus] Fetched status:", data);
-        if (data && typeof data === 'object') {
-        setBotStatus(data);
-        } else {
-          console.error("[BotStatus] Invalid data format:", data);
-        }
-      } else {
-        console.error("[BotStatus] Failed to fetch status:", response.status, response.statusText);
-        const errorData = await response.json().catch(() => ({}));
-        console.error("[BotStatus] Error details:", errorData);
-        // Don't set error state here, just log - WebSocket/polling will handle retries
-      }
+      const data = await apiFetchBotStatus(botId);
+      if (data) setBotStatus(data);
     } catch (err) {
-      console.error("[BotStatus] Error fetching bot status:", err);
-      // Don't set error state here, just log - WebSocket/polling will handle retries
+      console.error("Error fetching bot status:", err);
     }
   }, [botId]);
 
-  // Fetch bot trades
   const fetchBotTrades = useCallback(async () => {
     if (!botId) return;
-
     try {
-      const token = localStorage.getItem("auth_token") || "";
-      if (!token) return;
-
-      const apiUrl = typeof window !== "undefined" 
-        ? "http://localhost:8000" 
-        : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-      const response = await fetch(`${apiUrl}/bots/${botId}/trades?limit=100`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setTrades(Array.isArray(data) ? data : []);
-      }
+      const data = await apiFetchBotTrades(botId, 100);
+      setTrades(data);
     } catch (err) {
       console.error("Error fetching bot trades:", err);
     }
@@ -143,21 +105,13 @@ export default function BotDetailPage() {
   useEffect(() => {
     if (botId) {
       setLoading(true);
-      fetchBot();
-      // Only fetch status once on mount, WebSocket/polling will handle updates
-      fetchBotStatus();
-      fetchBotTrades();
+      void fetchBot();
+      void Promise.all([fetchBotStatus(), fetchBotTrades()]);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [botId]); // Only depend on botId to avoid re-fetching on every render
+  }, [botId, fetchBot, fetchBotStatus, fetchBotTrades]);
 
   // WebSocket connection for real-time updates
-  const {
-    connectionStatus,
-    lastError,
-    reconnect,
-    isPolling,
-  } = useBotWebSocket({
+  const { connectionStatus, reconnect, isPolling } = useBotWebSocket({
     botId,
     enabled: !!botId && !!bot,
     interval: 5,
@@ -180,33 +134,16 @@ export default function BotDetailPage() {
     pollingInterval: 10000,
   });
 
-  // Handlers
   const handleStartBot = async () => {
     if (!botId) return;
     setActionLoading(true);
     try {
-      const token = localStorage.getItem("auth_token") || "";
-      if (!token) return;
-
-      const apiUrl = typeof window !== "undefined" 
-        ? "http://localhost:8000" 
-        : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-      const response = await fetch(`${apiUrl}/bots/${botId}/start`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (response.ok) {
-        await fetchBot();
-        await fetchBotStatus();
-      } else {
-        const errorData = await response.json().catch(() => ({}));
-        setError(errorData.detail || "Failed to start bot");
-      }
+      await apiStartBot(botId);
+      await fetchBot();
+      await fetchBotStatus();
     } catch (err) {
       console.error("Error starting bot:", err);
-      setError("Failed to start bot");
+      setError(err instanceof Error ? err.message : "Failed to start bot");
     } finally {
       setActionLoading(false);
     }
@@ -216,70 +153,35 @@ export default function BotDetailPage() {
     if (!botId) return;
     setActionLoading(true);
     try {
-      const token = localStorage.getItem("auth_token") || "";
-      if (!token) return;
-
-      const apiUrl = typeof window !== "undefined" 
-        ? "http://localhost:8000" 
-        : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-      const response = await fetch(`${apiUrl}/bots/${botId}/stop`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (response.ok) {
-        await fetchBot();
-        await fetchBotStatus();
-      } else {
-        const errorData = await response.json().catch(() => ({}));
-        setError(errorData.detail || "Failed to stop bot");
-      }
+      await apiStopBot(botId);
+      await fetchBot();
+      await fetchBotStatus();
     } catch (err) {
       console.error("Error stopping bot:", err);
-      setError("Failed to stop bot");
+      setError(err instanceof Error ? err.message : "Failed to stop bot");
     } finally {
       setActionLoading(false);
     }
   };
 
-  const handleEditBot = () => {
-    setShowEditForm(true);
-  };
-  
+  const handleEditBot = () => setShowEditForm(true);
+
   const handleEditSuccess = () => {
     setShowEditForm(false);
-    fetchBot(); // Refresh bot data
-    fetchBotStatus(); // Refresh bot status
+    fetchBot();
+    fetchBotStatus();
   };
 
   const handleDeleteBot = async () => {
     if (!botId) return;
     if (!confirm("Are you sure you want to delete this bot?")) return;
-
     setActionLoading(true);
     try {
-      const token = localStorage.getItem("auth_token") || "";
-      if (!token) return;
-
-      const apiUrl = typeof window !== "undefined" 
-        ? "http://localhost:8000" 
-        : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-      const response = await fetch(`${apiUrl}/bots/${botId}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (response.ok) {
-        router.push("/bots");
-      } else {
-        const errorData = await response.json().catch(() => ({}));
-        setError(errorData.detail || "Failed to delete bot");
-      }
+      await apiDeleteBot(botId);
+      router.push("/bots");
     } catch (err) {
       console.error("Error deleting bot:", err);
-      setError("Failed to delete bot");
+      setError(err instanceof Error ? err.message : "Failed to delete bot");
     } finally {
       setActionLoading(false);
     }
@@ -288,8 +190,13 @@ export default function BotDetailPage() {
   if (loading) {
     return (
       <div style={layoutStyle}>
-        <div style={{ textAlign: "center", padding: "40px", color: colors.secondaryText }}>
-          Loading bot details...
+        <div style={{ marginBottom: 8, height: 32, width: 120, backgroundColor: colors.panelBackground, borderRadius: 8 }} />
+        <div style={{ marginBottom: 16, height: 36, width: 280, backgroundColor: colors.panelBackground, borderRadius: 8 }} />
+        <p style={{ color: colors.secondaryText, fontSize: "13px", marginBottom: 16 }}>Loading bot details…</p>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ width: 320, minHeight: 180, backgroundColor: colors.panelBackground, borderRadius: 12, border: `1px solid ${colors.border}` }} />
+          <div style={{ flex: 1, minWidth: 300, minHeight: 400, backgroundColor: colors.panelBackground, borderRadius: 12, border: `1px solid ${colors.border}` }} />
+          <div style={{ width: 280, minHeight: 220, backgroundColor: colors.panelBackground, borderRadius: 12, border: `1px solid ${colors.border}` }} />
         </div>
       </div>
     );
@@ -523,10 +430,9 @@ export default function BotDetailPage() {
           gap: "12px",
         }}>
           <BotPerformanceCharts bot={bot} trades={trades} botStatus={botStatus} />
-          <BotDecisionLogs 
-            botId={botId} 
-            enabled={bot?.status === "active"}
-          />
+          {bot?.status === "active" && (
+            <BotDecisionLogs botId={botId} enabled={true} />
+          )}
           <BotTradeHistoryTable 
             trades={trades} 
             loading={false}
@@ -553,10 +459,9 @@ export default function BotDetailPage() {
         />
       </div>
       
-      {/* Edit Bot Form Modal */}
-      {bot && (
+      {showEditForm && bot && (
         <EditBotForm
-          isOpen={showEditForm}
+          isOpen={true}
           bot={bot}
           onClose={() => setShowEditForm(false)}
           onSuccess={handleEditSuccess}

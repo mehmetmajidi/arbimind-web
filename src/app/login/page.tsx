@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { MdVisibility, MdVisibilityOff } from "react-icons/md";
+import { getApiUrl } from "@/lib/apiBaseUrl";
 
 // Add animated gradient styles
 if (typeof document !== "undefined") {
@@ -51,10 +52,8 @@ export default function LoginPage() {
      const [showPassword, setShowPassword] = useState(false);
 
      const handleGoogleLogin = () => {
-          const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+          const apiUrl = getApiUrl();
           const redirectUri = typeof window !== "undefined" ? `${window.location.origin}/oauth-success` : "http://localhost:3000/oauth-success";
-          
-          // Redirect to backend OAuth endpoint
           window.location.href = `${apiUrl}/auth/google/login?redirect_uri=${encodeURIComponent(redirectUri)}`;
      };
 
@@ -69,16 +68,8 @@ export default function LoginPage() {
                formDataToSend.append("username", formData.username);
                formDataToSend.append("password", formData.password);
 
-               // Use backend URL - in Docker use service name, locally use localhost
-               // For client-side: use localhost since browser makes the request
-               // NEXT_PUBLIC_API_URL is only for server-side rendering
-               const apiUrl =
-                    typeof window !== "undefined"
-                         ? "http://localhost:8000" // Browser makes request to host
-                         : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"; // SSR uses service name
-
-               console.log("Attempting login to:", `${apiUrl}/auth/token`); // Debug
-
+               const apiUrl = getApiUrl();
+               console.log("Attempting login to:", `${apiUrl}/auth/token`);
                const response = await fetch(`${apiUrl}/auth/token`, {
                     method: "POST",
                     headers: {

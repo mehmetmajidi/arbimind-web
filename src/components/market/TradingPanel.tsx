@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useImperativeHandle, forwardRef } from "react";
 import { useExchange } from "@/contexts/ExchangeContext";
 import { MdRefresh, MdArrowDownward, MdArrowUpward, MdTrendingUp, MdTrendingDown, MdLanguage, MdExpandMore } from "react-icons/md";
+import { getApiUrl } from "@/lib/apiBaseUrl";
 
 export interface TradingPanelRef {
     refreshBalance: () => void;
@@ -154,7 +155,7 @@ const TradingPanel = forwardRef<TradingPanelRef, TradingPanelProps>(({
                 return;
             }
 
-            const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+            const apiUrl = getApiUrl();
 
             const response = await fetch(`${apiUrl}/trading/balance/${selectedAccountId}`, {
                 headers: { Authorization: `Bearer ${token}` },
@@ -203,6 +204,8 @@ const TradingPanel = forwardRef<TradingPanelRef, TradingPanelProps>(({
         },
     }), [fetchBalance]);
 
+    const SYMBOLS_FETCH_TIMEOUT_MS = 15000;
+
     // Fetch currencies from database - optimized for speed
     const fetchCurrencies = useCallback(async () => {
         if (!selectedAccountId) {
@@ -220,16 +223,19 @@ const TradingPanel = forwardRef<TradingPanelRef, TradingPanelProps>(({
                 return;
             }
 
-            const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+            const apiUrl = getApiUrl();
             const selectedAccount = accounts.find(acc => acc.id === selectedAccountId);
-            const exchangeId = selectedAccount?.exchange_id;
             const exchangeName = selectedAccount?.exchange_name?.toLowerCase();
+            const headers = { Authorization: `Bearer ${token}` };
 
             // Strategy 0: For Kraken, fetch markets directly from exchange API
             if (exchangeName === "kraken") {
+                const krakenAbort = new AbortController();
+                const krakenTimeoutId = setTimeout(() => krakenAbort.abort(), SYMBOLS_FETCH_TIMEOUT_MS);
                 try {
                     const marketsResponse = await fetch(`${apiUrl}/market/pairs/${selectedAccountId}`, {
-                        headers: { Authorization: `Bearer ${token}` },
+                        headers,
+                        signal: krakenAbort.signal,
                     });
 
                     if (marketsResponse.ok) {
@@ -249,19 +255,26 @@ const TradingPanel = forwardRef<TradingPanelRef, TradingPanelProps>(({
                             console.log("✅ Fetched Kraken symbols:", { symbols: symbols.length, markets: markets.length });
                             setAvailableSymbols(symbols);
                             setCurrenciesLoading(false);
+                            clearTimeout(krakenTimeoutId);
                             return;
                         }
                     }
                 } catch (krakenError) {
-                    console.warn("Error fetching Kraken markets:", krakenError);
+                    if (!(krakenError instanceof Error) || krakenError.name !== "AbortError") {
+                        console.warn("Error fetching Kraken markets:", krakenError);
+                    }
+                } finally {
+                    clearTimeout(krakenTimeoutId);
                 }
             }
 
             // Strategy 0.5: For all exchanges, fetch full symbols from database via /market/symbols/by-account
-            // This ensures we only get symbols for the selected exchange
+            const byAccountAbort = new AbortController();
+            const byAccountTimeoutId = setTimeout(() => byAccountAbort.abort(), SYMBOLS_FETCH_TIMEOUT_MS);
             try {
                 const symbolsResponse = await fetch(`${apiUrl}/market/symbols/by-account/${selectedAccountId}?active_only=true`, {
-                    headers: { Authorization: `Bearer ${token}` },
+                    headers,
+                    signal: byAccountAbort.signal,
                 });
                 
                 if (symbolsResponse.ok) {
@@ -309,10 +322,56 @@ const TradingPanel = forwardRef<TradingPanelRef, TradingPanelProps>(({
                     });
                 }
             } catch (symbolsError) {
-                console.error("Error fetching symbols from database:", symbolsError);
+                if (!(symbolsError instanceof Error) || symbolsError.name !== "AbortError") {
+                    console.error("Error fetching symbols from database:", symbolsError);
+                } else {
+                    console.warn("Symbols fetch timed out after", SYMBOLS_FETCH_TIMEOUT_MS / 1000, "s");
+                }
+            } finally {
+                clearTimeout(byAccountTimeoutId);
             }
 
-            // If all failed, set empty array
+            // Fallback: try /market/pairs (works for demo and real exchanges when by-account is empty or failed)
+            const pairsAbort = new AbortController();
+            const pairsTimeoutId = setTimeout(() => pairsAbort.abort(), SYMBOLS_FETCH_TIMEOUT_MS);
+            try {
+                const pairsResponse = await fetch(`${apiUrl}/market/pairs/${selectedAccountId}`, {
+                    headers,
+                    signal: pairsAbort.signal,
+                });
+                if (pairsResponse.ok) {
+                    const pairsData = await pairsResponse.json();
+                    const markets = pairsData.markets || [];
+                    if (markets.length > 0) {
+                        const symbolSet = new Set<string>();
+                        markets
+                            .filter((m: { symbol?: string; base?: string; quote?: string; active?: boolean }) =>
+                                m.active !== false && m.base && m.quote && (m.symbol || (m.base && m.quote))
+                            )
+                            .forEach((m: { symbol?: string; base?: string; quote?: string }) => {
+                                const full = m.symbol
+                                    ? m.symbol.toUpperCase()
+                                    : `${m.base}/${m.quote}`.toUpperCase();
+                                symbolSet.add(full);
+                            });
+                        const fullSymbols = Array.from(symbolSet).sort();
+                        if (fullSymbols.length > 0) {
+                            console.log("✅ Fetched symbols from /market/pairs fallback:", { count: fullSymbols.length });
+                            setAvailableSymbols(fullSymbols);
+                            setCurrenciesLoading(false);
+                            clearTimeout(pairsTimeoutId);
+                            return;
+                        }
+                    }
+                }
+            } catch (pairsError) {
+                if (!(pairsError instanceof Error) || pairsError.name !== "AbortError") {
+                    console.warn("Fallback /market/pairs failed:", pairsError);
+                }
+            } finally {
+                clearTimeout(pairsTimeoutId);
+            }
+
             setAvailableSymbols([]);
         } catch (error) {
             console.error("Error fetching currencies:", error);
@@ -367,7 +426,7 @@ const TradingPanel = forwardRef<TradingPanelRef, TradingPanelProps>(({
                 return;
             }
 
-            const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+            const apiUrl = getApiUrl();
             const encodedSymbol = encodeURIComponent(selectedSymbol);
 
             const response = await fetch(`${apiUrl}/market/price/${selectedAccountId}/${encodedSymbol}`, {

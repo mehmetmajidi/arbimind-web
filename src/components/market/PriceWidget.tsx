@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useExchange } from "@/contexts/ExchangeContext";
 import SymbolSelector from "./SymbolSelector";
+import { getApiUrl } from "@/lib/apiBaseUrl";
 
 interface PriceData {
     symbol: string;
@@ -57,7 +58,7 @@ export default function PriceWidget({ onSymbolChange, onChartClick, onPriceUpdat
             const token = localStorage.getItem("auth_token") || "";
             if (!token) return;
 
-            const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+            const apiUrl = getApiUrl();
             const encodedSymbol = encodeURIComponent(selectedSymbol);
 
             // Fetch 24h of 1h candles to get the price 24h ago
@@ -109,7 +110,7 @@ export default function PriceWidget({ onSymbolChange, onChartClick, onPriceUpdat
                 return;
             }
 
-            const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+            const apiUrl = getApiUrl();
             const encodedSymbol = encodeURIComponent(selectedSymbol);
 
             const response = await fetch(`${apiUrl}/market/price/${selectedAccountId}/${encodedSymbol}`, {
@@ -194,7 +195,7 @@ export default function PriceWidget({ onSymbolChange, onChartClick, onPriceUpdat
         setReconnectAttempts(0);
         shouldReconnectRef.current = true;
 
-        const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        const apiUrl = getApiUrl();
         const encodedSymbol = encodeURIComponent(selectedSymbol);
         const wsUrl = apiUrl.replace("http://", "ws://").replace("https://", "wss://");
         // Reduce interval to 3 seconds for faster updates

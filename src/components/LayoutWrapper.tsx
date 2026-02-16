@@ -5,13 +5,16 @@ import { useState, useEffect } from "react";
 import Sidebar from "./Sidebar";
 import Header from "./Header";
 import KeyboardShortcutsHelp from "./shared/KeyboardShortcutsHelp";
+import { AccountsLoadingSkeleton } from "./shared";
 import { useKeyboardShortcuts, commonShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useRouter } from "next/navigation";
+import { useExchange } from "@/contexts/ExchangeContext";
 
 export default function LayoutWrapper({ children }: { children: React.ReactNode }) {
     const pathname = usePathname();
     const router = useRouter();
-    const isAuthPage = pathname === "/login" || pathname === "/register" || pathname === "/forgot-password" || pathname === "/reset-password";
+    const { loading: accountsLoading } = useExchange();
+    const isAuthPage = pathname === "/login" || pathname === "/register" || pathname === "/forgot-password" || pathname === "/reset-password" || pathname === "/oauth-success";
     
     // Load sidebar state from localStorage or default to false (expanded)
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -78,7 +81,7 @@ export default function LayoutWrapper({ children }: { children: React.ReactNode 
                     transition: "margin-left 0.3s ease",
                 }}
             >
-                {children}
+                {accountsLoading ? <AccountsLoadingSkeleton /> : children}
             </div>
             {!isAuthPage && <KeyboardShortcutsHelp />}
         </>

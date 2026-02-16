@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useExchange } from "@/contexts/ExchangeContext";
+import { getApiUrl } from "@/lib/apiBaseUrl";
 import Alert from "@/components/Alert";
 import Link from "next/link";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
@@ -123,7 +124,7 @@ export default function MonitoringPage() {
           type: "all",
      });
 
-     const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+     const apiUrl = getApiUrl();
 
      // Normalize symbol (remove / and - to match database format)
      const normalizeSymbol = useCallback((symbol: string) => {
@@ -433,8 +434,7 @@ export default function MonitoringPage() {
                return;
           }
 
-          const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
+          const apiUrl = getApiUrl();
           // Convert http to ws
           const wsUrl = apiUrl.replace("http://", "ws://").replace("https://", "wss://");
           const normalizedSymbol = encodeURIComponent(selectedSymbol);

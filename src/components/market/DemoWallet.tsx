@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { colors, panelStyle, typography, spacing } from "@/components/shared/designSystem";
 import { useExchange } from "@/contexts/ExchangeContext";
+import { getApiUrl } from "@/lib/apiBaseUrl";
 
 interface WalletData {
   id: number;
@@ -50,9 +51,7 @@ export default function DemoWallet({ onWalletReset, wallet: walletProp, loading:
         throw new Error("Not authenticated");
       }
 
-      const apiUrl = typeof window !== "undefined" 
-        ? "http://localhost:8000" 
-        : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const apiUrl = getApiUrl();
 
       const response = await fetch(`${apiUrl}/demo/wallet`, {
         headers: {
@@ -96,9 +95,7 @@ export default function DemoWallet({ onWalletReset, wallet: walletProp, loading:
         throw new Error("Not authenticated");
       }
 
-      const apiUrl = typeof window !== "undefined" 
-        ? "http://localhost:8000" 
-        : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const apiUrl = getApiUrl();
 
       const response = await fetch(`${apiUrl}/demo/wallet/reset`, {
         method: "POST",

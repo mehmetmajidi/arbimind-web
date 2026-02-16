@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { colors, panelStyle, typography, spacing } from "@/components/shared/designSystem";
 import { useExchange } from "@/contexts/ExchangeContext";
 import DemoExchangeBadge from "./DemoExchangeBadge";
+import { getApiUrl } from "@/lib/apiBaseUrl";
 
 interface PortfolioStats {
   total_trades: number;
@@ -65,7 +66,7 @@ export default function DemoPortfolioStats({ wallet: walletProp, loading: loadin
       try {
         const token = localStorage.getItem("auth_token");
         if (!token) throw new Error("Not authenticated");
-        const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        const apiUrl = getApiUrl();
         const walletResponse = await fetch(`${apiUrl}/demo/wallet`, {
           headers: { Authorization: `Bearer ${token}` },
         });

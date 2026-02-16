@@ -1,6 +1,7 @@
 // Shared utilities for training components
 
-export const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { getApiUrl } from "@/lib/apiBaseUrl";
+export const apiUrl = getApiUrl();
 
 export const getAuthToken = () => {
     return localStorage.getItem("auth_token") || "";

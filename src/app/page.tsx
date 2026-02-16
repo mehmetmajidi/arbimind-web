@@ -3,6 +3,7 @@
 import { gql, useQuery } from "@apollo/client";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { getApiUrl } from "@/lib/apiBaseUrl";
 
 const HEALTH = gql`
      query Health {
@@ -88,7 +89,7 @@ export default function Home() {
                               <strong>Error:</strong> {error.message}
                          </p>
                          <p style={{ color: "#888", fontSize: "14px", marginTop: 8, marginBottom: 0 }}>
-                              Make sure the backend API is running at http://localhost:8000
+                              Make sure the backend API is running at {getApiUrl()}
                          </p>
                     </div>
                )}

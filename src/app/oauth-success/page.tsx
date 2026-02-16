@@ -2,6 +2,7 @@
 
 import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { getApiUrl } from "@/lib/apiBaseUrl";
 
 function OAuthCallbackHandler() {
      const router = useRouter();
@@ -27,10 +28,8 @@ function OAuthCallbackHandler() {
                          return;
                     }
 
-                    const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+                    const apiUrl = getApiUrl();
                     const redirectUri = typeof window !== "undefined" ? `${window.location.origin}/oauth-success` : "http://localhost:3000/oauth-success";
-
-                    // Exchange code for token
                     const response = await fetch(`${apiUrl}/auth/google/callback?code=${encodeURIComponent(code)}&redirect_uri=${encodeURIComponent(redirectUri)}`, {
                          method: "GET",
                          headers: {

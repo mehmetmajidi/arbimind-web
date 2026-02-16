@@ -822,11 +822,10 @@ export default function MainChart({
                         }
                         
                         previousDataRef.current = []; // Reset previous data when chart is reinitialized
-                        setChartReady(true); // Mark chart as ready after reinitialization
-                        
-                        // Note: Pagination listener is set up in a separate useEffect
-                        
                         console.log("✅ Chart reinitialized successfully");
+                        // Force data effect to run again so candles are applied to the new series
+                        setChartReady(false);
+                        requestAnimationFrame(() => setChartReady(true));
                     } catch (error) {
                         console.error("Error reinitializing chart:", error);
                         return;
@@ -1095,6 +1094,15 @@ export default function MainChart({
                         
                         // Store current data for next comparison
                         previousDataRef.current = validatedData;
+                        
+                        // Ensure visible range includes all candles (fixes empty chart when range was invalid)
+                        try {
+                            if (chartRef.current) {
+                                chartRef.current.timeScale().fitContent();
+                            }
+                        } catch (fitError) {
+                            // Non-fatal
+                        }
                         
                         // Keep lastValueVisible false - current price line will show the price instead
                         candlestickSeriesRef.current.applyOptions({

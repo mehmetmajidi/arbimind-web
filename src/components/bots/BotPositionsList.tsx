@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { BotTrade } from "./types";
 import { colors, panelStyle } from "./constants";
 import PositionCard from "./PositionCard";
+import { getApiUrl } from "@/lib/apiBaseUrl";
 
 interface BotPositionsListProps {
   positions: BotTrade[];
@@ -25,6 +26,7 @@ export default function BotPositionsList({
 }: BotPositionsListProps) {
   const [currentPrices, setCurrentPrices] = useState<Record<string, PriceData>>({});
   const [priceLoading, setPriceLoading] = useState<Record<string, boolean>>({});
+  const [predictedPrices, setPredictedPrices] = useState<Record<string, number | null>>({});
   const [closingTradeId, setClosingTradeId] = useState<number | null>(null);
   const [exitOrders, setExitOrders] = useState<Record<number, boolean>>({});
 
@@ -46,9 +48,7 @@ export default function BotPositionsList({
       const token = localStorage.getItem("auth_token") || "";
       if (!token) return;
 
-      const apiUrl = typeof window !== "undefined" 
-        ? "http://localhost:8000" 
-        : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const apiUrl = getApiUrl();
       const encodedSymbol = encodeURIComponent(symbol);
 
       const response = await fetch(`${apiUrl}/market/price/${exchangeAccountId}/${encodedSymbol}`, {
@@ -85,12 +85,43 @@ export default function BotPositionsList({
     await Promise.all(uniqueSymbols.map(symbol => fetchPrice(symbol)));
   }, [uniqueSymbols, exchangeAccountId, fetchPrice]);
 
+  // Fetch predicted price (1h) for each symbol
+  const fetchPredictions = useCallback(async () => {
+    if (uniqueSymbols.length === 0 || exchangeAccountId == null) return;
+    const token = localStorage.getItem("auth_token") || "";
+    if (!token) return;
+    const apiUrl = getApiUrl();
+    const next: Record<string, number | null> = {};
+    await Promise.all(
+      uniqueSymbols.map(async (symbol) => {
+        try {
+          const encodedSymbol = encodeURIComponent(symbol);
+          const res = await fetch(
+            `${apiUrl}/predictions/symbol/${encodedSymbol}?horizons=1h&exchange_account_id=${exchangeAccountId}`,
+            { headers: { Authorization: `Bearer ${token}` }, cache: "no-cache" }
+          );
+          if (!res.ok) {
+            next[symbol] = null;
+            return;
+          }
+          const data = await res.json();
+          const pred = data.predictions?.["1h"];
+          next[symbol] = pred?.predicted_price != null ? Number(pred.predicted_price) : null;
+        } catch {
+          next[symbol] = null;
+        }
+      })
+    );
+    setPredictedPrices((prev) => ({ ...prev, ...next }));
+  }, [uniqueSymbols, exchangeAccountId]);
+
   // Initial price fetch
   useEffect(() => {
     if (openPositions.length > 0 && exchangeAccountId) {
       fetchAllPrices();
+      fetchPredictions();
     }
-  }, [openPositions.length, exchangeAccountId, fetchAllPrices]);
+  }, [openPositions.length, exchangeAccountId, fetchAllPrices, fetchPredictions]);
 
   // Fetch exit orders for open positions
   const fetchExitOrders = useCallback(async () => {
@@ -103,10 +134,7 @@ export default function BotPositionsList({
       const token = localStorage.getItem("auth_token") || "";
       if (!token) return;
 
-      const apiUrl = typeof window !== "undefined" 
-        ? "http://localhost:8000" 
-        : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
+      const apiUrl = getApiUrl();
       // Fetch all open/pending orders for this exchange account
       const response = await fetch(`${apiUrl}/trading/orders?exchange_account_id=${exchangeAccountId}&status=open,pending&limit=100`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -141,7 +169,7 @@ export default function BotPositionsList({
     fetchExitOrders();
   }, [fetchExitOrders]);
 
-  // Real-time price updates (every 5 seconds)
+  // Real-time price updates (every 5 seconds); refresh predictions every 60s
   useEffect(() => {
     if (openPositions.length === 0 || !exchangeAccountId) return;
 
@@ -152,6 +180,12 @@ export default function BotPositionsList({
 
     return () => clearInterval(interval);
   }, [openPositions.length, exchangeAccountId, fetchAllPrices, fetchExitOrders]);
+
+  useEffect(() => {
+    if (openPositions.length === 0 || exchangeAccountId == null) return;
+    const interval = setInterval(() => fetchPredictions(), 60000); // Refresh predictions every 60s
+    return () => clearInterval(interval);
+  }, [openPositions.length, exchangeAccountId, fetchPredictions]);
 
   // Calculate unrealized P&L for a position
   const calculateUnrealizedPnl = useCallback((position: BotTrade): { pnl: number; pnlPercent: number } => {
@@ -193,10 +227,7 @@ export default function BotPositionsList({
         return;
       }
 
-      const apiUrl = typeof window !== "undefined" 
-        ? "http://localhost:8000" 
-        : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
+      const apiUrl = getApiUrl();
       const response = await fetch(`${apiUrl}/bots/trades/${tradeId}/close`, {
         method: "POST",
         headers: { 
@@ -384,6 +415,7 @@ export default function BotPositionsList({
               onClose={exchangeAccountId ? handleClosePosition : undefined}
               exchangeAccountId={exchangeAccountId}
               hasExitOrder={exitOrders[position.id] || false}
+              predictedPrice={predictedPrices[position.symbol] ?? null}
             />
           );
         })}

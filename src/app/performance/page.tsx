@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { ExportModal, ExportFormat } from "@/components/export";
+import { getApiUrl } from "@/lib/apiBaseUrl";
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 
 interface TradeResult {
@@ -128,7 +129,7 @@ export default function PerformancePage() {
      const [winRateThreshold, setWinRateThreshold] = useState<number>(0.5);
      const [accuracyThreshold, setAccuracyThreshold] = useState<number>(0.6);
 
-     const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+     const apiUrl = getApiUrl();
 
      // Fetch available models
      const fetchModels = useCallback(async () => {

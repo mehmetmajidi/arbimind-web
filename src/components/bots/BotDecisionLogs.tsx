@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { colors } from "./constants";
+import { getApiUrl, getWsUrl } from "@/lib/apiBaseUrl";
 
 interface DecisionLog {
   id: string;
@@ -59,10 +60,7 @@ export default function BotDecisionLogs({ botId, enabled = true }: BotDecisionLo
       setIsLoading(true);
       setError(null);
 
-      const apiUrl = typeof window !== "undefined"
-        ? "http://localhost:8000"
-        : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
+      const apiUrl = getApiUrl();
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 15000);
 
@@ -126,11 +124,7 @@ export default function BotDecisionLogs({ botId, enabled = true }: BotDecisionLo
       return;
     }
 
-    const apiUrl = typeof window !== "undefined" 
-      ? "http://localhost:8000" 
-      : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-    
-    const wsUrl = apiUrl.replace("http://", "ws://").replace("https://", "wss://");
+    const wsUrl = getWsUrl();
     const url = `${wsUrl}/ws/bot/${botId}?token=${encodeURIComponent(token)}&interval=5`;
 
     try {
@@ -247,10 +241,7 @@ export default function BotDecisionLogs({ botId, enabled = true }: BotDecisionLo
         const token = localStorage.getItem("auth_token") || "";
         if (!token) return;
 
-        const apiUrl = typeof window !== "undefined" 
-          ? "http://localhost:8000" 
-          : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
+        const apiUrl = getApiUrl();
         const response = await fetch(`${apiUrl}/bots/${botId}/status`, {
           headers: { Authorization: `Bearer ${token}` },
         });

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { getApiUrl } from "@/lib/apiBaseUrl";
 
 interface Symbol {
     symbol: string;
@@ -53,8 +54,7 @@ export default function SymbolSelector({
                     return;
                 }
 
-                const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-                // Use account_id endpoint if accountId is provided, otherwise use exchange_id endpoint
+                const apiUrl = getApiUrl();
                 const endpoint = accountId 
                     ? `${apiUrl}/market/symbols/by-account/${accountId}?active_only=true`
                     : `${apiUrl}/market/symbols/by-exchange-id/${exchangeId}?active_only=true`;

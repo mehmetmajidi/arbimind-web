@@ -12,6 +12,8 @@ interface PositionCardProps {
   onClose?: (tradeId: number) => Promise<void>;
   exchangeAccountId?: number;
   hasExitOrder?: boolean;
+  /** Predicted price (e.g. 1h horizon) for the position symbol */
+  predictedPrice?: number | null;
 }
 
 // Helper function to format price with up to 10 decimal places, removing trailing zeros
@@ -27,6 +29,7 @@ export default function PositionCard({
   onClose,
   exchangeAccountId,
   hasExitOrder = false,
+  predictedPrice = null,
 }: PositionCardProps) {
   const [closing, setClosing] = useState(false);
   const entryPrice = parseFloat(position.entry_price);
@@ -174,6 +177,28 @@ export default function PositionCard({
             {entryValue.toFixed(2)} USDT
           </div>
         </div>
+        {predictedPrice != null && predictedPrice > 0 && (
+          <div style={{ gridColumn: "1 / -1" }}>
+            <div style={{ color: colors.secondaryText, fontSize: "11px", marginBottom: "4px" }}>
+              Predicted Price (1h)
+            </div>
+            <div style={{ 
+              color: colors.primary, 
+              fontSize: "14px", 
+              fontWeight: "600",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+            }}>
+              {formatPrice(predictedPrice)} USDT
+              {currentPrice != null && currentPrice > 0 && (
+                <span style={{ fontSize: "11px", opacity: 0.8, color: colors.secondaryText }}>
+                  ({((predictedPrice - currentPrice) / currentPrice * 100) >= 0 ? "+" : ""}{((predictedPrice - currentPrice) / currentPrice * 100).toFixed(2)}%)
+                </span>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Price Change Indicator */}

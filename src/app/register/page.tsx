@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { MdVisibility, MdVisibilityOff } from "react-icons/md";
+import { getApiUrl } from "@/lib/apiBaseUrl";
 
 // Add animated gradient styles
 if (typeof document !== "undefined") {
@@ -55,10 +56,8 @@ export default function RegisterPage() {
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
     const handleGoogleRegister = () => {
-        const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        const apiUrl = getApiUrl();
         const redirectUri = typeof window !== "undefined" ? `${window.location.origin}/oauth-success` : "http://localhost:3000/oauth-success";
-        
-        // Redirect to backend OAuth endpoint
         window.location.href = `${apiUrl}/auth/google/login?redirect_uri=${encodeURIComponent(redirectUri)}`;
     };
 
@@ -82,10 +81,7 @@ export default function RegisterPage() {
         }
 
         try {
-            const apiUrl =
-                typeof window !== "undefined"
-                    ? "http://localhost:8000"
-                    : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+            const apiUrl = getApiUrl();
             const response = await fetch(`${apiUrl}/auth/register`, {
                 method: "POST",
                 headers: {

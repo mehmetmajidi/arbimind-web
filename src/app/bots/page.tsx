@@ -2,55 +2,64 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
+import type { TradingBot, BotStatus, BotTrade, SortField, SortDirection } from "@/components/bots/types";
 import {
-  BotStatsPanel,
-  BotListTable,
-  BotDetailsPanel,
-  CreateBotForm,
-  EditBotForm,
-  TradingBot,
-  BotStatus,
-  BotTrade,
-  SortField,
-  SortDirection,
   colors,
   layoutStyle,
-  mainLayoutStyle,
   panelStyle,
   getResponsiveLayoutStyle,
   getResponsivePanelStyle,
-  SkeletonLoader,
-  ErrorBoundary,
-} from "@/components/bots";
-import FiltersModal from "@/components/bots/FiltersModal";
+} from "@/components/bots/constants";
+import SkeletonLoader from "@/components/bots/SkeletonLoader";
+import ErrorBoundary from "@/components/bots/ErrorBoundary";
 import { useResponsive } from "@/hooks/useResponsive";
+import {
+  fetchBots as apiFetchBots,
+  fetchBotStatus as apiFetchBotStatus,
+  fetchBotTrades as apiFetchBotTrades,
+  fetchBot,
+  startBot as apiStartBot,
+  stopBot as apiStopBot,
+  deleteBot as apiDeleteBot,
+  createBot as apiCreateBot,
+} from "@/lib/botsApi";
+import { filterAndSortBots, paginateBots } from "@/lib/botsUtils";
+
+const BotStatsPanel = dynamic(
+  () => import("@/components/bots/BotStatsPanel").then((m) => m.default),
+  { ssr: false, loading: () => <div style={{ ...panelStyle, minHeight: 120 }} /> }
+);
+const BotListTable = dynamic(
+  () => import("@/components/bots/BotListTable").then((m) => m.default),
+  { ssr: false, loading: () => <div style={{ ...panelStyle, minHeight: 300 }} /> }
+);
+const BotDetailsPanel = dynamic(
+  () => import("@/components/bots/BotDetailsPanel").then((m) => m.default),
+  { ssr: false, loading: () => <div style={{ ...panelStyle, minHeight: 200 }} /> }
+);
+const CreateBotForm = dynamic(
+  () => import("@/components/bots/CreateBotForm").then((m) => m.default),
+  { ssr: false }
+);
+const EditBotForm = dynamic(
+  () => import("@/components/bots/EditBotForm").then((m) => m.default),
+  { ssr: false }
+);
+const FiltersModal = dynamic(
+  () => import("@/components/bots/FiltersModal").then((m) => m.default),
+  { ssr: false }
+);
 
 /**
  * Trading Bots Management Page
- * 
- * Built according to BOT_PAGE_UI_DESIGN.md
- * Uses exact same styling as Market Page
+ * Built according to BOT_PAGE_UI_DESIGN.md. Uses same styling as Market Page.
  */
-
-// Add pulse animation style
-if (typeof document !== "undefined") {
-  const style = document.createElement("style");
-  style.textContent = `
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.5; }
-    }
-  `;
-  if (!document.head.querySelector('style[data-pulse-animation]')) {
-    style.setAttribute('data-pulse-animation', 'true');
-    document.head.appendChild(style);
-  }
-}
 
 function BotsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { isMobile, isTablet, isDesktop } = useResponsive();
+  const { isMobile, isTablet } = useResponsive();
   
   const [bots, setBots] = useState<TradingBot[]>([]);
   const [loading, setLoading] = useState(true);
@@ -125,62 +134,35 @@ function BotsPageContent() {
     router.replace(`/bots${newUrl}`, { scroll: false });
   }, [statusFilter, strategyFilter, symbolFilter, searchQuery, sortField, sortDirection, currentPage, pageSize, router]);
 
-  // Fetch bots with retry functionality
+  const FETCH_TIMEOUT_MS = 30000;
+
   const fetchBots = useCallback(async (retryAttempt = 0): Promise<void> => {
     setLoading(true);
     setError(null);
-    
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     try {
-      const token = localStorage.getItem("auth_token") || "";
-      if (!token) {
-        setError("Please login to view bots");
-        setLoading(false);
-        return;
-      }
-
-      const apiUrl = typeof window !== "undefined" 
-        ? "http://localhost:8000" 
-        : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-      const response = await fetch(`${apiUrl}/bots`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setBots(Array.isArray(data) ? data : []);
-        setError(null);
-        retryCountRef.current = 0; // Reset retry count on success
-      } else {
-        const errorData = await response.json().catch(() => ({}));
-        const errorMessage = errorData.detail || "Failed to load bots";
-        setError(errorMessage);
-        
-        // Retry on network errors or 5xx errors
-        if (retryAttempt < maxRetries && (response.status >= 500 || response.status === 0)) {
-          retryCountRef.current = retryAttempt + 1;
-          const delay = Math.min(1000 * Math.pow(2, retryAttempt), 5000); // Exponential backoff
-          setTimeout(() => {
-            fetchBots(retryAttempt + 1);
-          }, delay);
-          return;
-        }
-      }
+      const data = await apiFetchBots(controller.signal);
+      setBots(data);
+      setError(null);
+      retryCountRef.current = 0;
     } catch (err) {
+      const msg =
+        err instanceof Error
+          ? (err.name === "AbortError" ? "Request timed out. Please try again." : err.message)
+          : "Failed to load bots";
       console.error("Error fetching bots:", err);
-      const errorMessage = err instanceof Error ? err.message : "Failed to load bots";
-      setError(errorMessage);
-      
-      // Retry on network errors
-      if (retryAttempt < maxRetries) {
+      setError(msg);
+      const isAuthError = msg.includes("login") || msg.includes("Please login");
+      const isAbort = err instanceof Error && err.name === "AbortError";
+      if (retryAttempt < maxRetries && !isAuthError && !isAbort) {
         retryCountRef.current = retryAttempt + 1;
-        const delay = Math.min(1000 * Math.pow(2, retryAttempt), 5000); // Exponential backoff
-        setTimeout(() => {
-          fetchBots(retryAttempt + 1);
-        }, delay);
+        const delay = Math.min(1000 * Math.pow(2, retryAttempt), 5000);
+        setTimeout(() => fetchBots(retryAttempt + 1), delay);
         return;
       }
     } finally {
+      clearTimeout(timeoutId);
       setLoading(false);
     }
   }, [maxRetries]);
@@ -195,25 +177,11 @@ function BotsPageContent() {
     fetchBots();
   }, [fetchBots]);
 
-  // Fetch bot status when selected
   const fetchBotStatus = useCallback(async (botId: number) => {
     setStatusLoading(true);
     try {
-      const token = localStorage.getItem("auth_token") || "";
-      if (!token) return;
-
-      const apiUrl = typeof window !== "undefined" 
-        ? "http://localhost:8000" 
-        : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-      const response = await fetch(`${apiUrl}/bots/${botId}/status`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setBotStatus(data);
-      }
+      const data = await apiFetchBotStatus(botId);
+      setBotStatus(data);
     } catch (err) {
       console.error("Error fetching bot status:", err);
     } finally {
@@ -221,25 +189,11 @@ function BotsPageContent() {
     }
   }, []);
 
-  // Fetch bot trades when selected
   const fetchBotTrades = useCallback(async (botId: number) => {
     setTradesLoading(true);
     try {
-      const token = localStorage.getItem("auth_token") || "";
-      if (!token) return;
-
-      const apiUrl = typeof window !== "undefined" 
-        ? "http://localhost:8000" 
-        : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-      const response = await fetch(`${apiUrl}/bots/${botId}/trades?limit=10`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setBotTrades(Array.isArray(data) ? data : []);
-      }
+      const data = await apiFetchBotTrades(botId);
+      setBotTrades(data);
     } catch (err) {
       console.error("Error fetching bot trades:", err);
     } finally {
@@ -247,11 +201,13 @@ function BotsPageContent() {
     }
   }, []);
 
-  // Fetch bot details when selected
+  // Fetch bot details when selected (status + trades in parallel)
   useEffect(() => {
     if (selectedBot) {
-      fetchBotStatus(selectedBot.id);
-      fetchBotTrades(selectedBot.id);
+      void Promise.all([
+        fetchBotStatus(selectedBot.id),
+        fetchBotTrades(selectedBot.id),
+      ]);
     } else {
       setBotStatus(null);
       setBotTrades([]);
@@ -265,91 +221,24 @@ function BotsPageContent() {
     if (openCount < botStatus.open_positions) {
       fetchBotTrades(selectedBot.id);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- Only refetch trades when open_positions count suggests we're missing data
   }, [selectedBot, botStatus?.open_positions, botTrades, fetchBotTrades]);
 
-  // Filter and sort bots
-  const filteredAndSortedBots = useMemo(() => {
-    // Apply filters
-    let filtered = bots.filter((bot) => {
-      // Status filter
-      if (statusFilter !== "all" && bot.status !== statusFilter) {
-        return false;
-      }
-      
-      // Strategy filter
-      if (strategyFilter !== "all" && bot.strategy_type !== strategyFilter) {
-        return false;
-      }
-      
-      // Symbol filter
-      if (symbolFilter && !bot.symbols.some(symbol => 
-        symbol.toLowerCase().includes(symbolFilter.toLowerCase())
-      )) {
-        return false;
-      }
-      
-      // Search query (by name)
-      if (searchQuery && !bot.name.toLowerCase().includes(searchQuery.toLowerCase())) {
-        return false;
-      }
-      
-      return true;
-    });
-    
-    // Apply sorting
-    if (sortField) {
-      filtered = [...filtered].sort((a, b) => {
-        let aValue: any;
-        let bValue: any;
-        
-        switch (sortField) {
-          case "name":
-            aValue = a.name.toLowerCase();
-            bValue = b.name.toLowerCase();
-            break;
-          case "status":
-            aValue = a.status;
-            bValue = b.status;
-            break;
-          case "strategy_type":
-            aValue = a.strategy_type;
-            bValue = b.strategy_type;
-            break;
-          case "capital":
-            aValue = parseFloat(a.capital);
-            bValue = parseFloat(b.capital);
-            break;
-          case "total_pnl":
-            aValue = parseFloat(a.total_pnl);
-            bValue = parseFloat(b.total_pnl);
-            break;
-          case "win_rate":
-            aValue = a.total_trades > 0 ? (a.winning_trades / a.total_trades) * 100 : 0;
-            bValue = b.total_trades > 0 ? (b.winning_trades / b.total_trades) * 100 : 0;
-            break;
-          case "total_trades":
-            aValue = a.total_trades;
-            bValue = b.total_trades;
-            break;
-          default:
-            return 0;
-        }
-        
-        if (aValue < bValue) return sortDirection === "asc" ? -1 : 1;
-        if (aValue > bValue) return sortDirection === "asc" ? 1 : -1;
-        return 0;
-      });
-    }
-    
-    return filtered;
-  }, [bots, statusFilter, strategyFilter, symbolFilter, searchQuery, sortField, sortDirection]);
-  
-  // Paginated bots
-  const paginatedBots = useMemo(() => {
-    const startIndex = (currentPage - 1) * pageSize;
-    const endIndex = startIndex + pageSize;
-    return filteredAndSortedBots.slice(startIndex, endIndex);
-  }, [filteredAndSortedBots, currentPage, pageSize]);
+  const filteredAndSortedBots = useMemo(
+    () =>
+      filterAndSortBots(
+        bots,
+        { statusFilter, strategyFilter, symbolFilter, searchQuery },
+        sortField,
+        sortDirection
+      ),
+    [bots, statusFilter, strategyFilter, symbolFilter, searchQuery, sortField, sortDirection]
+  );
+
+  const paginatedBots = useMemo(
+    () => paginateBots(filteredAndSortedBots, currentPage, pageSize),
+    [filteredAndSortedBots, currentPage, pageSize]
+  );
   
   // Pagination info
   const totalPages = Math.ceil(filteredAndSortedBots.length / pageSize);
@@ -372,75 +261,38 @@ function BotsPageContent() {
     }
   };
 
-  // Handle bot actions
   const handleStartBot = async (botId: number) => {
-    setActionLoading(prev => ({ ...prev, [botId]: "start" }));
+    setActionLoading((prev) => ({ ...prev, [botId]: "start" }));
     try {
-      const token = localStorage.getItem("auth_token") || "";
-      if (!token) return;
-
-      const apiUrl = typeof window !== "undefined" 
-        ? "http://localhost:8000" 
-        : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-      const response = await fetch(`${apiUrl}/bots/${botId}/start`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (response.ok) {
-        await fetchBots();
-        if (selectedBot?.id === botId) {
-          await fetchBotStatus(botId);
-        }
-      } else {
-        const errorData = await response.json().catch(() => ({}));
-        setError(errorData.detail || "Failed to start bot");
-      }
+      await apiStartBot(botId);
+      await fetchBots();
+      if (selectedBot?.id === botId) await fetchBotStatus(botId);
     } catch (err) {
       console.error("Error starting bot:", err);
-      setError("Failed to start bot");
+      setError(err instanceof Error ? err.message : "Failed to start bot");
     } finally {
-      setActionLoading(prev => {
-        const newState = { ...prev };
-        delete newState[botId];
-        return newState;
+      setActionLoading((prev) => {
+        const next = { ...prev };
+        delete next[botId];
+        return next;
       });
     }
   };
 
   const handleStopBot = async (botId: number) => {
-    setActionLoading(prev => ({ ...prev, [botId]: "stop" }));
+    setActionLoading((prev) => ({ ...prev, [botId]: "stop" }));
     try {
-      const token = localStorage.getItem("auth_token") || "";
-      if (!token) return;
-
-      const apiUrl = typeof window !== "undefined" 
-        ? "http://localhost:8000" 
-        : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-      const response = await fetch(`${apiUrl}/bots/${botId}/stop`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (response.ok) {
-        await fetchBots();
-        if (selectedBot?.id === botId) {
-          await fetchBotStatus(botId);
-        }
-      } else {
-        const errorData = await response.json().catch(() => ({}));
-        setError(errorData.detail || "Failed to stop bot");
-      }
+      await apiStopBot(botId);
+      await fetchBots();
+      if (selectedBot?.id === botId) await fetchBotStatus(botId);
     } catch (err) {
       console.error("Error stopping bot:", err);
-      setError("Failed to stop bot");
+      setError(err instanceof Error ? err.message : "Failed to stop bot");
     } finally {
-      setActionLoading(prev => {
-        const newState = { ...prev };
-        delete newState[botId];
-        return newState;
+      setActionLoading((prev) => {
+        const next = { ...prev };
+        delete next[botId];
+        return next;
       });
     }
   };
@@ -451,105 +303,32 @@ function BotsPageContent() {
   
   const handleEditSuccess = () => {
     setEditingBot(null);
-    fetchBots(); // Refresh bot list
+    fetchBots();
     if (selectedBot) {
-      // Refresh selected bot if it was edited
-      const token = localStorage.getItem("auth_token") || "";
-      if (token) {
-        const apiUrl = typeof window !== "undefined" 
-          ? "http://localhost:8000" 
-          : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-        fetch(`${apiUrl}/bots/${selectedBot.id}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-          .then(res => res.json())
-          .then(data => setSelectedBot(data))
-          .catch(console.error);
-      }
+      fetchBot(selectedBot.id)
+        .then(setSelectedBot)
+        .catch(console.error);
     }
   };
 
   const handleDeleteBot = async (botId: number) => {
     if (!confirm("Are you sure you want to delete this bot?")) return;
-    
-    setActionLoading(prev => ({ ...prev, [botId]: "delete" }));
+    setActionLoading((prev) => ({ ...prev, [botId]: "delete" }));
     try {
-      const token = localStorage.getItem("auth_token") || "";
-      if (!token) return;
-
-      const apiUrl = typeof window !== "undefined" 
-        ? "http://localhost:8000" 
-        : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-      const response = await fetch(`${apiUrl}/bots/${botId}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (response.ok) {
-        await fetchBots();
-        if (selectedBot?.id === botId) {
-          setSelectedBot(null);
-        }
-      } else {
-        const errorData = await response.json().catch(() => ({}));
-        setError(errorData.detail || "Failed to delete bot");
-      }
+      await apiDeleteBot(botId);
+      await fetchBots();
+      if (selectedBot?.id === botId) setSelectedBot(null);
     } catch (err) {
       console.error("Error deleting bot:", err);
-      setError("Failed to delete bot");
+      setError(err instanceof Error ? err.message : "Failed to delete bot");
     } finally {
-      setActionLoading(prev => {
-        const newState = { ...prev };
-        delete newState[botId];
-        return newState;
+      setActionLoading((prev) => {
+        const next = { ...prev };
+        delete next[botId];
+        return next;
       });
     }
   };
-
-  if (loading && bots.length === 0) {
-    return (
-      <ErrorBoundary>
-        <div style={layoutStyle}>
-          {/* Header */}
-          <div style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: "24px",
-          }}>
-            <h1 style={{ 
-              color: colors.primary, 
-              fontSize: "32px", 
-              fontWeight: "bold",
-              margin: 0,
-            }}>
-              Trading Bots Management
-            </h1>
-          </div>
-          
-          {/* Loading State with Skeleton */}
-          <div style={mainLayoutStyle}>
-            <div style={{ width: "320px", flexShrink: 0 }}>
-              <div style={panelStyle}>
-                <SkeletonLoader type="card" />
-              </div>
-            </div>
-            <div style={{ flex: "1", minWidth: "0" }}>
-              <div style={panelStyle}>
-                <SkeletonLoader type="table" lines={5} />
-              </div>
-            </div>
-            <div style={{ width: "320px", flexShrink: 0 }}>
-              <div style={panelStyle}>
-                <SkeletonLoader type="card" />
-              </div>
-            </div>
-          </div>
-        </div>
-      </ErrorBoundary>
-    );
-  }
 
   return (
     <ErrorBoundary>
@@ -755,9 +534,12 @@ function BotsPageContent() {
           <ErrorBoundary>
             {loading ? (
               <div style={getResponsivePanelStyle(isMobile, isTablet)}>
-                <h3 style={{ color: colors.primary, marginBottom: "12px", fontSize: isMobile ? "16px" : "18px", fontWeight: "600" }}>
+                <h3 style={{ color: colors.primary, marginBottom: "4px", fontSize: isMobile ? "16px" : "18px", fontWeight: "600" }}>
                   Bot List
                 </h3>
+                <p style={{ color: colors.secondaryText, fontSize: "12px", marginBottom: "12px" }}>
+                  Loading bots…
+                </p>
                 <SkeletonLoader type="table" lines={5} />
               </div>
             ) : (
@@ -809,78 +591,64 @@ function BotsPageContent() {
         </div>
       </div>
 
-      {/* Filters Modal */}
-      <FiltersModal
-        isOpen={showFiltersModal}
-        onClose={() => setShowFiltersModal(false)}
-        statusFilter={statusFilter}
-        strategyFilter={strategyFilter}
-        symbolFilter={symbolFilter}
-        onStatusFilterChange={setStatusFilter}
-        onStrategyFilterChange={setStrategyFilter}
-        onSymbolFilterChange={setSymbolFilter}
-        onClearFilters={() => {
-          setStatusFilter("all");
-          setStrategyFilter("all");
-          setSymbolFilter("");
-        }}
-      />
+      {showFiltersModal && (
+        <FiltersModal
+          isOpen={true}
+          onClose={() => setShowFiltersModal(false)}
+          statusFilter={statusFilter}
+          strategyFilter={strategyFilter}
+          symbolFilter={symbolFilter}
+          onStatusFilterChange={setStatusFilter}
+          onStrategyFilterChange={setStrategyFilter}
+          onSymbolFilterChange={setSymbolFilter}
+          onClearFilters={() => {
+            setStatusFilter("all");
+            setStrategyFilter("all");
+            setSymbolFilter("");
+          }}
+        />
+      )}
 
-      {/* Create Bot Form Modal */}
-      <CreateBotForm
-        isOpen={showCreateForm}
-        onClose={() => setShowCreateForm(false)}
-        onSubmit={async (data) => {
-          const token = localStorage.getItem("auth_token") || "";
-          if (!token) {
-            throw new Error("Please login to create bot");
-          }
+      {showCreateForm && (
+        <CreateBotForm
+          isOpen={true}
+          onClose={() => setShowCreateForm(false)}
+          onSubmit={async (data) => {
+            await apiCreateBot(data);
+            await fetchBots();
+          }}
+        />
+      )}
 
-          const apiUrl = typeof window !== "undefined" 
-            ? "http://localhost:8000" 
-            : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-          const response = await fetch(`${apiUrl}/bots/create`, {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${token}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(data),
-          });
-
-          if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            console.error("Bot creation error:", errorData);
-            const errorMessage = errorData.detail || errorData.message || JSON.stringify(errorData) || "Failed to create bot";
-            throw new Error(errorMessage);
-          }
-
-          await fetchBots();
-        }}
-      />
-      
-      {/* Edit Bot Form Modal */}
-      <EditBotForm
-        isOpen={!!editingBot}
-        bot={editingBot}
-        onClose={() => setEditingBot(null)}
-        onSuccess={handleEditSuccess}
-      />
+      {editingBot && (
+        <EditBotForm
+          isOpen={true}
+          bot={editingBot}
+          onClose={() => setEditingBot(null)}
+          onSuccess={handleEditSuccess}
+        />
+      )}
       </div>
     </ErrorBoundary>
   );
 }
 
+function BotsPageSkeleton() {
+  return (
+    <div style={layoutStyle}>
+      <div style={{ marginBottom: "24px", height: 32, width: 280, backgroundColor: colors.panelBackground, borderRadius: 8 }} />
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ width: 320, height: 140, backgroundColor: colors.panelBackground, borderRadius: 12 }} />
+        <div style={{ flex: 1, minWidth: 300, height: 320, backgroundColor: colors.panelBackground, borderRadius: 12 }} />
+        <div style={{ width: 320, height: 200, backgroundColor: colors.panelBackground, borderRadius: 12 }} />
+      </div>
+    </div>
+  );
+}
+
 export default function BotsPage() {
   return (
-    <Suspense fallback={
-      <div style={layoutStyle}>
-        <div style={{ textAlign: "center", padding: "40px", color: colors.secondaryText }}>
-          Loading...
-        </div>
-      </div>
-    }>
+    <Suspense fallback={<BotsPageSkeleton />}>
       <BotsPageContent />
     </Suspense>
   );

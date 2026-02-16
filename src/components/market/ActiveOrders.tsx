@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef, useImperativeHandle, forwardR
 import { useExchange } from "@/contexts/ExchangeContext";
 import { MdClose, MdRefresh } from "react-icons/md";
 import ConfirmCancelOrderModal from "./ConfirmCancelOrderModal";
+import { getApiUrl } from "@/lib/apiBaseUrl";
 
 export interface ActiveOrdersRef {
     refresh: () => void;
@@ -67,7 +68,7 @@ const ActiveOrders = forwardRef<ActiveOrdersRef, ActiveOrdersProps>(({ selectedS
                 return;
             }
 
-            const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+            const apiUrl = getApiUrl();
             
             // Fetch orders directly from exchange API
             const params = new URLSearchParams({
@@ -191,7 +192,7 @@ const ActiveOrders = forwardRef<ActiveOrdersRef, ActiveOrdersProps>(({ selectedS
                 return;
             }
 
-            const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+            const apiUrl = getApiUrl();
             
             // Cancel order from exchange API
             const params = new URLSearchParams({

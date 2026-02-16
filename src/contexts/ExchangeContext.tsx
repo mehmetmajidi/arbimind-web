@@ -1,6 +1,14 @@
 "use client";
 
 import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from "react";
+import { usePathname } from "next/navigation";
+import { getApiUrl } from "@/lib/apiBaseUrl";
+
+const AUTH_ROUTES = ["/login", "/register", "/forgot-password", "/reset-password", "/oauth-success"];
+
+function isAuthRoute(pathname: string | null): boolean {
+  return pathname !== null && AUTH_ROUTES.includes(pathname);
+}
 
 interface ExchangeAccount {
     id: number;
@@ -21,6 +29,7 @@ interface ExchangeContextType {
 const ExchangeContext = createContext<ExchangeContextType | undefined>(undefined);
 
 export function ExchangeProvider({ children }: { children: ReactNode }) {
+    const pathname = usePathname();
     const [accounts, setAccounts] = useState<ExchangeAccount[]>([]);
     const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null);
     const [loading, setLoading] = useState(true);
@@ -48,7 +57,7 @@ export function ExchangeProvider({ children }: { children: ReactNode }) {
                 return;
             }
 
-            const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+            const apiUrl = getApiUrl();
             const url = `${apiUrl}/exchange/accounts`;
             
             console.log("ExchangeContext: Fetching accounts from:", url);
@@ -147,8 +156,18 @@ export function ExchangeProvider({ children }: { children: ReactNode }) {
         }
     }, []);
 
-    // Initial fetch on mount - only once
+    // On auth routes: do not fetch accounts, show content immediately
     useEffect(() => {
+        if (isAuthRoute(pathname)) {
+            setLoading(false);
+            setError(null);
+            return;
+        }
+    }, [pathname]);
+
+    // Initial fetch on mount - only once (skip on auth routes)
+    useEffect(() => {
+        if (isAuthRoute(pathname)) return;
         const token = localStorage.getItem("auth_token");
         if (token && accounts.length === 0 && !fetchingRef.current) {
             fetchAccounts();
@@ -156,7 +175,7 @@ export function ExchangeProvider({ children }: { children: ReactNode }) {
             setLoading(false);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []); // Only run once on mount
+    }, [pathname]); // Re-run when pathname changes (e.g. after login redirect)
 
     // Listen for auth token changes and refetch accounts
     useEffect(() => {

@@ -10,10 +10,9 @@ import {
     JobLogsResponse,
     Model,
 } from "@/types/training";
+import { getApiUrl } from "./apiBaseUrl";
 
-const apiUrl = typeof window !== "undefined" 
-    ? (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000")
-    : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const apiUrl = getApiUrl();
 
 const getAuthToken = (): string => {
     if (typeof window === "undefined") return "";

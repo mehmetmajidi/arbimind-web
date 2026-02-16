@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { MdRefresh, MdTrendingUp, MdTrendingDown } from "react-icons/md";
 import { useExchange } from "@/contexts/ExchangeContext";
+import { getApiUrl } from "@/lib/apiBaseUrl";
 
 interface ArbitrageData {
     symbol: string;
@@ -53,7 +54,7 @@ export default function ArbitragePanel({ selectedSymbol }: ArbitragePanelProps) 
                 return;
             }
 
-            const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+            const apiUrl = getApiUrl();
             const encodedSymbol = encodeURIComponent(selectedSymbol);
             
             const response = await fetch(`${apiUrl}/market/arbitrage/${encodedSymbol}`, {
@@ -80,7 +81,7 @@ export default function ArbitragePanel({ selectedSymbol }: ArbitragePanelProps) 
 
     // Helper function to setup WebSocket with all event handlers
     const setupWebSocket = (symbol: string, token: string) => {
-        const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        const apiUrl = getApiUrl();
         const encodedSymbol = encodeURIComponent(symbol);
         const wsUrl = apiUrl.replace("http://", "ws://").replace("https://", "wss://");
         const wsEndpoint = `${wsUrl}/ws/arbitrage/${encodedSymbol}?token=${encodeURIComponent(token)}`;

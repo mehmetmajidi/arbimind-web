@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { MdVisibility, MdVisibilityOff } from "react-icons/md";
+import { getApiUrl } from "@/lib/apiBaseUrl";
 
 // Add animated gradient styles
 if (typeof document !== "undefined") {
@@ -89,11 +90,7 @@ function ResetPasswordForm() {
         }
 
         try {
-            const apiUrl =
-                typeof window !== "undefined"
-                    ? "http://localhost:8000"
-                    : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
+            const apiUrl = getApiUrl();
             const response = await fetch(`${apiUrl}/auth/reset-password`, {
                 method: "POST",
                 headers: {

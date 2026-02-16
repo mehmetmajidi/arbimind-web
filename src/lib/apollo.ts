@@ -1,8 +1,9 @@
 import { ApolloClient, InMemoryCache, HttpLink, from, ApolloLink } from "@apollo/client";
 import { onError } from "@apollo/client/link/error";
 import { RetryLink } from "@apollo/client/link/retry";
+import { getApiUrl } from "./apiBaseUrl";
 
-const uri = process.env.NEXT_PUBLIC_GRAPHQL_URL ?? "http://localhost:8000/graphql";
+const uri = process.env.NEXT_PUBLIC_GRAPHQL_URL ?? `${getApiUrl()}/graphql`;
 
 // Error handling link
 const errorLink = onError(({ graphQLErrors, networkError, operation, forward }) => {

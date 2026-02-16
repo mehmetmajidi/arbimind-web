@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useExchange } from "@/contexts/ExchangeContext";
+import { getApiUrl } from "@/lib/apiBaseUrl";
 import PredictionFilters from "@/components/predictions/PredictionFilters";
 import PredictionStats from "@/components/predictions/PredictionStats";
 import PredictionTable from "@/components/predictions/PredictionTable";
@@ -101,7 +102,7 @@ export default function PredictionsPage() {
         }
     }, [showGetPredictionModal, showBatchPredictionModal, selectedAccountId, getPredictionAccountId, batchAccountId]);
 
-    const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const apiUrl = getApiUrl();
 
     const fetchPredictions = useCallback(async () => {
         try {

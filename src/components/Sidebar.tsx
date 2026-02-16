@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import { getApiUrl } from "@/lib/apiBaseUrl";
 import { 
      MdBarChart, 
      MdTrendingUp, 
@@ -52,7 +53,7 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
                // Check if user is admin
                if (token) {
                     try {
-                         const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+                         const apiUrl = getApiUrl();
                          const meRes = await fetch(`${apiUrl}/auth/me`, {
                               headers: { Authorization: `Bearer ${token}` },
                          });

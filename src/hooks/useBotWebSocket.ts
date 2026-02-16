@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import { getApiUrl, getWsUrl } from "@/lib/apiBaseUrl";
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
@@ -111,10 +112,7 @@ export function useBotWebSocket({
           return;
         }
 
-        const apiUrl = typeof window !== "undefined" 
-          ? "http://localhost:8000" 
-          : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
+        const apiUrl = getApiUrl();
         const response = await fetch(`${apiUrl}/bots/${botId}/status`, {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -212,11 +210,7 @@ export function useBotWebSocket({
       return;
     }
 
-    const apiUrl = typeof window !== "undefined" 
-      ? "http://localhost:8000" 
-      : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-    
-    const wsUrl = apiUrl.replace("http://", "ws://").replace("https://", "wss://");
+    const wsUrl = getWsUrl();
     const url = `${wsUrl}/ws/bot/${botId}?token=${encodeURIComponent(token)}&interval=${interval}`;
 
     try {

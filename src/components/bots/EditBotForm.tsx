@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { TradingBot } from "./types";
 import { colors } from "./constants";
+import { getApiUrl } from "@/lib/apiBaseUrl";
 
 interface EditBotFormProps {
   isOpen: boolean;
@@ -37,10 +38,7 @@ export default function EditBotForm({ isOpen, bot, onClose, onSuccess }: EditBot
       const token = localStorage.getItem("auth_token") || "";
       if (!token) return;
 
-      const apiUrl = typeof window !== "undefined" 
-        ? "http://localhost:8000" 
-        : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
+      const apiUrl = getApiUrl();
       const response = await fetch(`${apiUrl}/exchange/accounts`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -127,10 +125,7 @@ export default function EditBotForm({ isOpen, bot, onClose, onSuccess }: EditBot
         return;
       }
 
-      const apiUrl = typeof window !== "undefined" 
-        ? "http://localhost:8000" 
-        : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
+      const apiUrl = getApiUrl();
       // Prepare update data (only changed fields)
       const updateData: Record<string, unknown> = {};
       

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useExchange } from "@/contexts/ExchangeContext";
+import { getApiUrl } from "@/lib/apiBaseUrl";
 
 interface Order {
      id: number;
@@ -128,7 +129,7 @@ export default function TradingPage() {
                const token = localStorage.getItem("auth_token") || "";
                if (!token) return;
 
-               const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+               const apiUrl = getApiUrl();
                const isDemoExchange = selectedAccountId === -999;
                const url = isDemoExchange
                     ? `${apiUrl}/trading/orders/exchange?exchange_account_id=${selectedAccountId}&limit=50`
@@ -163,7 +164,7 @@ export default function TradingPage() {
                const token = localStorage.getItem("auth_token") || "";
                if (!token) return;
 
-               const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+               const apiUrl = getApiUrl();
 
                const response = await fetch(`${apiUrl}/trading/positions?exchange_account_id=${selectedAccountId}`, {
                     headers: { Authorization: `Bearer ${token}` },
@@ -194,7 +195,7 @@ export default function TradingPage() {
                const token = localStorage.getItem("auth_token") || "";
                if (!token) return;
 
-               const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+               const apiUrl = getApiUrl();
 
                const response = await fetch(`${apiUrl}/trading/positions/closed?exchange_account_id=${selectedAccountId}&limit=100`, {
                     headers: { Authorization: `Bearer ${token}` },
@@ -226,7 +227,7 @@ export default function TradingPage() {
                const token = localStorage.getItem("auth_token") || "";
                if (!token) return;
 
-               const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+               const apiUrl = getApiUrl();
 
                const response = await fetch(`${apiUrl}/trading/balance/${selectedAccountId}`, {
                     headers: { Authorization: `Bearer ${token}` },
@@ -256,7 +257,7 @@ export default function TradingPage() {
                const token = localStorage.getItem("auth_token") || "";
                if (!token) return;
 
-               const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+               const apiUrl = getApiUrl();
 
                const response = await fetch(`${apiUrl}/trading/trades?limit=50`, {
                     headers: { Authorization: `Bearer ${token}` },
@@ -285,7 +286,7 @@ export default function TradingPage() {
                const token = localStorage.getItem("auth_token") || "";
                if (!token) return;
 
-               const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+               const apiUrl = getApiUrl();
 
                const response = await fetch(`${apiUrl}/trading/orders/${orderId}`, {
                     headers: { Authorization: `Bearer ${token}` },
@@ -319,7 +320,7 @@ export default function TradingPage() {
                const token = localStorage.getItem("auth_token") || "";
                if (!token) return;
 
-               const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+               const apiUrl = getApiUrl();
 
                const response = await fetch(`${apiUrl}/trading/trades?symbol=${encodeURIComponent(symbol)}&limit=100`, {
                     headers: { Authorization: `Bearer ${token}` },
@@ -377,7 +378,7 @@ export default function TradingPage() {
                return;
           }
 
-          const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+          const apiUrl = getApiUrl();
 
           // Convert http to ws
           const wsUrl = apiUrl.replace("http://", "ws://").replace("https://", "wss://");
@@ -523,7 +524,7 @@ export default function TradingPage() {
                return;
           }
 
-          const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+          const apiUrl = getApiUrl();
 
           // Convert http to ws
           const wsUrl = apiUrl.replace("http://", "ws://").replace("https://", "wss://");
@@ -679,7 +680,7 @@ export default function TradingPage() {
                     return;
                }
 
-               const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+               const apiUrl = getApiUrl();
 
                const response = await fetch(`${apiUrl}/trading/orders/place`, {
                     method: "POST",
@@ -727,7 +728,7 @@ export default function TradingPage() {
                const token = localStorage.getItem("auth_token") || "";
                if (!token) return;
 
-               const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+               const apiUrl = getApiUrl();
                const params = selectedAccountId != null ? `?exchange_account_id=${selectedAccountId}` : "";
                const response = await fetch(`${apiUrl}/trading/orders/${orderId}${params}`, {
                     method: "DELETE",
@@ -760,7 +761,7 @@ export default function TradingPage() {
                     return;
                }
 
-               const apiUrl = typeof window !== "undefined" ? "http://localhost:8000" : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+               const apiUrl = getApiUrl();
 
                const response = await fetch(`${apiUrl}/trading/positions/${positionId}/close`, {
                     method: "POST",
