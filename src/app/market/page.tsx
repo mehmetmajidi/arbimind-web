@@ -4,16 +4,16 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 import TradingPanel from "@/components/market/TradingPanel";
-import type { ActiveOrdersRef } from "@/components/market/ActiveOrders";
 import type { TradingPanelRef } from "@/components/market/TradingPanel";
 import type { OrderPanelRef } from "@/components/market/OrderPanel";
 import { useExchange } from "@/contexts/ExchangeContext";
 import type { OHLCVCandle, PredictionData } from "@/types/market";
+import { getApiUrl } from "@/lib/apiBaseUrl";
+import { getTradingApiBase } from "@/lib/tradingEndpoints";
 import {
     fetchOHLCV as apiFetchOHLCV,
     fetchLivePrice as apiFetchLivePrice,
     fetchPredictions as apiFetchPredictions,
-    fetchDemoWallet as apiFetchDemoWallet,
     fetchMoreOHLCV as apiFetchMoreOHLCV,
 } from "@/lib/marketApi";
 import {
@@ -36,11 +36,8 @@ const MainChart = dynamic(() => import("@/components/market/MainChart").then((m)
     ),
 });
 const OrderPanel = dynamic(() => import("@/components/market/OrderPanel").then((m) => m.default), { ssr: false });
-const ActiveOrders = dynamic(() => import("@/components/market/ActiveOrders").then((m) => m.default), { ssr: false });
 const ArbitragePanel = dynamic(() => import("@/components/market/ArbitragePanel").then((m) => m.default), { ssr: false });
 const PricePredictionsPanel = dynamic(() => import("@/components/market/PricePredictionsPanel").then((m) => m.default), { ssr: false });
-const DemoWallet = dynamic(() => import("@/components/market/DemoWallet").then((m) => m.default), { ssr: false });
-const DemoPortfolioStats = dynamic(() => import("@/components/market/DemoPortfolioStats").then((m) => m.default), { ssr: false });
 
 export default function MarketPage() {
     const { selectedAccountId, accounts } = useExchange();
@@ -98,49 +95,70 @@ export default function MarketPage() {
         const t = setTimeout(() => setDeferSecondaryPanels(true), 1800);
         return () => clearTimeout(t);
     }, []);
-    // Refs for ActiveOrders, TradingPanel, OrderPanel to refresh after order placement/cancel
-    const activeOrdersRef = useRef<ActiveOrdersRef | null>(null);
     const tradingPanelRef = useRef<TradingPanelRef | null>(null);
     const orderPanelRef = useRef<OrderPanelRef | null>(null);
 
-    // Single fetch for Demo Wallet – shared by DemoWallet and DemoPortfolioStats (faster load)
-    const [demoWallet, setDemoWallet] = useState<Record<string, unknown> | null>(null);
-    const [demoWalletLoading, setDemoWalletLoading] = useState(false);
-    const [demoWalletError, setDemoWalletError] = useState<string | null>(null);
-    const fetchDemoWallet = useCallback(async () => {
-        setDemoWalletLoading(true);
-        setDemoWalletError(null);
+    // Order markers for chart (buy = green arrow, sell = red arrow)
+    const [orderMarkers, setOrderMarkers] = useState<{ time: number; price: number; side: "buy" | "sell" }[]>([]);
+
+    // Fetch orders for chart markers (buy/sell arrows)
+    const fetchOrderMarkers = useCallback(async () => {
+        if (!selectedAccountId || !selectedSymbol) {
+            setOrderMarkers([]);
+            return;
+        }
+        const token = typeof window !== "undefined" ? localStorage.getItem("auth_token") : null;
+        if (!token) {
+            setOrderMarkers([]);
+            return;
+        }
         try {
-            const data = await apiFetchDemoWallet();
-            setDemoWallet(data);
-        } catch (e) {
-            setDemoWalletError(e instanceof Error ? e.message : "Failed to load wallet");
-            setDemoWallet(null);
-        } finally {
-            setDemoWalletLoading(false);
+            const params = new URLSearchParams({
+                exchange_account_id: String(selectedAccountId),
+                symbol: selectedSymbol,
+            });
+            const res = await fetch(`${getTradingApiBase()}/orders/exchange?${params.toString()}`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            if (!res.ok) {
+                setOrderMarkers([]);
+                return;
+            }
+            const orders: Array<{
+                side: string;
+                price: string | null;
+                average_price: string | null;
+                created_at: string;
+                executed_at: string | null;
+            }> = await res.json();
+            const markers = orders.map((o) => {
+                const at = o.executed_at || o.created_at;
+                const timeSec = at ? Math.floor(new Date(at).getTime() / 1000) : 0;
+                const price = parseFloat(o.price || o.average_price || "0") || 0;
+                return {
+                    time: timeSec,
+                    price,
+                    side: (o.side === "sell" ? "sell" : "buy") as "buy" | "sell",
+                };
+            });
+            setOrderMarkers(markers);
+        } catch {
+            setOrderMarkers([]);
         }
-    }, []);
+    }, [selectedAccountId, selectedSymbol]);
+
     useEffect(() => {
-        if (selectedAccountId === -999) fetchDemoWallet();
-        else { setDemoWallet(null); setDemoWalletError(null); }
-    }, [selectedAccountId, fetchDemoWallet]);
-    
-    // Callback to refresh ActiveOrders and TradingPanel when order is placed
+        fetchOrderMarkers();
+    }, [fetchOrderMarkers]);
+
+    // Callback to refresh TradingPanel and chart markers when order is placed
     const handleOrderPlaced = useCallback(() => {
-        if (activeOrdersRef.current) {
-            activeOrdersRef.current.refresh();
-        }
         if (tradingPanelRef.current) {
             tradingPanelRef.current.refreshBalance();
         }
-    }, []);
+        fetchOrderMarkers();
+    }, [fetchOrderMarkers]);
 
-    // Callback to refresh balance when order is cancelled (so Available/In Orders update in market)
-    const handleOrderCancelled = useCallback(() => {
-        orderPanelRef.current?.refreshBalance();
-        tradingPanelRef.current?.refreshBalance();
-    }, []);
-    
     // Load saved symbol when account changes (if account didn't change, keep current symbol)
     useEffect(() => {
         if (selectedAccountId && typeof window !== "undefined") {
@@ -374,7 +392,8 @@ export default function MarketPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- Run only when user changes horizons, not when predictions/symbol/account change
     }, [selectedHorizons]);
 
-    if (accounts.length === 0) {
+    const isDemoOnly = selectedAccountId === -999;
+    if (accounts.length === 0 && !isDemoOnly) {
         return (
             <div style={{ padding: "24px", textAlign: "center" }}>
                 <h1>Market Data</h1>
@@ -391,10 +410,8 @@ export default function MarketPage() {
 
     // Responsive layout - simple check without hooks to avoid React error #310
     const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
-    const isDemoExchange = selectedAccountId === -999;
-
     return (
-        <div style={{ padding: isMobile ? "8px" : "0 16px", maxWidth: "1870px", margin: "0 auto", color: "#ededed" }}>
+        <div style={{ padding: isMobile ? "8px" : "0 16px", width: "100%", maxWidth: "100%", boxSizing: "border-box", color: "#ededed" }}>
             {error && (
                 <div
                     style={{
@@ -462,6 +479,7 @@ export default function MarketPage() {
                         oldestTimestamp={oldestTimestamp}
                         loadingMore={loadingMore}
                         selectedSymbol={selectedSymbol}
+                        orderMarkers={orderMarkers}
                     />
                 ) : (
                     <div
@@ -486,36 +504,14 @@ export default function MarketPage() {
                 {/* Right Side Panel */}
                 {selectedSymbol && (
                     <div style={{ width: isMobile ? "100%" : "320px", flexShrink: 0, display: "flex", flexDirection: "column", gap: "12px" }}>
-                        {/* Order Panel */}
                         <OrderPanel 
                             ref={orderPanelRef}
                             selectedSymbol={selectedSymbol}
                             currentPrice={currentPrice}
                             onOrderPlaced={handleOrderPlaced}
                         />
-
-                        {/* Active Orders */}
-                        <ActiveOrders 
-                            ref={activeOrdersRef}
-                            selectedSymbol={selectedSymbol}
-                            onOrderCancelled={handleOrderCancelled}
-                        />
-
-                        {isDemoExchange && deferSecondaryPanels && (
-                            <>
-                                <DemoWallet
-                                    wallet={demoWallet}
-                                    loading={demoWalletLoading}
-                                    error={demoWalletError}
-                                    onRefetch={fetchDemoWallet}
-                                    onWalletReset={() => { orderPanelRef.current?.refreshBalance(); tradingPanelRef.current?.refreshBalance(); }}
-                                />
-                                <DemoPortfolioStats wallet={demoWallet} loading={demoWalletLoading} error={demoWalletError} />
-                            </>
-                        )}
-
-                        </div>
-                    )}
+                    </div>
+                )}
                 </div>
 
             {!selectedSymbol && (

@@ -1,7 +1,7 @@
 // Shared utilities for training components
 
 import { getApiUrl } from "@/lib/apiBaseUrl";
-export const apiUrl = getApiUrl();
+export const apiUrl = getApiV1Base();
 
 export const getAuthToken = () => {
     return localStorage.getItem("auth_token") || "";

@@ -1,4 +1,4 @@
-import { getApiUrl } from "@/lib/apiBaseUrl";
+import { getBotsApiBase } from "@/lib/botsEndpoints";
 import type { TradingBot, BotStatus, BotTrade } from "@/components/bots/types";
 
 function getToken(): string {
@@ -9,8 +9,7 @@ function getToken(): string {
 export async function fetchBots(signal?: AbortSignal): Promise<TradingBot[]> {
   const token = getToken();
   if (!token) throw new Error("Please login to view bots");
-  const apiUrl = getApiUrl();
-  const response = await fetch(`${apiUrl}/bots`, {
+  const response = await fetch(`${getBotsApiBase()}/`, {
     headers: { Authorization: `Bearer ${token}` },
     signal,
   });
@@ -25,8 +24,7 @@ export async function fetchBots(signal?: AbortSignal): Promise<TradingBot[]> {
 export async function fetchBot(botId: number): Promise<TradingBot> {
   const token = getToken();
   if (!token) throw new Error("Please login to view bot details");
-  const apiUrl = getApiUrl();
-  const response = await fetch(`${apiUrl}/bots/${botId}`, {
+  const response = await fetch(`${getBotsApiBase()}/${botId}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (response.status === 404) throw new Error("Bot not found");
@@ -40,8 +38,7 @@ export async function fetchBot(botId: number): Promise<TradingBot> {
 export async function fetchBotStatus(botId: number): Promise<BotStatus | null> {
   const token = getToken();
   if (!token) return null;
-  const apiUrl = getApiUrl();
-  const response = await fetch(`${apiUrl}/bots/${botId}/status`, {
+  const response = await fetch(`${getBotsApiBase()}/${botId}/status`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) return null;
@@ -55,8 +52,7 @@ export async function fetchBotTrades(
 ): Promise<BotTrade[]> {
   const token = getToken();
   if (!token) return [];
-  const apiUrl = getApiUrl();
-  const response = await fetch(`${apiUrl}/bots/${botId}/trades?limit=${limit}`, {
+  const response = await fetch(`${getBotsApiBase()}/${botId}/trades?limit=${limit}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) return [];
@@ -67,8 +63,7 @@ export async function fetchBotTrades(
 export async function startBot(botId: number): Promise<void> {
   const token = getToken();
   if (!token) throw new Error("Please login");
-  const apiUrl = getApiUrl();
-  const response = await fetch(`${apiUrl}/bots/${botId}/start`, {
+  const response = await fetch(`${getBotsApiBase()}/${botId}/start`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -81,8 +76,7 @@ export async function startBot(botId: number): Promise<void> {
 export async function stopBot(botId: number): Promise<void> {
   const token = getToken();
   if (!token) throw new Error("Please login");
-  const apiUrl = getApiUrl();
-  const response = await fetch(`${apiUrl}/bots/${botId}/stop`, {
+  const response = await fetch(`${getBotsApiBase()}/${botId}/stop`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -92,11 +86,24 @@ export async function stopBot(botId: number): Promise<void> {
   }
 }
 
+export async function resetBot(botId: number): Promise<TradingBot> {
+  const token = getToken();
+  if (!token) throw new Error("Please login");
+  const response = await fetch(`${getBotsApiBase()}/${botId}/reset`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail ?? "Failed to reset bot");
+  }
+  return response.json();
+}
+
 export async function deleteBot(botId: number): Promise<void> {
   const token = getToken();
   if (!token) throw new Error("Please login");
-  const apiUrl = getApiUrl();
-  const response = await fetch(`${apiUrl}/bots/${botId}`, {
+  const response = await fetch(`${getBotsApiBase()}/${botId}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -124,8 +131,7 @@ export interface CreateBotPayload {
 export async function createBot(data: CreateBotPayload): Promise<void> {
   const token = getToken();
   if (!token) throw new Error("Please login to create bot");
-  const apiUrl = getApiUrl();
-  const response = await fetch(`${apiUrl}/bots/create`, {
+  const response = await fetch(`${getBotsApiBase()}/create`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,

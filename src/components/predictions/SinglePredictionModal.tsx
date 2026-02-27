@@ -6,6 +6,7 @@ import { commonRules } from "@/lib/validation";
 import { ErrorMessage } from "@/components/shared";
 import { apiGet } from "@/lib/apiClient";
 import { handleApiError } from "@/lib/errorHandler";
+import { getMarketApiBase } from "@/lib/marketEndpoints";
 
 interface ExchangeAccount {
     id: number;
@@ -109,7 +110,7 @@ export default function SinglePredictionModal({
                 const token = localStorage.getItem("auth_token");
                 if (!token) return;
 
-                const response = await fetch(`${apiUrl}/market/pairs/${accountId}/db?active_only=true`, {
+                const response = await fetch(`${getMarketApiBase()}/pairs/${accountId}/db?active_only=true`, {
                     headers: { Authorization: `Bearer ${token}` },
                 });
 

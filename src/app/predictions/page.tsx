@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useExchange } from "@/contexts/ExchangeContext";
 import { getApiUrl } from "@/lib/apiBaseUrl";
+import { getMarketApiBase } from "@/lib/marketEndpoints";
 import PredictionFilters from "@/components/predictions/PredictionFilters";
 import PredictionStats from "@/components/predictions/PredictionStats";
 import PredictionTable from "@/components/predictions/PredictionTable";
@@ -102,7 +103,7 @@ export default function PredictionsPage() {
         }
     }, [showGetPredictionModal, showBatchPredictionModal, selectedAccountId, getPredictionAccountId, batchAccountId]);
 
-    const apiUrl = getApiUrl();
+    const apiUrl = getApiV1Base();
 
     const fetchPredictions = useCallback(async () => {
         try {
@@ -220,7 +221,7 @@ export default function PredictionsPage() {
                 const token = localStorage.getItem("auth_token");
                 if (!token) return;
 
-                const response = await fetch(`${apiUrl}/market/pairs/${getPredictionAccountId}/db?active_only=true`, {
+                const response = await fetch(`${getMarketApiBase()}/pairs/${getPredictionAccountId}/db?active_only=true`, {
                     headers: { Authorization: `Bearer ${token}` },
                 });
 

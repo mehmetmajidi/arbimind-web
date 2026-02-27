@@ -2,7 +2,7 @@
 
 import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { getApiUrl } from "@/lib/apiBaseUrl";
+import { getApiV1Base } from "@/lib/apiBaseUrl";
 
 function OAuthCallbackHandler() {
      const router = useRouter();
@@ -28,7 +28,7 @@ function OAuthCallbackHandler() {
                          return;
                     }
 
-                    const apiUrl = getApiUrl();
+                    const apiUrl = getApiV1Base();
                     const redirectUri = typeof window !== "undefined" ? `${window.location.origin}/oauth-success` : "http://localhost:3000/oauth-success";
                     const response = await fetch(`${apiUrl}/auth/google/callback?code=${encodeURIComponent(code)}&redirect_uri=${encodeURIComponent(redirectUri)}`, {
                          method: "GET",

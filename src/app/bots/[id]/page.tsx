@@ -14,6 +14,7 @@ import {
   fetchBotTrades as apiFetchBotTrades,
   startBot as apiStartBot,
   stopBot as apiStopBot,
+  resetBot as apiResetBot,
   deleteBot as apiDeleteBot,
 } from "@/lib/botsApi";
 
@@ -159,6 +160,24 @@ export default function BotDetailPage() {
     } catch (err) {
       console.error("Error stopping bot:", err);
       setError(err instanceof Error ? err.message : "Failed to stop bot");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleResetBot = async () => {
+    if (!botId) return;
+    if (!confirm("Reset bot? This will stop it (if running) and close all open positions. You can then start it again.")) return;
+    setActionLoading(true);
+    try {
+      const updated = await apiResetBot(botId);
+      setBot(updated);
+      await fetchBot();
+      await fetchBotStatus();
+      await fetchBotTrades();
+    } catch (err) {
+      console.error("Error resetting bot:", err);
+      setError(err instanceof Error ? err.message : "Failed to reset bot");
     } finally {
       setActionLoading(false);
     }
@@ -336,6 +355,23 @@ export default function BotDetailPage() {
                   Start Bot
                 </button>
               )}
+              <button
+                onClick={handleResetBot}
+                disabled={actionLoading}
+                style={{
+                  padding: "8px 16px",
+                  backgroundColor: "#b45309",
+                  border: "none",
+                  borderRadius: "8px",
+                  color: colors.text,
+                  fontWeight: "600",
+                  cursor: actionLoading ? "not-allowed" : "pointer",
+                  fontSize: "14px",
+                  opacity: actionLoading ? 0.6 : 1,
+                }}
+              >
+                Reset Bot
+              </button>
               <button
                 onClick={handleEditBot}
                 disabled={actionLoading}

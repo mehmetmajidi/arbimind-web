@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { ExportModal, ExportFormat } from "@/components/export";
 import { getApiUrl } from "@/lib/apiBaseUrl";
+import { getTrainApiBase } from "@/lib/trainEndpoints";
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 
 interface TradeResult {
@@ -129,7 +130,7 @@ export default function PerformancePage() {
      const [winRateThreshold, setWinRateThreshold] = useState<number>(0.5);
      const [accuracyThreshold, setAccuracyThreshold] = useState<number>(0.6);
 
-     const apiUrl = getApiUrl();
+     const apiUrl = getApiV1Base();
 
      // Fetch available models
      const fetchModels = useCallback(async () => {
@@ -137,7 +138,7 @@ export default function PerformancePage() {
                const token = localStorage.getItem("auth_token");
                if (!token) return;
 
-               const response = await fetch(`${apiUrl}/train/models`, {
+               const response = await fetch(`${getTrainApiBase()}/models`, {
                     headers: { Authorization: `Bearer ${token}` },
                });
 

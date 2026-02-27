@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { TradingBot } from "./types";
 import { colors } from "./constants";
-import { getApiUrl } from "@/lib/apiBaseUrl";
+import { getBotsApiBase } from "@/lib/botsEndpoints";
+import { getExchangeApiBase } from "@/lib/exchangeEndpoints";
 
 interface EditBotFormProps {
   isOpen: boolean;
@@ -38,8 +39,7 @@ export default function EditBotForm({ isOpen, bot, onClose, onSuccess }: EditBot
       const token = localStorage.getItem("auth_token") || "";
       if (!token) return;
 
-      const apiUrl = getApiUrl();
-      const response = await fetch(`${apiUrl}/exchange/accounts`, {
+      const response = await fetch(`${getExchangeApiBase()}/accounts`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -125,7 +125,6 @@ export default function EditBotForm({ isOpen, bot, onClose, onSuccess }: EditBot
         return;
       }
 
-      const apiUrl = getApiUrl();
       // Prepare update data (only changed fields)
       const updateData: Record<string, unknown> = {};
       
@@ -166,7 +165,7 @@ export default function EditBotForm({ isOpen, bot, onClose, onSuccess }: EditBot
         return;
       }
 
-      const response = await fetch(`${apiUrl}/bots/${bot.id}`, {
+      const response = await fetch(`${getBotsApiBase()}/${bot.id}`, {
         method: "PUT",
         headers: {
           Authorization: `Bearer ${token}`,

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { MdRefresh, MdTrendingUp, MdTrendingDown } from "react-icons/md";
 import { useExchange } from "@/contexts/ExchangeContext";
 import { getApiUrl } from "@/lib/apiBaseUrl";
+import { getMarketApiBase } from "@/lib/marketEndpoints";
 
 interface ArbitrageData {
     symbol: string;
@@ -37,6 +38,7 @@ export default function ArbitragePanel({ selectedSymbol }: ArbitragePanelProps) 
     const shouldReconnectRef = useRef(true);
     const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const connectionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const hasDataRef = useRef(false);
 
     const fetchArbitrageData = useCallback(async () => {
         if (!selectedSymbol) {
@@ -54,10 +56,10 @@ export default function ArbitragePanel({ selectedSymbol }: ArbitragePanelProps) 
                 return;
             }
 
-            const apiUrl = getApiUrl();
+            const marketBase = getMarketApiBase();
             const encodedSymbol = encodeURIComponent(selectedSymbol);
-            
-            const response = await fetch(`${apiUrl}/market/arbitrage/${encodedSymbol}`, {
+
+            const response = await fetch(`${marketBase}/arbitrage/${encodedSymbol}`, {
                 headers: { Authorization: `Bearer ${token}` },
             });
 
@@ -71,6 +73,7 @@ export default function ArbitragePanel({ selectedSymbol }: ArbitragePanelProps) 
 
             const data: ArbitrageData = await response.json();
             setArbitrageData(data);
+            hasDataRef.current = true;
         } catch (err) {
             console.error("Error fetching arbitrage data:", err);
             setError(err instanceof Error ? err.message : "Failed to fetch arbitrage data");
@@ -81,7 +84,7 @@ export default function ArbitragePanel({ selectedSymbol }: ArbitragePanelProps) 
 
     // Helper function to setup WebSocket with all event handlers
     const setupWebSocket = (symbol: string, token: string) => {
-        const apiUrl = getApiUrl();
+        const apiUrl = getApiV1Base();
         const encodedSymbol = encodeURIComponent(symbol);
         const wsUrl = apiUrl.replace("http://", "ws://").replace("https://", "wss://");
         const wsEndpoint = `${wsUrl}/ws/arbitrage/${encodedSymbol}?token=${encodeURIComponent(token)}`;
@@ -186,7 +189,9 @@ export default function ArbitragePanel({ selectedSymbol }: ArbitragePanelProps) 
                 }, delay);
             } else if (reconnectAttemptsRef.current >= 5) {
                 console.warn("⚠️ Max reconnection attempts (5) reached. Stopping reconnection attempts.");
-                setError("Failed to connect after 5 attempts. Please refresh the page.");
+                setError(hasDataRef.current
+                    ? "Real-time updates disconnected. Click refresh to reconnect."
+                    : "Failed to connect after 5 attempts. Click refresh to try again.");
                 shouldReconnectRef.current = false;
             }
         };
@@ -300,6 +305,31 @@ export default function ArbitragePanel({ selectedSymbol }: ArbitragePanelProps) 
         fetchArbitrageData();
     }, [fetchArbitrageData]);
 
+    const handleRefresh = useCallback(() => {
+        setError(null);
+        reconnectAttemptsRef.current = 0;
+        shouldReconnectRef.current = true;
+        if (reconnectTimeoutRef.current) {
+            clearTimeout(reconnectTimeoutRef.current);
+            reconnectTimeoutRef.current = null;
+        }
+        fetchArbitrageData();
+        if (selectedSymbol && wsRef.current?.readyState !== WebSocket.OPEN && wsRef.current?.readyState !== WebSocket.CONNECTING) {
+            const token = localStorage.getItem("auth_token");
+            if (token) {
+                if (wsRef.current) {
+                    wsRef.current.close();
+                    wsRef.current = null;
+                }
+                setupWebSocket(selectedSymbol, token);
+            }
+        }
+    }, [selectedSymbol, fetchArbitrageData]);
+
+    useEffect(() => {
+        hasDataRef.current = arbitrageData !== null;
+    }, [arbitrageData]);
+
     const formatPrice = (price: number | null): string => {
         if (price === null || price === undefined) return "N/A";
         if (price === 0) return "0.00";
@@ -384,7 +414,7 @@ export default function ArbitragePanel({ selectedSymbol }: ArbitragePanelProps) 
                     )}
                 </div>
                 <button
-                    onClick={fetchArbitrageData}
+                    onClick={handleRefresh}
                     disabled={loading}
                     style={{
                         backgroundColor: "transparent",

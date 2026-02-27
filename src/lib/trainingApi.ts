@@ -10,9 +10,7 @@ import {
     JobLogsResponse,
     Model,
 } from "@/types/training";
-import { getApiUrl } from "./apiBaseUrl";
-
-const apiUrl = getApiUrl();
+import { getTrainApiBase } from "./trainEndpoints";
 
 const getAuthToken = (): string => {
     if (typeof window === "undefined") return "";
@@ -43,7 +41,7 @@ const handleAuthError = (response: Response): void => {
  * Get list of all training jobs
  */
 export async function getTrainingJobs(): Promise<{ jobs: TrainingJob[] }> {
-    const response = await fetch(`${apiUrl}/train/status`, {
+    const response = await fetch(`${getTrainApiBase()}/status`, {
         method: "GET",
         headers: getHeaders(),
     });
@@ -63,7 +61,7 @@ export async function getTrainingJobs(): Promise<{ jobs: TrainingJob[] }> {
 export async function startTraining(
     request: TrainingRequest
 ): Promise<StartTrainingResponse> {
-    const response = await fetch(`${apiUrl}/train/start`, {
+    const response = await fetch(`${getTrainApiBase()}/start`, {
         method: "POST",
         headers: getHeaders(),
         body: JSON.stringify(request),
@@ -82,7 +80,7 @@ export async function startTraining(
  * Cancel a training job
  */
 export async function cancelTraining(jobId: string): Promise<{ message: string }> {
-    const response = await fetch(`${apiUrl}/train/cancel/${jobId}`, {
+    const response = await fetch(`${getTrainApiBase()}/cancel/${jobId}`, {
         method: "POST",
         headers: getHeaders(),
     });
@@ -103,7 +101,7 @@ export async function getJobLogs(
     jobId: string,
     lines: number = 10000
 ): Promise<JobLogsResponse> {
-    const response = await fetch(`${apiUrl}/train/logs/${jobId}?lines=${lines}`, {
+    const response = await fetch(`${getTrainApiBase()}/logs/${jobId}?lines=${lines}`, {
         method: "GET",
         headers: getHeaders(),
     });
@@ -121,7 +119,7 @@ export async function getJobLogs(
  * Get status of a specific training job
  */
 export async function getTrainingJobStatus(jobId: string): Promise<TrainingJob> {
-    const response = await fetch(`${apiUrl}/train/status/${jobId}`, {
+    const response = await fetch(`${getTrainApiBase()}/status/${jobId}`, {
         method: "GET",
         headers: getHeaders(),
     });
@@ -139,7 +137,7 @@ export async function getTrainingJobStatus(jobId: string): Promise<TrainingJob> 
  * Get periodic retraining status and metrics
  */
 export async function getPeriodicStatus(): Promise<PeriodicRetrainStatus> {
-    const response = await fetch(`${apiUrl}/train/periodic-status`, {
+    const response = await fetch(`${getTrainApiBase()}/periodic-status`, {
         method: "GET",
         headers: getHeaders(),
     });
@@ -161,7 +159,7 @@ export async function getFilterStatus(
     interval: string = "1h"
 ): Promise<FilterStatus> {
     const encodedSymbol = encodeURIComponent(symbol);
-    const response = await fetch(`${apiUrl}/train/filter-status/${encodedSymbol}?interval=${interval}`, {
+    const response = await fetch(`${getTrainApiBase()}/filter-status/${encodedSymbol}?interval=${interval}`, {
         method: "GET",
         headers: getHeaders(),
     });
@@ -214,7 +212,7 @@ export async function getMetrics(): Promise<PeriodicRetrainStatus["summary"]> {
  * Get list of available models
  */
 export async function getAvailableModels(): Promise<{ models: Model[] }> {
-    const response = await fetch(`${apiUrl}/train/models`, {
+    const response = await fetch(`${getTrainApiBase()}/models`, {
         method: "GET",
         headers: getHeaders(),
     });
@@ -232,7 +230,7 @@ export async function getAvailableModels(): Promise<{ models: Model[] }> {
  * Trigger retraining for a model
  */
 export async function retrainModel(modelVersion: string): Promise<StartTrainingResponse> {
-    const response = await fetch(`${apiUrl}/train/retrain`, {
+    const response = await fetch(`${getTrainApiBase()}/retrain`, {
         method: "POST",
         headers: getHeaders(),
         body: JSON.stringify({ model_version: modelVersion }),
@@ -251,7 +249,7 @@ export async function retrainModel(modelVersion: string): Promise<StartTrainingR
  * Retrain a specific training job
  */
 export async function retrainJob(jobId: string): Promise<{ status: string; message: string; original_job_id: string; new_job_id: string }> {
-    const response = await fetch(`${apiUrl}/train/retrain-job/${encodeURIComponent(jobId)}`, {
+    const response = await fetch(`${getTrainApiBase()}/retrain-job/${encodeURIComponent(jobId)}`, {
         method: "POST",
         headers: getHeaders(),
     });
@@ -269,7 +267,7 @@ export async function retrainJob(jobId: string): Promise<{ status: string; messa
  * Pause a running training job
  */
 export async function pauseTraining(jobId: string): Promise<{ status: string; message: string; checkpoint_path?: string }> {
-    const response = await fetch(`${apiUrl}/train/pause/${encodeURIComponent(jobId)}`, {
+    const response = await fetch(`${getTrainApiBase()}/pause/${encodeURIComponent(jobId)}`, {
         method: "POST",
         headers: getHeaders(),
     });
@@ -287,7 +285,7 @@ export async function pauseTraining(jobId: string): Promise<{ status: string; me
  * Resume a paused training job
  */
 export async function resumeTraining(jobId: string, checkpointPath?: string): Promise<{ status: string; message: string; original_job_id: string; new_job_id: string; checkpoint_path?: string }> {
-    const url = new URL(`${apiUrl}/train/resume/${encodeURIComponent(jobId)}`);
+    const url = new URL(`${getTrainApiBase()}/resume/${encodeURIComponent(jobId)}`);
     if (checkpointPath) {
         url.searchParams.append("checkpoint_path", checkpointPath);
     }
@@ -310,7 +308,7 @@ export async function resumeTraining(jobId: string, checkpointPath?: string): Pr
  * Delete a training job
  */
 export async function deleteTraining(jobId: string): Promise<{ status: string; message: string }> {
-    const response = await fetch(`${apiUrl}/train/${encodeURIComponent(jobId)}`, {
+    const response = await fetch(`${getTrainApiBase()}/${encodeURIComponent(jobId)}`, {
         method: "DELETE",
         headers: getHeaders(),
     });
@@ -328,7 +326,7 @@ export async function deleteTraining(jobId: string): Promise<{ status: string; m
  * Trigger periodic retraining manually
  */
 export async function triggerPeriodicRetrain(tier: number = 1): Promise<{ status: string; message: string; session: any }> {
-    const response = await fetch(`${apiUrl}/train/trigger-periodic?tier=${tier}`, {
+    const response = await fetch(`${getTrainApiBase()}/trigger-periodic?tier=${tier}`, {
         method: "POST",
         headers: getHeaders(),
     });
@@ -359,7 +357,7 @@ export async function completeCandleData(
     completeness?: number;
 }> {
     const encodedSymbol = encodeURIComponent(symbol);
-    const response = await fetch(`${apiUrl}/train/complete-candle-data/${encodedSymbol}?interval=${interval}`, {
+    const response = await fetch(`${getTrainApiBase()}/complete-candle-data/${encodedSymbol}?interval=${interval}`, {
         method: "POST",
         headers: getHeaders(),
     });

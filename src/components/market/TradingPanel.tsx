@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback, useImperativeHandle, forwardRef } fro
 import { useExchange } from "@/contexts/ExchangeContext";
 import { MdRefresh, MdArrowDownward, MdArrowUpward, MdTrendingUp, MdTrendingDown, MdLanguage, MdExpandMore } from "react-icons/md";
 import { getApiUrl } from "@/lib/apiBaseUrl";
+import { getMarketApiBase } from "@/lib/marketEndpoints";
+import { getTradingApiBase } from "@/lib/tradingEndpoints";
 
 export interface TradingPanelRef {
     refreshBalance: () => void;
@@ -155,9 +157,7 @@ const TradingPanel = forwardRef<TradingPanelRef, TradingPanelProps>(({
                 return;
             }
 
-            const apiUrl = getApiUrl();
-
-            const response = await fetch(`${apiUrl}/trading/balance/${selectedAccountId}`, {
+            const response = await fetch(`${getTradingApiBase()}/balance/${selectedAccountId}`, {
                 headers: { Authorization: `Bearer ${token}` },
             });
 
@@ -223,17 +223,65 @@ const TradingPanel = forwardRef<TradingPanelRef, TradingPanelProps>(({
                 return;
             }
 
-            const apiUrl = getApiUrl();
+            const marketBase = getMarketApiBase();
             const selectedAccount = accounts.find(acc => acc.id === selectedAccountId);
             const exchangeName = selectedAccount?.exchange_name?.toLowerCase();
+            const isDemo = selectedAccountId === -999;
             const headers = { Authorization: `Bearer ${token}` };
+
+            const parsePairsResponse = (pairsData: { markets?: Array<{ symbol?: string; base?: string; quote?: string; active?: boolean }> }) => {
+                const markets = pairsData.markets || [];
+                if (markets.length === 0) return null;
+                const symbolSet = new Set<string>();
+                markets
+                    .filter((m) => m.active !== false && m.base && m.quote && (m.symbol || (m.base && m.quote)))
+                    .forEach((m) => {
+                        const full = m.symbol ? m.symbol.toUpperCase() : `${m.base}/${m.quote}`.toUpperCase();
+                        symbolSet.add(full);
+                    });
+                return Array.from(symbolSet).sort();
+            };
+
+            // Demo Exchange: use /market/pairs only (single reliable endpoint for Binance list), with one retry
+            if (isDemo) {
+                const tryDemoPairs = async (): Promise<string[] | null> => {
+                    const controller = new AbortController();
+                    const t = setTimeout(() => controller.abort(), SYMBOLS_FETCH_TIMEOUT_MS);
+                    try {
+                        const res = await fetch(`${marketBase}/pairs/${selectedAccountId}`, {
+                            headers,
+                            signal: controller.signal,
+                        });
+                        clearTimeout(t);
+                        if (!res.ok) return null;
+                        const data = await res.json();
+                        return parsePairsResponse(data);
+                    } catch {
+                        clearTimeout(t);
+                        return null;
+                    }
+                };
+                let list = await tryDemoPairs();
+                if (!list || list.length === 0) {
+                    await new Promise((r) => setTimeout(r, 1500));
+                    list = await tryDemoPairs();
+                }
+                if (list && list.length > 0) {
+                    console.log("✅ Fetched symbols for Demo (pairs):", list.length);
+                    setAvailableSymbols(list);
+                } else {
+                    setAvailableSymbols([]);
+                }
+                setCurrenciesLoading(false);
+                return;
+            }
 
             // Strategy 0: For Kraken, fetch markets directly from exchange API
             if (exchangeName === "kraken") {
                 const krakenAbort = new AbortController();
                 const krakenTimeoutId = setTimeout(() => krakenAbort.abort(), SYMBOLS_FETCH_TIMEOUT_MS);
                 try {
-                    const marketsResponse = await fetch(`${apiUrl}/market/pairs/${selectedAccountId}`, {
+                    const marketsResponse = await fetch(`${marketBase}/pairs/${selectedAccountId}`, {
                         headers,
                         signal: krakenAbort.signal,
                     });
@@ -272,7 +320,7 @@ const TradingPanel = forwardRef<TradingPanelRef, TradingPanelProps>(({
             const byAccountAbort = new AbortController();
             const byAccountTimeoutId = setTimeout(() => byAccountAbort.abort(), SYMBOLS_FETCH_TIMEOUT_MS);
             try {
-                const symbolsResponse = await fetch(`${apiUrl}/market/symbols/by-account/${selectedAccountId}?active_only=true`, {
+                const symbolsResponse = await fetch(`${marketBase}/symbols/by-account/${selectedAccountId}?active_only=true`, {
                     headers,
                     signal: byAccountAbort.signal,
                 });
@@ -335,7 +383,7 @@ const TradingPanel = forwardRef<TradingPanelRef, TradingPanelProps>(({
             const pairsAbort = new AbortController();
             const pairsTimeoutId = setTimeout(() => pairsAbort.abort(), SYMBOLS_FETCH_TIMEOUT_MS);
             try {
-                const pairsResponse = await fetch(`${apiUrl}/market/pairs/${selectedAccountId}`, {
+                const pairsResponse = await fetch(`${marketBase}/pairs/${selectedAccountId}`, {
                     headers,
                     signal: pairsAbort.signal,
                 });
@@ -426,10 +474,10 @@ const TradingPanel = forwardRef<TradingPanelRef, TradingPanelProps>(({
                 return;
             }
 
-            const apiUrl = getApiUrl();
+            const marketBase = getMarketApiBase();
             const encodedSymbol = encodeURIComponent(selectedSymbol);
 
-            const response = await fetch(`${apiUrl}/market/price/${selectedAccountId}/${encodedSymbol}`, {
+            const response = await fetch(`${marketBase}/price/${selectedAccountId}/${encodedSymbol}`, {
                 headers: { Authorization: `Bearer ${token}` },
             });
 
@@ -455,7 +503,7 @@ const TradingPanel = forwardRef<TradingPanelRef, TradingPanelProps>(({
                 // If high/low are 0, try to calculate from OHLCV data
                 if ((high === 0 || low === 0) && selectedSymbol) {
                     try {
-                        const ohlcvResponse = await fetch(`${apiUrl}/market/ohlcv/${selectedAccountId}/${encodedSymbol}?timeframe=1h&limit=24`, {
+                        const ohlcvResponse = await fetch(`${marketBase}/ohlcv/${selectedAccountId}/${encodedSymbol}?timeframe=1h&limit=24`, {
                             headers: { Authorization: `Bearer ${token}` },
                         });
                         

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useExchange } from "@/contexts/ExchangeContext";
 import { getApiUrl } from "@/lib/apiBaseUrl";
+import { getMarketApiBase } from "@/lib/marketEndpoints";
 import Alert from "@/components/Alert";
 import Link from "next/link";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
@@ -124,7 +125,7 @@ export default function MonitoringPage() {
           type: "all",
      });
 
-     const apiUrl = getApiUrl();
+     const apiUrl = getApiV1Base();
 
      // Normalize symbol (remove / and - to match database format)
      const normalizeSymbol = useCallback((symbol: string) => {
@@ -150,7 +151,7 @@ export default function MonitoringPage() {
                          return;
                     }
 
-                    const response = await fetch(`${apiUrl}/market/pairs/${selectedAccountId}`, {
+                    const response = await fetch(`${getMarketApiBase()}/pairs/${selectedAccountId}`, {
                          headers: { Authorization: `Bearer ${token}` },
                     });
 
@@ -434,7 +435,7 @@ export default function MonitoringPage() {
                return;
           }
 
-          const apiUrl = getApiUrl();
+          const apiUrl = getApiV1Base();
           // Convert http to ws
           const wsUrl = apiUrl.replace("http://", "ws://").replace("https://", "wss://");
           const normalizedSymbol = encodeURIComponent(selectedSymbol);

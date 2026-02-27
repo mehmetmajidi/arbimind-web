@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { getApiUrl, getWsUrl } from "@/lib/apiBaseUrl";
+import { getWsV1Base } from "@/lib/apiBaseUrl";
+import { getBotsApiBase } from "@/lib/botsEndpoints";
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
@@ -112,8 +113,7 @@ export function useBotWebSocket({
           return;
         }
 
-        const apiUrl = getApiUrl();
-        const response = await fetch(`${apiUrl}/bots/${botId}/status`, {
+        const response = await fetch(`${getBotsApiBase()}/${botId}/status`, {
           headers: { Authorization: `Bearer ${token}` },
         });
 
@@ -210,8 +210,8 @@ export function useBotWebSocket({
       return;
     }
 
-    const wsUrl = getWsUrl();
-    const url = `${wsUrl}/ws/bot/${botId}?token=${encodeURIComponent(token)}&interval=${interval}`;
+    const wsBase = getWsV1Base();
+    const url = `${wsBase}/ws/bot/${botId}?token=${encodeURIComponent(token)}&interval=${interval}`;
 
     try {
       setConnectionStatus("connecting");
@@ -262,6 +262,10 @@ export function useBotWebSocket({
               break;
             case "pong":
               // Keep-alive response
+              break;
+            case "bot_decision":
+            case "decision_update":
+              // Handled by BotDecisionLogs component's own listener — ignore here
               break;
             default:
               console.log("Unknown WebSocket message type:", message.type);

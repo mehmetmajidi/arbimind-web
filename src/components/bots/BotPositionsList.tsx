@@ -5,6 +5,9 @@ import { BotTrade } from "./types";
 import { colors, panelStyle } from "./constants";
 import PositionCard from "./PositionCard";
 import { getApiUrl } from "@/lib/apiBaseUrl";
+import { getBotsApiBase } from "@/lib/botsEndpoints";
+import { getMarketApiBase } from "@/lib/marketEndpoints";
+import { getTradingApiBase } from "@/lib/tradingEndpoints";
 
 interface BotPositionsListProps {
   positions: BotTrade[];
@@ -48,10 +51,10 @@ export default function BotPositionsList({
       const token = localStorage.getItem("auth_token") || "";
       if (!token) return;
 
-      const apiUrl = getApiUrl();
+      const marketBase = getMarketApiBase();
       const encodedSymbol = encodeURIComponent(symbol);
 
-      const response = await fetch(`${apiUrl}/market/price/${exchangeAccountId}/${encodedSymbol}`, {
+      const response = await fetch(`${marketBase}/price/${exchangeAccountId}/${encodedSymbol}`, {
         headers: { Authorization: `Bearer ${token}` },
         cache: "no-cache",
       });
@@ -90,7 +93,7 @@ export default function BotPositionsList({
     if (uniqueSymbols.length === 0 || exchangeAccountId == null) return;
     const token = localStorage.getItem("auth_token") || "";
     if (!token) return;
-    const apiUrl = getApiUrl();
+    const apiUrl = getApiV1Base();
     const next: Record<string, number | null> = {};
     await Promise.all(
       uniqueSymbols.map(async (symbol) => {
@@ -134,9 +137,8 @@ export default function BotPositionsList({
       const token = localStorage.getItem("auth_token") || "";
       if (!token) return;
 
-      const apiUrl = getApiUrl();
-      // Fetch all open/pending orders for this exchange account
-      const response = await fetch(`${apiUrl}/trading/orders?exchange_account_id=${exchangeAccountId}&status=open,pending&limit=100`, {
+      // Use /orders/exchange so Demo (-999) and real accounts both return active orders (open/pending)
+      const response = await fetch(`${getTradingApiBase()}/orders/exchange?exchange_account_id=${exchangeAccountId}&limit=100`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -227,8 +229,7 @@ export default function BotPositionsList({
         return;
       }
 
-      const apiUrl = getApiUrl();
-      const response = await fetch(`${apiUrl}/bots/trades/${tradeId}/close`, {
+      const response = await fetch(`${getBotsApiBase()}/trades/${tradeId}/close`, {
         method: "POST",
         headers: { 
           Authorization: `Bearer ${token}`,

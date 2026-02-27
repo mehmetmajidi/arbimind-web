@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef, useImperativeHandle, forwardR
 import { useExchange } from "@/contexts/ExchangeContext";
 import { MdClose, MdRefresh } from "react-icons/md";
 import ConfirmCancelOrderModal from "./ConfirmCancelOrderModal";
-import { getApiUrl } from "@/lib/apiBaseUrl";
+import { getTradingApiBase } from "@/lib/tradingEndpoints";
 
 export interface ActiveOrdersRef {
     refresh: () => void;
@@ -68,8 +68,6 @@ const ActiveOrders = forwardRef<ActiveOrdersRef, ActiveOrdersProps>(({ selectedS
                 return;
             }
 
-            const apiUrl = getApiUrl();
-            
             // Fetch orders directly from exchange API
             const params = new URLSearchParams({
                 exchange_account_id: String(selectedAccountId),
@@ -83,7 +81,7 @@ const ActiveOrders = forwardRef<ActiveOrdersRef, ActiveOrdersProps>(({ selectedS
             }
 
             console.log("🔍 Fetching orders from exchange API with params:", params.toString());
-            const response = await fetch(`${apiUrl}/trading/orders/exchange?${params.toString()}`, {
+            const response = await fetch(`${getTradingApiBase()}/orders/exchange?${params.toString()}`, {
                 headers: { Authorization: `Bearer ${token}` },
             });
 
@@ -192,15 +190,13 @@ const ActiveOrders = forwardRef<ActiveOrdersRef, ActiveOrdersProps>(({ selectedS
                 return;
             }
 
-            const apiUrl = getApiUrl();
-            
             // Cancel order from exchange API
             const params = new URLSearchParams({
                 exchange_account_id: String(selectedAccountId),
                 symbol: orderToCancel.symbol,
             });
             
-            const response = await fetch(`${apiUrl}/trading/orders/exchange/${encodeURIComponent(orderToCancel.exchange_order_id)}?${params.toString()}`, {
+            const response = await fetch(`${getTradingApiBase()}/orders/exchange/${encodeURIComponent(orderToCancel.exchange_order_id)}?${params.toString()}`, {
                 method: "DELETE",
                 headers: { 
                     Authorization: `Bearer ${token}`,

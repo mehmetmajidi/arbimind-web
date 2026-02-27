@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { getApiUrl } from "@/lib/apiBaseUrl";
+import { getApiV1Base } from "@/lib/apiBaseUrl";
 import { 
      MdBarChart, 
      MdTrendingUp, 
@@ -44,6 +44,9 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
      const pathname = usePathname();
      const [isAuthenticated, setIsAuthenticated] = useState(false);
      const [isAdmin, setIsAdmin] = useState(false);
+     // Tracks whether the auth check has completed after hydration.
+     // Stays false until the first useEffect fires so we don't flash null.
+     const [authChecked, setAuthChecked] = useState(false);
 
      useEffect(() => {
           const checkAuth = async () => {
@@ -53,7 +56,7 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
                // Check if user is admin
                if (token) {
                     try {
-                         const apiUrl = getApiUrl();
+                         const apiUrl = getApiV1Base();
                          const meRes = await fetch(`${apiUrl}/auth/me`, {
                               headers: { Authorization: `Bearer ${token}` },
                          });
@@ -67,6 +70,7 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
                          setIsAdmin(false);
                     }
                }
+               setAuthChecked(true);
           };
           checkAuth();
      }, []);
@@ -100,8 +104,13 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
           return () => window.removeEventListener("keydown", handleKeyDown);
      }, [onToggle]);
 
-     // Don't show sidebar on login/register/forgot-password/reset-password pages
-     if (pathname === "/login" || pathname === "/register" || pathname === "/forgot-password" || pathname === "/reset-password" || !isAuthenticated) {
+     // Don't show sidebar on auth pages or while auth check is still pending.
+     // Using authChecked avoids a hydration mismatch: server renders nothing,
+     // client waits until after mount to decide whether to show the sidebar.
+     if (pathname === "/login" || pathname === "/register" || pathname === "/forgot-password" || pathname === "/reset-password") {
+          return null;
+     }
+     if (!authChecked || !isAuthenticated) {
           return null;
      }
 

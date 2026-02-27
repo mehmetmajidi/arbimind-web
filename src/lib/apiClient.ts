@@ -1,9 +1,9 @@
 // Enhanced API client with error handling, retry, and logging
 
 import { parseApiError, handleApiError, logError, retryRequest, RetryOptions, type ApiError } from "./errorHandler";
-import { getApiUrl } from "./apiBaseUrl";
+import { getApiV1Base } from "./apiBaseUrl";
 
-const apiUrl = getApiUrl();
+const apiUrl = getApiV1Base();
 
 const getAuthToken = (): string => {
     if (typeof window === "undefined") return "";

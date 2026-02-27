@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from "react";
 import { usePathname } from "next/navigation";
-import { getApiUrl } from "@/lib/apiBaseUrl";
+import { getExchangeApiBase } from "@/lib/exchangeEndpoints";
 
 const AUTH_ROUTES = ["/login", "/register", "/forgot-password", "/reset-password", "/oauth-success"];
 
@@ -57,8 +57,7 @@ export function ExchangeProvider({ children }: { children: ReactNode }) {
                 return;
             }
 
-            const apiUrl = getApiUrl();
-            const url = `${apiUrl}/exchange/accounts`;
+            const url = `${getExchangeApiBase()}/accounts`;
             
             console.log("ExchangeContext: Fetching accounts from:", url);
 
@@ -156,12 +155,17 @@ export function ExchangeProvider({ children }: { children: ReactNode }) {
         }
     }, []);
 
-    // On auth routes: do not fetch accounts, show content immediately
+    // On auth routes or when no token exists: stop loading immediately.
+    // Also handles initial mount: if there is no token we never need to fetch.
     useEffect(() => {
         if (isAuthRoute(pathname)) {
             setLoading(false);
             setError(null);
             return;
+        }
+        const token = localStorage.getItem("auth_token");
+        if (!token) {
+            setLoading(false);
         }
     }, [pathname]);
 
@@ -171,8 +175,6 @@ export function ExchangeProvider({ children }: { children: ReactNode }) {
         const token = localStorage.getItem("auth_token");
         if (token && accounts.length === 0 && !fetchingRef.current) {
             fetchAccounts();
-        } else if (!token) {
-            setLoading(false);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [pathname]); // Re-run when pathname changes (e.g. after login redirect)

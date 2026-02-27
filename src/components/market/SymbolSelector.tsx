@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { getApiUrl } from "@/lib/apiBaseUrl";
+import { getMarketApiBase } from "@/lib/marketEndpoints";
 
 interface Symbol {
     symbol: string;
@@ -54,10 +54,10 @@ export default function SymbolSelector({
                     return;
                 }
 
-                const apiUrl = getApiUrl();
-                const endpoint = accountId 
-                    ? `${apiUrl}/market/symbols/by-account/${accountId}?active_only=true`
-                    : `${apiUrl}/market/symbols/by-exchange-id/${exchangeId}?active_only=true`;
+                const marketBase = getMarketApiBase();
+                const endpoint = accountId
+                    ? `${marketBase}/symbols/by-account/${accountId}?active_only=true`
+                    : `${marketBase}/symbols/by-exchange-id/${exchangeId}?active_only=true`;
                 const response = await fetch(endpoint, {
                     headers: { Authorization: `Bearer ${token}` },
                     // Use cache for faster loading - cache for 30 seconds

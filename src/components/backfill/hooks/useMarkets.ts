@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
 import type { Market, SymbolDataStatus } from "../types";
+import { getMarketApiBase } from "@/lib/marketEndpoints";
 import { API_URL, getAuthToken } from "./utils";
 
 export function useMarkets(selectedAccountId: number | null) {
@@ -17,7 +18,7 @@ export function useMarkets(selectedAccountId: number | null) {
           setSymbolsLoading(true);
           try {
                const token = getAuthToken();
-               const response = await fetch(`${API_URL}/market/pairs/${selectedAccountId}/db?active_only=true`, {
+               const response = await fetch(`${getMarketApiBase()}/pairs/${selectedAccountId}/db?active_only=true`, {
                     headers: { Authorization: `Bearer ${token}` },
                });
 
@@ -43,7 +44,7 @@ export function useMarkets(selectedAccountId: number | null) {
           setSymbolsLoading(true);
           try {
                const token = getAuthToken();
-               const response = await fetch(`${API_URL}/market/pairs/${selectedAccountId}/sync`, {
+               const response = await fetch(`${getMarketApiBase()}/pairs/${selectedAccountId}/sync`, {
                     method: "POST",
                     headers: { Authorization: `Bearer ${token}` },
                });

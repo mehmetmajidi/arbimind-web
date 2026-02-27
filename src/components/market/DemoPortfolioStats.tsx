@@ -66,7 +66,7 @@ export default function DemoPortfolioStats({ wallet: walletProp, loading: loadin
       try {
         const token = localStorage.getItem("auth_token");
         if (!token) throw new Error("Not authenticated");
-        const apiUrl = getApiUrl();
+        const apiUrl = getApiV1Base();
         const walletResponse = await fetch(`${apiUrl}/demo/wallet`, {
           headers: { Authorization: `Bearer ${token}` },
         });

@@ -79,6 +79,8 @@ export default function LayoutWrapper({ children }: { children: React.ReactNode 
                     minHeight: "100vh",
                     backgroundColor: "#202020",
                     transition: "margin-left 0.3s ease",
+                    width: "100%",
+                    boxSizing: "border-box",
                 }}
             >
                 {accountsLoading ? <AccountsLoadingSkeleton /> : children}

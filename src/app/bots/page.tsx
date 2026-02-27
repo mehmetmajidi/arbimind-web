@@ -202,27 +202,30 @@ function BotsPageContent() {
   }, []);
 
   // Fetch bot details when selected (status + trades in parallel)
+  // Also poll every 10 seconds while a bot is selected so Real-time Metrics stay fresh.
   useEffect(() => {
-    if (selectedBot) {
-      void Promise.all([
-        fetchBotStatus(selectedBot.id),
-        fetchBotTrades(selectedBot.id),
-      ]);
-    } else {
+    if (!selectedBot) {
       setBotStatus(null);
       setBotTrades([]);
+      return;
     }
+
+    // Initial load
+    void Promise.all([
+      fetchBotStatus(selectedBot.id),
+      fetchBotTrades(selectedBot.id),
+    ]);
+
+    // Poll status every 10 s
+    const interval = setInterval(() => {
+      void fetchBotStatus(selectedBot.id);
+    }, 10_000);
+
+    return () => clearInterval(interval);
   }, [selectedBot, fetchBotStatus, fetchBotTrades]);
 
-  // When status says there are open positions but the trades list doesn't show them, refetch trades (keeps Current Positions in sync)
-  useEffect(() => {
-    if (!selectedBot || !botStatus || botStatus.open_positions <= 0) return;
-    const openCount = botTrades.filter(t => String(t.status || "").toLowerCase() === "open").length;
-    if (openCount < botStatus.open_positions) {
-      fetchBotTrades(selectedBot.id);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- Only refetch trades when open_positions count suggests we're missing data
-  }, [selectedBot, botStatus?.open_positions, botTrades, fetchBotTrades]);
+  // Trades are only fetched on initial bot selection; the Refresh button
+  // lets the user manually reload them without causing page jumps.
 
   const filteredAndSortedBots = useMemo(
     () =>

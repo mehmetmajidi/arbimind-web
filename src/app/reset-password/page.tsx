@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { MdVisibility, MdVisibilityOff } from "react-icons/md";
-import { getApiUrl } from "@/lib/apiBaseUrl";
+import { getApiV1Base } from "@/lib/apiBaseUrl";
 
 // Add animated gradient styles
 if (typeof document !== "undefined") {
@@ -90,7 +90,7 @@ function ResetPasswordForm() {
         }
 
         try {
-            const apiUrl = getApiUrl();
+            const apiUrl = getApiV1Base();
             const response = await fetch(`${apiUrl}/auth/reset-password`, {
                 method: "POST",
                 headers: {

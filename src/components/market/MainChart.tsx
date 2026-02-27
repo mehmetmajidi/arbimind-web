@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, lazy, Suspense } from "react";
-import { createChart, IChartApi, ISeriesApi, CandlestickData, Time, LineData, CandlestickSeries, LineSeries, UTCTimestamp, IRange, BusinessDay, IPriceLine } from "lightweight-charts";
+import { createChart, createSeriesMarkers, IChartApi, ISeriesApi, ISeriesMarkersPluginApi, CandlestickData, Time, LineData, CandlestickSeries, LineSeries, UTCTimestamp, IRange, BusinessDay, IPriceLine } from "lightweight-charts";
 import DrawingToolsToolbar, { DrawingTool } from "./DrawingToolsToolbar";
 import { LiquidationMapControls, useLiquidationMap } from "@/components/liquidation";
 
@@ -42,6 +42,8 @@ interface MainChartProps {
     oldestTimestamp?: number | null;
     loadingMore?: boolean;
     selectedSymbol?: string;
+    /** Buy/sell orders to show as arrows on the chart (green = buy, red = sell). */
+    orderMarkers?: { time: number; price: number; side: "buy" | "sell" }[];
 }
 
 export default function MainChart({
@@ -58,6 +60,7 @@ export default function MainChart({
     oldestTimestamp = null,
     loadingMore = false,
     selectedSymbol = "",
+    orderMarkers = [],
 }: MainChartProps) {
     const [refreshInterval, setRefreshInterval] = useState(5);
     const [chartReady, setChartReady] = useState(false);
@@ -68,7 +71,8 @@ export default function MainChart({
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const candlestickSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
-    const predictionSeriesRef = useRef<Map<string, ISeriesApi<"Line">>>(new Map());
+    /** Prediction target price lines (label at correct price level on axis in every zoom/scroll state) */
+    const predictionPriceLinesRef = useRef<Map<string, IPriceLine>>(new Map());
     const paginationListenerRef = useRef<(() => void) | null>(null);
     const previousDataRef = useRef<CandlestickData[]>([]);
     const currentPriceLineRef = useRef<ISeriesApi<"Line"> | null>(null);
@@ -77,6 +81,7 @@ export default function MainChart({
     const drawingsRef = useRef<Array<{ id: string; primitive: unknown }>>([]);
     const oldestTimestampRef = useRef<number | null>(null);
     const isLoadingRef = useRef<boolean>(false);
+    const orderMarkersPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
 
     const timeframes = [
         { value: "1m", label: "1M" },
@@ -320,33 +325,14 @@ export default function MainChart({
         };
     }, [activeDrawingTool, chartReady]);
 
-    // Initialize chart when container becomes available
+    // Initialize chart once when container becomes available (do not destroy on loading change)
     useEffect(() => {
-        // Ensure we're on the client side
         if (typeof window === "undefined") return;
         
-        // Don't initialize if loading (container won't be rendered)
-        if (loading) {
-            console.log("Chart init: Skipping - still loading");
-            return;
-        }
-        
         if (chartRef.current) {
-            console.log("Chart init: Chart already exists");
             return;
         }
         
-        if (!chartContainerRef.current) {
-            console.log("Chart init: Container ref not available yet");
-            // Retry after a short delay
-            const retryTimeout = setTimeout(() => {
-                if (chartContainerRef.current && !chartRef.current && !loading) {
-                    console.log("Chart init: Retrying after delay");
-                }
-            }, 100);
-            return () => clearTimeout(retryTimeout);
-        }
-
         const initializeChart = () => {
             const container = chartContainerRef.current;
             if (!container) {
@@ -404,7 +390,7 @@ export default function MainChart({
                             top: 0.1,
                             bottom: 0.1,
                         },
-                        autoScale: false, // Disable auto-scaling - user controls zoom
+                        autoScale: true, // Required so price axis fits candle data
                     },
                 });
                 
@@ -441,6 +427,7 @@ export default function MainChart({
                     lastValueVisible: false, // Disabled - current price line will show the price instead
                 }) as ISeriesApi<"Candlestick">;
                 candlestickSeriesRef.current = candlestick;
+                orderMarkersPluginRef.current = createSeriesMarkers(candlestick, []);
                 
                 // Helper function to calculate remaining time until candle closes
                 const getCandleRemainingTime = (timeframe: string, candleTimestamp: number): string => {
@@ -576,15 +563,18 @@ export default function MainChart({
             return true;
         };
         
-        // Try immediately - use a small delay to ensure DOM is ready
-        const initTimeout = setTimeout(() => {
-            if (!chartRef.current && chartContainerRef.current && !loading) {
-                console.log("Chart init: Attempting initialization after timeout");
-                tryInitialize();
-            }
-        }, 50); // Small delay to ensure DOM is fully rendered
+        const delays = [0, 50, 150, 350];
+        const timeouts: ReturnType<typeof setTimeout>[] = [];
+        delays.forEach((delay) => {
+            const t = setTimeout(() => {
+                if (chartRef.current) return;
+                if (chartContainerRef.current) {
+                    tryInitialize();
+                }
+            }, delay);
+            timeouts.push(t);
+        });
         
-        // Also set up ResizeObserver to handle container size changes
         let resizeObserver: ResizeObserver | null = null;
         if (chartContainerRef.current && typeof ResizeObserver !== 'undefined') {
             resizeObserver = new ResizeObserver((entries) => {
@@ -607,7 +597,7 @@ export default function MainChart({
         }
         
         return () => {
-            clearTimeout(initTimeout);
+            timeouts.forEach((t) => clearTimeout(t));
             if (resizeObserver) {
                 resizeObserver.disconnect();
             }
@@ -640,11 +630,34 @@ export default function MainChart({
                 chartRef.current = null;
             }
             candlestickSeriesRef.current = null;
+            predictionPriceLinesRef.current.clear();
+            orderMarkersPluginRef.current = null;
             currentPriceLineRef.current = null;
             currentPriceLinePriceLineRef.current = null;
             setChartReady(false);
         };
-    }, [loading]); // Re-run when loading state changes
+    }, []); // Init once on mount; do not destroy chart when loading changes
+
+    // Update buy/sell markers on chart (green arrow = buy, red arrow = sell)
+    useEffect(() => {
+        const plugin = orderMarkersPluginRef.current;
+        if (!plugin || !chartReady || !orderMarkers.length) {
+            if (plugin && (!orderMarkers || orderMarkers.length === 0)) {
+                plugin.setMarkers([]);
+            }
+            return;
+        }
+        const markers = orderMarkers.map((o) => {
+            const timeSec = o.time > 1000000000000 ? Math.floor(o.time / 1000) : o.time;
+            return {
+                time: timeSec as UTCTimestamp,
+                position: o.side === "buy" ? ("aboveBar" as const) : ("belowBar" as const),
+                shape: o.side === "buy" ? ("arrowUp" as const) : ("arrowDown" as const),
+                color: o.side === "buy" ? "#22c55e" : "#ef4444",
+            };
+        });
+        plugin.setMarkers(markers);
+    }, [chartReady, orderMarkers]);
 
     // Update candlestick data
     useEffect(() => {
@@ -656,186 +669,6 @@ export default function MainChart({
         if (!chartRef.current || !chartReady) {
             console.log("Skipping data update - chart not initialized yet (chartReady:", chartReady, ")");
             return;
-        }
-        
-        // Verify container still exists and has canvas
-        const canvas = chartContainerRef.current.querySelector('canvas');
-        if (!canvas) {
-            console.warn("❌ Canvas not found in container! Attempting to reinitialize chart...");
-            // Try to reinitialize if canvas is missing
-            if (chartRef.current) {
-                try {
-                    // Clear prediction series before removing chart to avoid "Value is undefined" error
-                    predictionSeriesRef.current.forEach((series) => {
-                        try {
-                            if (chartRef.current) {
-                                chartRef.current.removeSeries(series);
-                            }
-                        } catch (e) {
-                            // Series might already be removed or chart is invalid
-                            console.warn("Error removing prediction series:", e);
-                        }
-                    });
-                    predictionSeriesRef.current.clear();
-                    
-                    // Note: We no longer use livePriceLineRef - we use lastValueVisible instead
-                    
-                    chartRef.current.remove();
-                } catch (e) {
-                    console.error("Error removing old chart:", e);
-                }
-                chartRef.current = null;
-                candlestickSeriesRef.current = null;
-                currentPriceLineRef.current = null;
-                
-                // Reinitialize chart
-                const container = chartContainerRef.current;
-                if (container) {
-                    const width = container.clientWidth || container.offsetWidth || 800;
-                    const height = container.clientHeight || 400;
-                    
-                    try {
-                        const chart = createChart(container, {
-                            width: width,
-                            height: height,
-                            autoSize: false,
-                            layout: {
-                                background: { color: "#2a2a2a" },
-                                textColor: "#888",
-                            },
-                            grid: {
-                                vertLines: { color: "#444" },
-                                horzLines: { color: "#444" },
-                            },
-                            timeScale: {
-                                timeVisible: true,
-                                secondsVisible: false,
-                                rightOffset: 12,
-                                barSpacing: 3,
-                                rightBarStaysOnScroll: false, // Disable - prevents last candle from sticking to right
-                                lockVisibleTimeRangeOnResize: true, // Lock visible range when chart resizes
-                            },
-                            rightPriceScale: {
-                                borderColor: "#888",
-                                visible: true,
-                                scaleMargins: {
-                                    top: 0.1,
-                                    bottom: 0.1,
-                                },
-                            },
-                        });
-                        
-                        chartRef.current = chart;
-                        const candlestick = chart.addSeries(CandlestickSeries, {
-                            upColor: "#22c55e",
-                            downColor: "#ef4444",
-                            borderVisible: false,
-                            wickUpColor: "#22c55e",
-                            wickDownColor: "#ef4444",
-                            priceFormat: {
-                                type: 'price',
-                                precision: 4,
-                                minMove: 0.0001,
-                            },
-                            lastValueVisible: false, // Disabled - current price line will show the price instead
-                        }) as ISeriesApi<"Candlestick">;
-                        candlestickSeriesRef.current = candlestick;
-                        
-                        // Helper function to calculate remaining time until candle closes
-                        const getCandleRemainingTime = (timeframe: string, candleTimestamp: number): string => {
-                            // Parse timeframe to seconds
-                            let timeframeSeconds = 60; // Default 1 minute
-                            if (timeframe.endsWith('m')) {
-                                timeframeSeconds = parseInt(timeframe.replace('m', '')) * 60;
-                            } else if (timeframe.endsWith('h')) {
-                                timeframeSeconds = parseInt(timeframe.replace('h', '')) * 3600;
-                            } else if (timeframe.endsWith('d')) {
-                                timeframeSeconds = parseInt(timeframe.replace('d', '')) * 86400;
-                            } else if (timeframe.endsWith('w')) {
-                                timeframeSeconds = parseInt(timeframe.replace('w', '')) * 604800;
-                            }
-                            
-                            // Get current time and candle start time
-                            const now = Math.floor(Date.now() / 1000);
-                            const candleStart = candleTimestamp > 1000000000000 ? Math.floor(candleTimestamp / 1000) : candleTimestamp;
-                            
-                            // Calculate elapsed time
-                            const elapsed = now - candleStart;
-                            
-                            // Calculate remaining time
-                            const remaining = Math.max(0, timeframeSeconds - elapsed);
-                            
-                            // Format as MM:SS
-                            const minutes = Math.floor(remaining / 60);
-                            const seconds = Math.floor(remaining % 60);
-                            return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-                        };
-                        
-                        // Recreate current price line (color will be updated based on price changes)
-                        // Initial color: compare with last candle's close price if available
-                        let initialColor = "#ef4444"; // Default red
-                        let candleTimeTitle = "Current Price"; // Default title
-                        if (ohlcvData && ohlcvData.length > 0 && currentPrice !== null) {
-                            const lastCandle = ohlcvData[ohlcvData.length - 1];
-                            if (lastCandle && typeof lastCandle.c === 'number' && isFinite(lastCandle.c)) {
-                                if (currentPrice > lastCandle.c) {
-                                    initialColor = "#22c55e"; // Green if current price is higher than last close
-                                } else if (currentPrice < lastCandle.c) {
-                                    initialColor = "#ef4444"; // Red if current price is lower than last close
-                                }
-                            }
-                            // Calculate remaining time until candle closes
-                            if (lastCandle && lastCandle.t) {
-                                const remainingTime = getCandleRemainingTime(timeframe, lastCandle.t);
-                                // Format: Price on first line, timer on second line
-                                candleTimeTitle = `${currentPrice.toFixed(4)}\n${remainingTime}`;
-                            } else {
-                                candleTimeTitle = currentPrice.toFixed(4);
-                            }
-                        }
-                        
-                        const currentPriceLine = chart.addSeries(LineSeries, {
-                            color: initialColor,
-                            lineWidth: 2,
-                            lineStyle: 1, // Dashed
-                            priceLineVisible: false, // We'll use createPriceLine instead
-                            lastValueVisible: false,
-                        }) as ISeriesApi<"Line">;
-                        currentPriceLineRef.current = currentPriceLine;
-                        
-                        // Create price line with title for displaying price label
-                        if (currentPrice !== null) {
-                            const priceLine = currentPriceLine.createPriceLine({
-                                price: currentPrice,
-                                color: initialColor,
-                                lineWidth: 2,
-                                lineStyle: 1, // Dashed
-                                axisLabelVisible: true,
-                                title: candleTimeTitle,
-                            });
-                            currentPriceLinePriceLineRef.current = priceLine;
-                        }
-                        
-                        // Initialize previous price reference
-                        if (currentPrice !== null) {
-                            previousPriceRef.current = currentPrice;
-                        }
-                        
-                        previousDataRef.current = []; // Reset previous data when chart is reinitialized
-                        console.log("✅ Chart reinitialized successfully");
-                        // Force data effect to run again so candles are applied to the new series
-                        setChartReady(false);
-                        requestAnimationFrame(() => setChartReady(true));
-                    } catch (error) {
-                        console.error("Error reinitializing chart:", error);
-                        return;
-                    }
-                } else {
-                    return;
-                }
-            } else {
-                return;
-            }
         }
         
         if (!candlestickSeriesRef.current) {
@@ -861,19 +694,17 @@ export default function MainChart({
                 const candle = ohlcvData[i];
                 if (!candle || typeof candle !== "object") continue;
                 
-                // Quick validation - check if values exist and are numbers
                 const t = candle.t;
-                const o = candle.o;
-                let h = candle.h;
-                let l = candle.l;
-                const c = candle.c;
+                let o = typeof candle.o === "number" && isFinite(candle.o) ? candle.o : NaN;
+                let h = typeof candle.h === "number" && isFinite(candle.h) ? candle.h : NaN;
+                let l = typeof candle.l === "number" && isFinite(candle.l) ? candle.l : NaN;
+                const c = typeof candle.c === "number" && isFinite(candle.c) ? candle.c : NaN;
                 
-                // Single validation check
-                if (typeof t !== "number" || typeof o !== "number" || typeof h !== "number" || 
-                    typeof l !== "number" || typeof c !== "number" ||
-                    !isFinite(t) || !isFinite(o) || !isFinite(h) || !isFinite(l) || !isFinite(c)) {
-                    continue;
-                }
+                if (typeof t !== "number" || !isFinite(t) || t <= 0) continue;
+                if (!isFinite(c)) continue;
+                if (!isFinite(o)) o = c;
+                if (!isFinite(h)) h = Math.max(o, c);
+                if (!isFinite(l)) l = Math.min(o, c);
                 
                 // Basic logical check - ensure high >= low
                 if (h < l) {
@@ -915,10 +746,30 @@ export default function MainChart({
 
             // CRITICAL: Sort by time (oldest to newest) - lightweight-charts requires sorted data
             validatedData.sort((a, b) => Number(a.time) - Number(b.time));
+
+            // Filter price outliers so one bad candle does not squash the rest (e.g. first candle 7.26 when rest ~0.63)
+            let dataToUse: CandlestickData[] = validatedData;
+            if (validatedData.length > 2) {
+                const closes = validatedData.map((d) => d.close).filter((c) => isFinite(c) && c > 0);
+                const median = closes.length > 0
+                    ? closes.slice().sort((a, b) => a - b)[Math.floor(closes.length / 2)]
+                    : 0;
+                if (median > 0) {
+                    const minP = median / 20;
+                    const maxP = median * 20;
+                    const filtered = validatedData.filter(
+                        (d) => d.close >= minP && d.close <= maxP && d.high <= maxP && d.low >= minP
+                    );
+                    if (filtered.length < validatedData.length) {
+                        console.warn("Filtered", validatedData.length - filtered.length, "price outlier candles (median:", median, ")");
+                    }
+                    dataToUse = filtered;
+                }
+            }
             
-            console.log("Validated data count:", validatedData.length, "First:", validatedData[0], "Last:", validatedData[validatedData.length - 1]);
+            console.log("Validated data count:", dataToUse.length, "First:", dataToUse[0], "Last:", dataToUse[dataToUse.length - 1]);
             
-            if (validatedData.length > 0) {
+            if (dataToUse.length > 0) {
                 try {
                     if (!candlestickSeriesRef.current) {
                         console.error("Candlestick series not available");
@@ -928,16 +779,16 @@ export default function MainChart({
                     // Check if only the last candle was updated (real-time update)
                     const previousData = previousDataRef.current;
                     const hasPreviousData = previousData.length > 0;
-                    const hasData = validatedData.length > 0;
+                    const hasData = dataToUse.length > 0;
                     
                     // Determine update strategy
                     let isRealTimeUpdate = false;
                     let isNewCandle = false;
                     
                     if (hasPreviousData && hasData) {
-                        const sameLength = validatedData.length === previousData.length;
+                        const sameLength = dataToUse.length === previousData.length;
                         const lastPrev = previousData[previousData.length - 1];
-                        const lastCurr = validatedData[validatedData.length - 1];
+                        const lastCurr = dataToUse[dataToUse.length - 1];
                         const sameTime = Number(lastCurr.time) === Number(lastPrev.time);
                         
                         // Check if a new candle was added (different time or different length)
@@ -966,7 +817,7 @@ export default function MainChart({
                             prevClose: lastPrev.close,
                             currClose: lastCurr.close,
                             prevLength: previousData.length,
-                            currLength: validatedData.length,
+                            currLength: dataToUse.length,
                         });
                     } else if (!hasPreviousData && hasData) {
                         // First time loading data
@@ -978,7 +829,7 @@ export default function MainChart({
                     if (isRealTimeUpdate && !isNewCandle) {
                         // Real-time update: only update the last candle using update() method
                         // This is more efficient and doesn't require re-rendering the entire chart
-                        const lastCandle = validatedData[validatedData.length - 1];
+                        const lastCandle = dataToUse[dataToUse.length - 1];
                         console.log("🔄 Real-time update: updating last candle", {
                             time: lastCandle.time,
                             open: lastCandle.open,
@@ -1018,7 +869,7 @@ export default function MainChart({
                             console.log("✅ Real-time candle updated successfully via update()");
                             
                             // Store current data for next comparison
-                            previousDataRef.current = validatedData;
+                            previousDataRef.current = dataToUse;
                             
                             // IMPORTANT: Do NOT restore position after update() - it may cause the chart to stick to right
                             // update() should NOT change scroll position with rightBarStaysOnScroll: false
@@ -1042,8 +893,8 @@ export default function MainChart({
                                 }
                                 
                                 // Use setData() as fallback
-                                candlestickSeriesRef.current.setData(validatedData);
-                                previousDataRef.current = validatedData;
+                                candlestickSeriesRef.current.setData(dataToUse);
+                                previousDataRef.current = dataToUse;
                                 
                                 // IMPORTANT: Do NOT restore position after setData() - it may cause the chart to stick to right
                                 // With rightBarStaysOnScroll: false, the chart should NOT auto-scroll
@@ -1052,8 +903,8 @@ export default function MainChart({
                                 console.error("Fallback update also failed:", fallbackError);
                                 // Last resort: just set data without position preservation
                                 try {
-                                    candlestickSeriesRef.current.setData(validatedData);
-                                    previousDataRef.current = validatedData;
+                                    candlestickSeriesRef.current.setData(dataToUse);
+                                    previousDataRef.current = dataToUse;
                                 } catch (finalError) {
                                     console.error("Final fallback also failed:", finalError);
                                 }
@@ -1064,7 +915,7 @@ export default function MainChart({
                         console.log("📊 Full data update: setting all candles", {
                             isNewCandle,
                             hasPreviousData,
-                            dataLength: validatedData.length,
+                            dataLength: dataToUse.length,
                         });
                         
                         // Ensure chart is properly sized before setting data
@@ -1090,10 +941,10 @@ export default function MainChart({
                             }
                         }
                         
-                        candlestickSeriesRef.current.setData(validatedData);
+                        candlestickSeriesRef.current.setData(dataToUse);
                         
                         // Store current data for next comparison
-                        previousDataRef.current = validatedData;
+                        previousDataRef.current = dataToUse;
                         
                         // Ensure visible range includes all candles (fixes empty chart when range was invalid)
                         try {
@@ -1136,48 +987,39 @@ export default function MainChart({
         }
     }, [ohlcvData, chartReady]);
 
-    // Update prediction lines
+    // Update prediction target lines: use price lines on candlestick so each label stays at its price level
     useEffect(() => {
-        if (!chartRef.current) return;
+        const candlestick = candlestickSeriesRef.current;
+        if (!chartRef.current || !candlestick) return;
 
-        const chart = chartRef.current;
-
-        // Remove old prediction series
-        predictionSeriesRef.current.forEach((series) => {
-            chart.removeSeries(series);
+        // Remove old prediction price lines
+        predictionPriceLinesRef.current.forEach((line) => {
+            try {
+                candlestick.removePriceLine(line);
+            } catch (_e) {
+                // ignore if already removed
+            }
         });
-        predictionSeriesRef.current.clear();
+        predictionPriceLinesRef.current.clear();
 
-        // Add new prediction series for selected horizons
+        // Add one price line per horizon so label appears at correct price on axis (in every zoom/scroll state)
         selectedHorizons.forEach((horizon) => {
             const pred = predictions[horizon];
             if (!pred) return;
 
-            const predictionLine = chart.addSeries(LineSeries, {
+            const price = pred.predicted_price;
+            const title = `${horizon} Target ${price.toFixed(4)}`;
+            const priceLine = candlestick.createPriceLine({
+                price,
                 color: "#8b5cf6",
                 lineWidth: 2,
                 lineStyle: 1, // Dashed
-                title: `${horizon} Target`,
-            }) as ISeriesApi<"Line">;
-
-            // Create prediction data points (extend to future)
-            if (ohlcvData.length > 0) {
-                const lastCandle = ohlcvData[0]; // Most recent
-                // Convert timestamp to seconds (if in milliseconds) or use as is
-                const lastTime = lastCandle.t > 1000000000000 ? Math.floor(lastCandle.t / 1000) : lastCandle.t;
-                
-                // Add prediction point at the end
-                predictionLine.setData([
-                    {
-                        time: lastTime as Time,
-                        value: pred.predicted_price,
-                    },
-                ]);
-            }
-
-            predictionSeriesRef.current.set(horizon, predictionLine);
+                axisLabelVisible: true,
+                title,
+            });
+            predictionPriceLinesRef.current.set(horizon, priceLine);
         });
-    }, [selectedHorizons, predictions, ohlcvData]);
+    }, [chartReady, selectedHorizons, predictions]);
 
     // Update ref when oldestTimestamp changes
     useEffect(() => {
@@ -1518,19 +1360,6 @@ export default function MainChart({
     // REMOVED: Auto-scroll to new candle - user should control chart position manually
     // This was causing the chart to jump around when candles were updated
 
-    // Get prediction labels for display
-    const predictionLabels = selectedHorizons
-        .map((horizon) => {
-            const pred = predictions[horizon];
-            if (!pred) return null;
-            return {
-                horizon,
-                price: pred.predicted_price,
-                change: pred.price_change_percent * 100,
-            };
-        })
-        .filter(Boolean) as Array<{ horizon: string; price: number; change: number }>;
-
     return (
         <div
             style={{
@@ -1748,26 +1577,35 @@ export default function MainChart({
                     {/* Tab Content */}
                     {activeTab === "chart" ? (
                         <>
-                            {loading ? (
-                                <div style={{ display: "flex", justifyContent: "center", alignItems: "center", flex: "1", minHeight: "450px", color: "#888" }}>
-                                    Loading chart data...
-                                </div>
-                            ) : (
-                                <>
-                                    <div 
-                                        ref={chartContainerRef} 
-                                        style={{ 
-                                            width: "100%", 
-                                            flex: "1",
-                                            minHeight: "450px",
-                                            minWidth: "600px",
-                                            position: "relative",
-                                            zIndex: 1,
-                                            display: "block",
-                                            visibility: "visible",
-                                        }} 
-                                    />
-                                    {loadingMore && (
+                            <div style={{ position: "relative", flex: "1", minHeight: "450px", minWidth: "600px", display: "flex", flexDirection: "column" }}>
+                                <div 
+                                    ref={chartContainerRef} 
+                                    style={{ 
+                                        width: "100%", 
+                                        flex: "1",
+                                        minHeight: "450px",
+                                        minWidth: "600px",
+                                        position: "relative",
+                                        zIndex: 1,
+                                        display: "block",
+                                        visibility: "visible",
+                                    }} 
+                                />
+                                {loading && (
+                                    <div style={{ 
+                                        position: "absolute", 
+                                        top: 0, left: 0, right: 0, bottom: 0, 
+                                        display: "flex", justifyContent: "center", alignItems: "center", 
+                                        backgroundColor: "rgba(26, 26, 26, 0.85)", 
+                                        color: "#888",
+                                        fontSize: "14px",
+                                        zIndex: 5,
+                                        borderRadius: "0 0 12px 12px",
+                                    }}>
+                                        Loading chart data...
+                                    </div>
+                                )}
+                                {loadingMore && (
                                         <div style={{ 
                                             position: "absolute", 
                                             top: "10px", 
@@ -1785,46 +1623,20 @@ export default function MainChart({
                                             Loading more data...
                                         </div>
                                     )}
-                                    {ohlcvData.length === 0 && !loading && (
-                                        <div style={{ 
-                                            position: "absolute", 
-                                            top: "50%", 
-                                            left: "50%", 
-                                            transform: "translate(-50%, -50%)",
-                                            color: "#888",
-                                            fontSize: "14px",
-                                            pointerEvents: "none",
-                                        }}>
-                                            No chart data available
-                                        </div>
-                                    )}
-                                </>
-                            )}
-
-                            {/* Prediction Labels */}
-                            {predictionLabels.length > 0 && (
-                                <div style={{ marginTop: "12px", display: "flex", flexWrap: "wrap", gap: "8px" }}>
-                                    {predictionLabels.map((label) => {
-                                        const isPositive = label.change >= 0;
-                                        return (
-                                            <div
-                                                key={label.horizon}
-                                                style={{
-                                                    backgroundColor: "#8b5cf6",
-                                                    color: "#ffffff",
-                                                    padding: "4px 8px",
-                                                    borderRadius: "4px",
-                                                    fontSize: "11px",
-                                                    fontWeight: "500",
-                                                }}
-                                            >
-                                                {label.horizon.toUpperCase()} Target: ${label.price.toFixed(4)} ({isPositive ? "+" : ""}
-                                                {label.change.toFixed(1)}%)
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
+                                {ohlcvData.length === 0 && !loading && (
+                                    <div style={{ 
+                                        position: "absolute", 
+                                        top: "50%", 
+                                        left: "50%", 
+                                        transform: "translate(-50%, -50%)",
+                                        color: "#888",
+                                        fontSize: "14px",
+                                        pointerEvents: "none",
+                                    }}>
+                                        No chart data available
+                                    </div>
+                                )}
+                            </div>
                         </>
                     ) : (
                         <LiquidationMapTab selectedSymbol={selectedSymbol} />

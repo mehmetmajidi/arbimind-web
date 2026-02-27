@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { colors, panelStyle, typography, spacing } from "@/components/shared/designSystem";
 import { useExchange } from "@/contexts/ExchangeContext";
 import { getApiUrl } from "@/lib/apiBaseUrl";
+import ConfirmationModal from "@/components/training/ConfirmationModal";
 
 interface WalletData {
   id: number;
@@ -33,6 +34,7 @@ export default function DemoWallet({ onWalletReset, wallet: walletProp, loading:
   const [loadingInternal, setLoadingInternal] = useState(false);
   const [errorInternal, setErrorInternal] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
 
   const isControlled = walletProp !== undefined;
   const wallet = isControlled ? (walletProp as WalletData | null) : walletInternal;
@@ -51,7 +53,7 @@ export default function DemoWallet({ onWalletReset, wallet: walletProp, loading:
         throw new Error("Not authenticated");
       }
 
-      const apiUrl = getApiUrl();
+      const apiUrl = getApiV1Base();
 
       const response = await fetch(`${apiUrl}/demo/wallet`, {
         headers: {
@@ -83,10 +85,6 @@ export default function DemoWallet({ onWalletReset, wallet: walletProp, loading:
   }, [isDemoExchange, isControlled]);
 
   const handleResetWallet = async () => {
-    if (!confirm("Are you sure you want to reset your wallet? This will reset your balance to 1000 USDT and clear all coin balances.")) {
-      return;
-    }
-
     setResetting(true);
     if (!isControlled) setErrorInternal(null);
     try {
@@ -95,7 +93,7 @@ export default function DemoWallet({ onWalletReset, wallet: walletProp, loading:
         throw new Error("Not authenticated");
       }
 
-      const apiUrl = getApiUrl();
+      const apiUrl = getApiV1Base();
 
       const response = await fetch(`${apiUrl}/demo/wallet/reset`, {
         method: "POST",
@@ -118,6 +116,13 @@ export default function DemoWallet({ onWalletReset, wallet: walletProp, loading:
     } finally {
       setResetting(false);
     }
+  };
+
+  const openResetConfirm = () => setResetConfirmOpen(true);
+  const closeResetConfirm = () => setResetConfirmOpen(false);
+  const confirmResetWallet = () => {
+    closeResetConfirm();
+    handleResetWallet();
   };
 
   if (!isDemoExchange) {
@@ -328,7 +333,7 @@ export default function DemoWallet({ onWalletReset, wallet: walletProp, loading:
 
       {/* Reset Button */}
       <button
-        onClick={handleResetWallet}
+        onClick={openResetConfirm}
         disabled={resetting}
         style={{
           width: "100%",
@@ -345,6 +350,17 @@ export default function DemoWallet({ onWalletReset, wallet: walletProp, loading:
       >
         {resetting ? "Resetting..." : "Reset Wallet"}
       </button>
+
+      <ConfirmationModal
+        isOpen={resetConfirmOpen}
+        onClose={closeResetConfirm}
+        onConfirm={confirmResetWallet}
+        type="warning"
+        title="Reset Wallet"
+        message="Are you sure you want to reset your wallet? This will reset your balance to 1000 USDT and clear all coin balances."
+        confirmText="OK"
+        cancelText="Cancel"
+      />
     </div>
   );
 }

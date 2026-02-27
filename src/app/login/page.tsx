@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { MdVisibility, MdVisibilityOff } from "react-icons/md";
-import { getApiUrl } from "@/lib/apiBaseUrl";
+import { getApiV1Base } from "@/lib/apiBaseUrl";
 
 // Add animated gradient styles
 if (typeof document !== "undefined") {
@@ -52,7 +52,7 @@ export default function LoginPage() {
      const [showPassword, setShowPassword] = useState(false);
 
      const handleGoogleLogin = () => {
-          const apiUrl = getApiUrl();
+          const apiUrl = getApiV1Base();
           const redirectUri = typeof window !== "undefined" ? `${window.location.origin}/oauth-success` : "http://localhost:3000/oauth-success";
           window.location.href = `${apiUrl}/auth/google/login?redirect_uri=${encodeURIComponent(redirectUri)}`;
      };
@@ -68,7 +68,7 @@ export default function LoginPage() {
                formDataToSend.append("username", formData.username);
                formDataToSend.append("password", formData.password);
 
-               const apiUrl = getApiUrl();
+               const apiUrl = getApiV1Base();
                console.log("Attempting login to:", `${apiUrl}/auth/token`);
                const response = await fetch(`${apiUrl}/auth/token`, {
                     method: "POST",

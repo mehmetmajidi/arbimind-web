@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useExchange } from "@/contexts/ExchangeContext";
 import { getApiUrl } from "@/lib/apiBaseUrl";
+import { getTradingApiBase } from "@/lib/tradingEndpoints";
 
 interface Order {
      id: number;
@@ -129,11 +130,10 @@ export default function TradingPage() {
                const token = localStorage.getItem("auth_token") || "";
                if (!token) return;
 
-               const apiUrl = getApiUrl();
                const isDemoExchange = selectedAccountId === -999;
                const url = isDemoExchange
-                    ? `${apiUrl}/trading/orders/exchange?exchange_account_id=${selectedAccountId}&limit=50`
-                    : `${apiUrl}/trading/orders?exchange_account_id=${selectedAccountId}&limit=50`;
+                    ? `${getTradingApiBase()}/orders/exchange?exchange_account_id=${selectedAccountId}&limit=50`
+                    : `${getTradingApiBase()}/orders?exchange_account_id=${selectedAccountId}&limit=50`;
 
                const response = await fetch(url, {
                     headers: { Authorization: `Bearer ${token}` },
@@ -164,9 +164,7 @@ export default function TradingPage() {
                const token = localStorage.getItem("auth_token") || "";
                if (!token) return;
 
-               const apiUrl = getApiUrl();
-
-               const response = await fetch(`${apiUrl}/trading/positions?exchange_account_id=${selectedAccountId}`, {
+               const response = await fetch(`${getTradingApiBase()}/positions?exchange_account_id=${selectedAccountId}`, {
                     headers: { Authorization: `Bearer ${token}` },
                });
 
@@ -195,9 +193,7 @@ export default function TradingPage() {
                const token = localStorage.getItem("auth_token") || "";
                if (!token) return;
 
-               const apiUrl = getApiUrl();
-
-               const response = await fetch(`${apiUrl}/trading/positions/closed?exchange_account_id=${selectedAccountId}&limit=100`, {
+               const response = await fetch(`${getTradingApiBase()}/positions/closed?exchange_account_id=${selectedAccountId}&limit=100`, {
                     headers: { Authorization: `Bearer ${token}` },
                });
 
@@ -227,9 +223,7 @@ export default function TradingPage() {
                const token = localStorage.getItem("auth_token") || "";
                if (!token) return;
 
-               const apiUrl = getApiUrl();
-
-               const response = await fetch(`${apiUrl}/trading/balance/${selectedAccountId}`, {
+               const response = await fetch(`${getTradingApiBase()}/balance/${selectedAccountId}`, {
                     headers: { Authorization: `Bearer ${token}` },
                });
 
@@ -257,9 +251,7 @@ export default function TradingPage() {
                const token = localStorage.getItem("auth_token") || "";
                if (!token) return;
 
-               const apiUrl = getApiUrl();
-
-               const response = await fetch(`${apiUrl}/trading/trades?limit=50`, {
+               const response = await fetch(`${getTradingApiBase()}/trades?limit=50`, {
                     headers: { Authorization: `Bearer ${token}` },
                });
 
@@ -286,9 +278,7 @@ export default function TradingPage() {
                const token = localStorage.getItem("auth_token") || "";
                if (!token) return;
 
-               const apiUrl = getApiUrl();
-
-               const response = await fetch(`${apiUrl}/trading/orders/${orderId}`, {
+               const response = await fetch(`${getTradingApiBase()}/orders/${orderId}`, {
                     headers: { Authorization: `Bearer ${token}` },
                });
 
@@ -320,9 +310,7 @@ export default function TradingPage() {
                const token = localStorage.getItem("auth_token") || "";
                if (!token) return;
 
-               const apiUrl = getApiUrl();
-
-               const response = await fetch(`${apiUrl}/trading/trades?symbol=${encodeURIComponent(symbol)}&limit=100`, {
+               const response = await fetch(`${getTradingApiBase()}/trades?symbol=${encodeURIComponent(symbol)}&limit=100`, {
                     headers: { Authorization: `Bearer ${token}` },
                });
 
@@ -378,7 +366,7 @@ export default function TradingPage() {
                return;
           }
 
-          const apiUrl = getApiUrl();
+          const apiUrl = getApiV1Base();
 
           // Convert http to ws
           const wsUrl = apiUrl.replace("http://", "ws://").replace("https://", "wss://");
@@ -524,7 +512,7 @@ export default function TradingPage() {
                return;
           }
 
-          const apiUrl = getApiUrl();
+          const apiUrl = getApiV1Base();
 
           // Convert http to ws
           const wsUrl = apiUrl.replace("http://", "ws://").replace("https://", "wss://");
@@ -680,9 +668,7 @@ export default function TradingPage() {
                     return;
                }
 
-               const apiUrl = getApiUrl();
-
-               const response = await fetch(`${apiUrl}/trading/orders/place`, {
+               const response = await fetch(`${getTradingApiBase()}/orders/place`, {
                     method: "POST",
                     headers: {
                          Authorization: `Bearer ${token}`,
@@ -728,9 +714,8 @@ export default function TradingPage() {
                const token = localStorage.getItem("auth_token") || "";
                if (!token) return;
 
-               const apiUrl = getApiUrl();
                const params = selectedAccountId != null ? `?exchange_account_id=${selectedAccountId}` : "";
-               const response = await fetch(`${apiUrl}/trading/orders/${orderId}${params}`, {
+               const response = await fetch(`${getTradingApiBase()}/orders/${orderId}${params}`, {
                     method: "DELETE",
                     headers: { Authorization: `Bearer ${token}` },
                });
@@ -761,9 +746,7 @@ export default function TradingPage() {
                     return;
                }
 
-               const apiUrl = getApiUrl();
-
-               const response = await fetch(`${apiUrl}/trading/positions/${positionId}/close`, {
+               const response = await fetch(`${getTradingApiBase()}/positions/${positionId}/close`, {
                     method: "POST",
                     headers: { Authorization: `Bearer ${token}` },
                });

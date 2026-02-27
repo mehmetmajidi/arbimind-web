@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { MdClose, MdDownload, MdSearch, MdExpandMore, MdExpandLess, MdInfo, MdRefresh } from "react-icons/md";
-import { getJobLogs, getTrainingJobStatus } from "@/lib/trainingApi";
 import { apiGet } from "@/lib/apiClient";
+import { getTrainApiBase } from "@/lib/trainEndpoints";
+import { getJobLogs, getTrainingJobStatus } from "@/lib/trainingApi";
 import { handleApiError } from "@/lib/errorHandler";
 import { ErrorMessage } from "@/components/shared";
 import type { TrainingJob } from "@/types/training";
@@ -36,29 +37,32 @@ export default function JobLogsModal({
     const logContainerRef = useRef<HTMLDivElement>(null);
     const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+    const LOGS_REQUEST_TIMEOUT_MS = 20000;
+
     const fetchLogs = useCallback(async (isManualRefresh = false) => {
         // Don't reset loading state on manual refresh - keep existing logs visible
         if (isManualRefresh) {
             setIsRefreshing(true);
         } else {
-            // Only set loading on initial fetch or auto-refresh when modal first opens
             setLoading(true);
         }
 
+        const abortController = new AbortController();
+        const timeoutId = setTimeout(() => abortController.abort(), LOGS_REQUEST_TIMEOUT_MS);
+
         try {
             const data = await apiGet<{ job_id: string; status: string; log: string; error_log: string }>(
-                `/train/logs/${jobId}?lines=10000`,
+                `${getTrainApiBase()}/logs/${jobId}?lines=10000`,
                 {
+                    signal: abortController.signal,
                     retry: {
-                        maxRetries: 3,
+                        maxRetries: 2,
                         retryDelay: 1000,
-                        retryCondition: (error) => {
-                            // Retry on network errors or 5xx errors
-                            if (error instanceof TypeError && error.message.includes("fetch")) {
-                                return true;
-                            }
+                        retryCondition: (error: unknown) => {
+                            if (error instanceof Error && error.name === "AbortError") return false;
+                            if (error instanceof TypeError && error.message.includes("fetch")) return true;
                             if (error && typeof error === "object" && "status" in error) {
-                                const status = (error as any).status;
+                                const status = (error as { status: number }).status;
                                 return status >= 500 || status === 0;
                             }
                             return false;
@@ -74,6 +78,7 @@ export default function JobLogsModal({
                     },
                 }
             );
+            clearTimeout(timeoutId);
 
             const combinedLogs = [
                 data.log || "",
@@ -95,13 +100,16 @@ export default function JobLogsModal({
             }
             setRetryCount(0);
         } catch (err) {
-            const errorMessage = handleApiError(err);
+            clearTimeout(timeoutId);
+            const isAborted = err instanceof Error && err.name === "AbortError";
+            const errorMessage = isAborted
+                ? "درخواست لاگ زمان‌دار شد. سرور پاسخ نداد. دوباره تلاش کنید یا اتصال را بررسی کنید."
+                : handleApiError(err);
             setError(errorMessage);
             console.error("Error fetching logs:", err);
-            
-            // If it's a 404, show a more helpful message
-            if (err && typeof err === "object" && "status" in err && (err as any).status === 404) {
-                setError(`Training job '${jobId}' not found. It may have been deleted or never started.`);
+
+            if (!isAborted && err && typeof err === "object" && "status" in err && (err as { status: number }).status === 404) {
+                setError(`Job آموزش '${jobId}' پیدا نشد. ممکن است حذف شده یا هنوز شروع نشده باشد.`);
             }
         } finally {
             // Only reset loading state if it's not a manual refresh

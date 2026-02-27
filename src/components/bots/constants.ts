@@ -16,7 +16,7 @@ export const colors = {
 // Layout Style - Full Width
 export const layoutStyle = {
   padding: "24px",
-  width: "100%",
+
   color: "#ededed",
 };
 

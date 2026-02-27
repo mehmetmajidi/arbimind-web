@@ -2,9 +2,7 @@
 
 import { LiquidationMapResponse } from "@/types/liquidation";
 import { parseApiError, handleApiError, retryRequest, RetryOptions, type ApiError } from "./errorHandler";
-import { getApiUrl } from "./apiBaseUrl";
-
-const apiUrl = getApiUrl();
+import { getMarketApiBase } from "./marketEndpoints";
 
 // Request timeout in milliseconds (30 seconds)
 const REQUEST_TIMEOUT = 30000;
@@ -101,7 +99,8 @@ export async function getLiquidationMap(
     retryOptions?: RetryOptions
 ): Promise<LiquidationMapResponse> {
     const encodedSymbol = encodeURIComponent(symbol);
-    const url = new URL(`${apiUrl}/market/liquidation-map/${encodedSymbol}`);
+    const marketBase = getMarketApiBase();
+    const url = new URL(`${marketBase}/liquidation-map/${encodedSymbol}`);
     url.searchParams.append("timeframe", timeframe);
 
     const requestFn = async (): Promise<LiquidationMapResponse> => {
@@ -198,7 +197,8 @@ export async function refreshLiquidationMap(
     // Use getLiquidationMap with cache-busting
     // The timestamp parameter will bypass browser cache
     const encodedSymbol = encodeURIComponent(symbol);
-    const url = new URL(`${apiUrl}/market/liquidation-map/${encodedSymbol}`);
+    const marketBase = getMarketApiBase();
+    const url = new URL(`${marketBase}/liquidation-map/${encodedSymbol}`);
     url.searchParams.append("timeframe", timeframe);
     url.searchParams.append("_t", Date.now().toString()); // Cache-busting parameter
 

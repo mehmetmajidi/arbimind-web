@@ -8,6 +8,11 @@
   --primary-glow: rgba(255, 174, 0, 0.5);
 }
 
+html {
+  /* Reserve space for scrollbar so content isn't overlapped at 1000–1204px and other widths */
+  scrollbar-gutter: stable;
+}
+
 html,
 body {
   max-width: 100vw;
@@ -33,6 +38,11 @@ body {
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
 }
 
 a {

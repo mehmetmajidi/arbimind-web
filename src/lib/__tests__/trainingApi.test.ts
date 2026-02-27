@@ -184,7 +184,7 @@ describe('trainingApi', () => {
       const result = await getPeriodicStatus()
 
       expect(global.fetch).toHaveBeenCalledWith(
-        `${apiUrl}/train/periodic/status`,
+        `${apiUrl}/train/periodic-status`,
         expect.objectContaining({
           method: 'GET',
           headers: expect.objectContaining({

@@ -1,7 +1,7 @@
 // WebSocket service for real-time training job updates
 
 import { TrainingJob } from "@/types/training";
-import { getWsUrl } from "./apiBaseUrl";
+import { getWsV1Base } from "./apiBaseUrl";
 
 type JobStatusUpdateCallback = (job: TrainingJob) => void;
 type ErrorCallback = (error: Error) => void;
@@ -37,13 +37,10 @@ class TrainingWebSocketService {
         this.isConnecting = true;
 
         try {
-            const wsUrl = process.env.NEXT_PUBLIC_WS_URL || getWsUrl();
+            const wsBase = process.env.NEXT_PUBLIC_WS_URL || getWsV1Base();
             const token = localStorage.getItem("auth_token");
-            
-            // Connect to training WebSocket endpoint
-            // Note: This assumes a WebSocket endpoint exists at /ws/training
-            // If not available, we'll use polling instead
-            const url = `${wsUrl}/ws/training${token ? `?token=${token}` : ""}`;
+            // WebSocket under /api/v1/ws/training
+            const url = `${wsBase}/ws/training${token ? `?token=${token}` : ""}`;
             
             this.ws = new WebSocket(url);
 

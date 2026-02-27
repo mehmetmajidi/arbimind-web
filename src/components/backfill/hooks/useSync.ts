@@ -1,4 +1,6 @@
 import { useState, useCallback } from "react";
+import { getMarketApiBase } from "@/lib/marketEndpoints";
+import { getExchangeApiBase } from "@/lib/exchangeEndpoints";
 import { API_URL, getAuthToken } from "./utils";
 
 export function useSync(selectedAccountId: number | null, fetchMarkets: () => Promise<void>) {
@@ -32,7 +34,7 @@ export function useSync(selectedAccountId: number | null, fetchMarkets: () => Pr
                const token = getAuthToken();
                if (!token) return;
 
-               const response = await fetch(`${API_URL}/exchange/exchanges`, {
+               const response = await fetch(`${getExchangeApiBase()}/exchanges`, {
                     headers: { Authorization: `Bearer ${token}` },
                });
 
@@ -57,7 +59,7 @@ export function useSync(selectedAccountId: number | null, fetchMarkets: () => Pr
                     throw new Error("Please login to sync exchanges");
                }
 
-               const response = await fetch(`${API_URL}/market/symbols/sync-all`, {
+               const response = await fetch(`${getMarketApiBase()}/symbols/sync-all`, {
                     method: "POST",
                     headers: { Authorization: `Bearer ${token}` },
                });
@@ -101,7 +103,7 @@ export function useSync(selectedAccountId: number | null, fetchMarkets: () => Pr
                     throw new Error("Please login to sync exchange");
                }
 
-               const response = await fetch(`${API_URL}/market/symbols/sync/${encodeURIComponent(selectedExchangeName)}`, {
+               const response = await fetch(`${getMarketApiBase()}/symbols/sync/${encodeURIComponent(selectedExchangeName)}`, {
                     method: "POST",
                     headers: { Authorization: `Bearer ${token}` },
                });

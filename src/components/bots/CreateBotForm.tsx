@@ -2,7 +2,9 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { colors } from "./constants";
-import { getApiUrl } from "@/lib/apiBaseUrl";
+import { getExchangeApiBase } from "@/lib/exchangeEndpoints";
+import { getTrainApiBase } from "@/lib/trainEndpoints";
+import { getTradingApiBase } from "@/lib/tradingEndpoints";
 
 interface CreateBotFormProps {
   isOpen: boolean;
@@ -69,9 +71,7 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
       const token = localStorage.getItem("auth_token") || "";
       if (!token) return;
 
-      const apiUrl = getApiUrl();
-
-      const response = await fetch(`${apiUrl}/exchange/accounts`, {
+      const response = await fetch(`${getExchangeApiBase()}/accounts`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -110,14 +110,12 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
         return;
       }
 
-      const apiUrl = getApiUrl();
-
       // Fetch all filtered symbols from exchange account (by volatility and data freshness)
       // Filter by selected quote currency if available
       // Use a high limit to get all symbols (max 1000)
       const quoteParam = selectedQuoteCurrency ? `&quote_currency=${encodeURIComponent(selectedQuoteCurrency)}` : "";
       const response = await fetch(
-        `${apiUrl}/train/top-filtered-symbols?exchange_account_id=${accountId}&limit=1000&interval=1h&check_volatility=true&check_data_freshness=true${quoteParam}`,
+        `${getTrainApiBase()}/top-filtered-symbols?exchange_account_id=${accountId}&limit=1000&interval=1h&check_volatility=true&check_data_freshness=true${quoteParam}`,
         {
           headers: { Authorization: `Bearer ${token}` },
         }
@@ -171,11 +169,9 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
       const token = localStorage.getItem("auth_token") || "";
       if (!token) return;
 
-      const apiUrl = getApiUrl();
-
       // Fetch quote currencies
       const quoteResponse = await fetch(
-        `${apiUrl}/exchange/currencies?exchange_account_id=${accountId}&currency_type=quote&active_only=true`,
+        `${getExchangeApiBase()}/currencies?exchange_account_id=${accountId}&currency_type=quote&active_only=true`,
         {
           headers: { Authorization: `Bearer ${token}` },
         }
@@ -184,7 +180,7 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
       // Fetch ALL currencies (base currencies) for source currency selection
       // Use currency_type=base to get base currencies, or no filter to get all
       const allCurrenciesResponse = await fetch(
-        `${apiUrl}/exchange/currencies?exchange_account_id=${accountId}&currency_type=base&active_only=true`,
+        `${getExchangeApiBase()}/currencies?exchange_account_id=${accountId}&currency_type=base&active_only=true`,
         {
           headers: { Authorization: `Bearer ${token}` },
         }
@@ -248,11 +244,9 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
         return;
       }
 
-      const apiUrl = getApiUrl();
-
       console.log(`Fetching balance for account ${accountId}...`);
       const response = await fetch(
-        `${apiUrl}/trading/balance/${accountId}`,
+        `${getTradingApiBase()}/balance/${accountId}`,
         {
           headers: { Authorization: `Bearer ${token}` },
         }
@@ -375,15 +369,13 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
       const token = localStorage.getItem("auth_token") || "";
       if (!token) return;
 
-      const apiUrl = getApiUrl();
-
       // Convert currencies to symbols (e.g., "FLOKI" -> "FLOKI/USDT")
       // First, get quote currency to build proper symbol
       const quoteCurrency = selectedQuoteCurrency || "USDT";
       const symbols = currencies.map(c => `${c}/${quoteCurrency}`);
 
       const response = await fetch(
-        `${apiUrl}/train/filter-symbols?interval=1h&check_volatility=true&check_data_freshness=true`,
+        `${getTrainApiBase()}/filter-symbols?interval=1h&check_volatility=true&check_data_freshness=true`,
         {
           method: "POST",
           headers: {
@@ -532,10 +524,12 @@ export default function CreateBotForm({ isOpen, onClose, onSubmit }: CreateBotFo
       setPaperTrading(true);
     }
   }, [isDemoAccount]);
-  // When Demo Exchange balance loads, set capital default from actual balance (don't force 1000)
+  // When Demo Exchange balance loads, set capital default from actual balance but cap at 500 so bot does not over-allocate
   useEffect(() => {
     if (isDemoAccount && balance !== null && (balance?.free ?? 0) > 0 && (!capital || capital === "1000")) {
-      setCapital((balance.free ?? 0).toFixed(8));
+      const free = balance.free ?? 0;
+      const capped = Math.min(free, 500);
+      setCapital(capped.toFixed(8));
     }
   }, [isDemoAccount, balance]);
 

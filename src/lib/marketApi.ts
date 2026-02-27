@@ -1,4 +1,5 @@
-import { getApiUrl } from "./apiBaseUrl";
+import { getApiV1Base } from "./apiBaseUrl";
+import { getMarketApiBase } from "./marketEndpoints";
 import type { OHLCVCandle } from "@/types/market";
 import type { PredictionData } from "@/types/market";
 import { getTimeframeDurationMs } from "./marketTimeframeUtils";
@@ -24,7 +25,7 @@ export async function fetchOHLCV(
 ): Promise<FetchOHLCVResult> {
     const token = getToken();
     if (!token) throw new Error("Please login to view market data");
-    const apiUrl = getApiUrl();
+    const marketBase = getMarketApiBase();
     const encodedSymbol = encodeURIComponent(symbol);
     const timeframeDuration = getTimeframeDurationMs(timeframe);
     const targetCandles = 300;
@@ -36,19 +37,25 @@ export async function fetchOHLCV(
     let previousCount = 0;
     let noProgressCount = 0;
 
-    while (allCandles.length < targetCandles && attempts < maxAttempts) {
-        attempts++;
-        const remaining = targetCandles - allCandles.length;
-        const requestLimit = Math.min(remaining, maxPerRequest);
-        const url = currentSince
-            ? `${apiUrl}/market/ohlcv-from-exchange/${accountId}/${encodedSymbol}?timeframe=${timeframe}&limit=${requestLimit}&since=${currentSince}`
-            : `${apiUrl}/market/ohlcv-from-exchange/${accountId}/${encodedSymbol}?timeframe=${timeframe}&limit=${requestLimit}`;
+    const OHLCV_TIMEOUT_MS = 30000;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), OHLCV_TIMEOUT_MS);
 
-        const response = await fetch(url, {
-            headers: { Authorization: `Bearer ${token}` },
-            cache: "no-cache",
-        });
-        if (!response.ok) break;
+    try {
+        while (allCandles.length < targetCandles && attempts < maxAttempts) {
+            attempts++;
+            const remaining = targetCandles - allCandles.length;
+            const requestLimit = Math.min(remaining, maxPerRequest);
+            const url = currentSince
+                ? `${marketBase}/ohlcv-from-exchange/${accountId}/${encodedSymbol}?timeframe=${timeframe}&limit=${requestLimit}&since=${currentSince}`
+                : `${marketBase}/ohlcv-from-exchange/${accountId}/${encodedSymbol}?timeframe=${timeframe}&limit=${requestLimit}`;
+
+            const response = await fetch(url, {
+                headers: { Authorization: `Bearer ${token}` },
+                cache: "no-cache",
+                signal: controller.signal,
+            });
+            if (!response.ok) break;
 
         const data: { candles?: OHLCVCandle[] } = await response.json();
         const candles = data.candles ?? [];
@@ -77,6 +84,9 @@ export async function fetchOHLCV(
         const oldestTimestampMs = oldestTime * 1000;
         currentSince = oldestTimestampMs - candles.length * timeframeDuration;
         if (currentSince >= oldestTimestampMs) break;
+        }
+    } finally {
+        clearTimeout(timeoutId);
     }
 
     const sorted = sortCandlesByTime(allCandles);
@@ -92,10 +102,10 @@ export async function fetchLivePrice(
 ): Promise<number | null> {
     const token = getToken();
     if (!token) return null;
-    const apiUrl = getApiUrl();
+    const marketBase = getMarketApiBase();
     const encodedSymbol = encodeURIComponent(symbol);
     const response = await fetch(
-        `${apiUrl}/market/price/${accountId}/${encodedSymbol}`,
+        `${marketBase}/price/${accountId}/${encodedSymbol}`,
         { headers: { Authorization: `Bearer ${token}` }, cache: "no-cache" }
     );
     if (!response.ok) return null;
@@ -111,7 +121,7 @@ export async function fetchPredictions(
 ): Promise<Record<string, PredictionData>> {
     const token = getToken();
     if (!token) return {};
-    const apiUrl = getApiUrl();
+    const apiUrl = getApiV1Base();
     const encodedSymbol = encodeURIComponent(symbol);
     const response = await fetch(
         `${apiUrl}/predictions/symbol/${encodedSymbol}?horizons=${horizonsParam}&exchange_account_id=${accountId}`,
@@ -140,7 +150,7 @@ export async function fetchPredictions(
 export async function fetchDemoWallet(): Promise<Record<string, unknown>> {
     const token = getToken();
     if (!token) throw new Error("Not authenticated");
-    const apiUrl = getApiUrl();
+    const apiUrl = getApiV1Base();
     const res = await fetch(`${apiUrl}/demo/wallet`, {
         headers: { Authorization: `Bearer ${token}` },
     });
@@ -161,7 +171,7 @@ export async function fetchMoreOHLCV(
 ): Promise<FetchMoreOHLCVResult | null> {
     const token = getToken();
     if (!token) return null;
-    const apiUrl = getApiUrl();
+    const marketBase = getMarketApiBase();
     const encodedSymbol = encodeURIComponent(symbol);
     const timeframeDuration = getTimeframeDurationMs(timeframe);
     const beforeTimestampMs =
@@ -171,7 +181,7 @@ export async function fetchMoreOHLCV(
     const finalSinceMs = Math.max(sinceMs, minSinceMs);
 
     const response = await fetch(
-        `${apiUrl}/market/ohlcv-from-exchange/${accountId}/${encodedSymbol}?timeframe=${timeframe}&limit=300&since=${finalSinceMs}`,
+        `${marketBase}/ohlcv-from-exchange/${accountId}/${encodedSymbol}?timeframe=${timeframe}&limit=300&since=${finalSinceMs}`,
         { headers: { Authorization: `Bearer ${token}` }, cache: "no-cache" }
     );
     if (!response.ok) return null;

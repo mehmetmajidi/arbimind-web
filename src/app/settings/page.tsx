@@ -2,7 +2,9 @@
 
 import { useState, useEffect } from "react";
 import { SymbolList } from "@/components/symbols";
-import { getApiUrl } from "@/lib/apiBaseUrl";
+import { getApiV1Base } from "@/lib/apiBaseUrl";
+import { getMarketApiBase } from "@/lib/marketEndpoints";
+import { getExchangeApiBase } from "@/lib/exchangeEndpoints";
 
 // Helper function to mask sensitive data (show first 4 and last 4 chars)
 // Currently unused but kept for potential future use
@@ -93,9 +95,9 @@ export default function SettingsPage() {
           setSymbolsLoading(true);
           try {
                const token = localStorage.getItem("auth_token") || "";
-               const apiUrl = getApiUrl();
+               const apiUrl = getApiV1Base();
                
-               const response = await fetch(`${apiUrl}/market/symbols/by-exchange/${encodeURIComponent(exchangeName)}?active_only=${activeOnly}`, {
+               const response = await fetch(`${getMarketApiBase()}/symbols/by-exchange/${encodeURIComponent(exchangeName)}?active_only=${activeOnly}`, {
                     headers: { Authorization: `Bearer ${token}` },
                });
                
@@ -121,7 +123,7 @@ export default function SettingsPage() {
                     const token = localStorage.getItem("auth_token") || "";
 
                     // Use backend URL - browser makes request, so use localhost
-                    const apiUrl = getApiUrl();
+                    const apiUrl = getApiV1Base();
 
                     // Check if user is admin
                     try {
@@ -138,7 +140,7 @@ export default function SettingsPage() {
                               
                               // Fetch all exchanges
                               try {
-                                   const exchangesRes = await fetch(`${apiUrl}/exchange/exchanges`, {
+                                   const exchangesRes = await fetch(`${getExchangeApiBase()}/exchanges`, {
                                         headers: token ? { Authorization: `Bearer ${token}` } : {},
                                    });
                                    if (exchangesRes.ok) {
@@ -170,7 +172,7 @@ export default function SettingsPage() {
 
                     // Fetch supported exchanges
                     try {
-                         const exchangesRes = await fetch(`${apiUrl}/exchange/supported`);
+                         const exchangesRes = await fetch(`${getExchangeApiBase()}/supported`);
                          if (!exchangesRes.ok) {
                               throw new Error(`HTTP ${exchangesRes.status}`);
                          }
@@ -186,7 +188,7 @@ export default function SettingsPage() {
 
                     // Fetch user's exchange accounts
                     try {
-                         const accountsRes = await fetch(`${apiUrl}/exchange/accounts`, {
+                         const accountsRes = await fetch(`${getExchangeApiBase()}/accounts`, {
                               headers: token ? { Authorization: `Bearer ${token}` } : {},
                          });
                          if (!accountsRes.ok) {
@@ -217,8 +219,8 @@ export default function SettingsPage() {
      const refetch = async () => {
           try {
                const token = localStorage.getItem("auth_token") || "";
-               const apiUrl = getApiUrl();
-               const accountsRes = await fetch(`${apiUrl}/exchange/accounts`, {
+               const apiUrl = getApiV1Base();
+               const accountsRes = await fetch(`${getExchangeApiBase()}/accounts`, {
                     headers: token ? { Authorization: `Bearer ${token}` } : {},
                });
                const accounts = await accountsRes.json();
@@ -236,9 +238,9 @@ export default function SettingsPage() {
           try {
                // Get auth token if available
                const token = localStorage.getItem("auth_token") || "";
-               const apiUrl = getApiUrl();
+               const apiUrl = getApiV1Base();
 
-               const response = await fetch(`${apiUrl}/exchange/accounts`, {
+               const response = await fetch(`${getExchangeApiBase()}/accounts`, {
                     method: "POST",
                     headers: {
                          "Content-Type": "application/json",
@@ -282,8 +284,8 @@ export default function SettingsPage() {
 
           try {
                const token = localStorage.getItem("auth_token") || "";
-               const apiUrl = getApiUrl();
-               const response = await fetch(`${apiUrl}/exchange/accounts/${accountId}/verify`, {
+               const apiUrl = getApiV1Base();
+               const response = await fetch(`${getExchangeApiBase()}/accounts/${accountId}/verify`, {
                     method: "POST",
                     headers: token ? { Authorization: `Bearer ${token}` } : {},
                });
@@ -329,7 +331,7 @@ export default function SettingsPage() {
 
           try {
                const token = localStorage.getItem("auth_token") || "";
-               const apiUrl = getApiUrl();
+               const apiUrl = getApiV1Base();
 
                const params = new URLSearchParams();
                params.append("exchange_name", exchangeFormData.exchangeName);
@@ -338,7 +340,7 @@ export default function SettingsPage() {
                params.append("has_testnet", exchangeFormData.hasTestnet.toString());
                params.append("requires_passphrase", exchangeFormData.requiresPassphrase.toString());
 
-               const response = await fetch(`${apiUrl}/exchange/exchanges?${params.toString()}`, {
+               const response = await fetch(`${getExchangeApiBase()}/exchanges?${params.toString()}`, {
                     method: "POST",
                     headers: {
                          ...(token && { Authorization: `Bearer ${token}` }),
@@ -697,8 +699,8 @@ export default function SettingsPage() {
                                                                                           if (confirm("Are you sure you want to delete this account?")) {
                                                                                                try {
                                                                                                     const token = localStorage.getItem("auth_token") || "";
-                                                                                                    const apiUrl = getApiUrl();
-                                                                                                    const response = await fetch(`${apiUrl}/exchange/accounts/${account.id}`, {
+                                                                                                    const apiUrl = getApiV1Base();
+                                                                                                    const response = await fetch(`${getExchangeApiBase()}/accounts/${account.id}`, {
                                                                                                          method: "DELETE",
                                                                                                          headers: token ? { Authorization: `Bearer ${token}` } : {},
                                                                                                     });

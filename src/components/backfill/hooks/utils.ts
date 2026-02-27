@@ -1,5 +1,5 @@
-import { getApiUrl } from "@/lib/apiBaseUrl";
-export const API_URL = getApiUrl();
+import { getApiV1Base } from "@/lib/apiBaseUrl";
+export const API_URL = getApiV1Base();
 
 export const getAuthToken = () => {
      return localStorage.getItem("auth_token") || "";

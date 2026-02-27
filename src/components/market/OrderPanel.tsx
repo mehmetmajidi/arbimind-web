@@ -5,6 +5,8 @@ import { useExchange } from "@/contexts/ExchangeContext";
 import MessageModal, { MessageModalType } from "@/components/common/MessageModal";
 import ConfirmPlaceOrderModal from "./ConfirmPlaceOrderModal";
 import { getApiUrl } from "@/lib/apiBaseUrl";
+import { getExchangeApiBase } from "@/lib/exchangeEndpoints";
+import { getTradingApiBase } from "@/lib/tradingEndpoints";
 
 export interface OrderPanelRef {
     refreshBalance: () => void;
@@ -42,6 +44,8 @@ const OrderPanel = forwardRef<OrderPanelRef, OrderPanelProps>(function OrderPane
     const [checkingPermission, setCheckingPermission] = useState(false);
     const [paperTrading, setPaperTrading] = useState(false);
     const userEditedPriceRef = useRef(false);
+    /** Tracks which field user last edited so we only derive the other (avoid overwriting while typing e.g. "200" in Total). */
+    const lastEditedAmountOrTotalRef = useRef<"amount" | "total" | null>(null);
     
     // Message Modal state
     const [modalState, setModalState] = useState<{
@@ -130,26 +134,41 @@ const OrderPanel = forwardRef<OrderPanelRef, OrderPanelProps>(function OrderPane
         setPercentage(0);
         setAmount("");
         setTotal("");
+        lastEditedAmountOrTotalRef.current = null;
     }, [side, selectedSymbol]);
 
-    // Calculate total when price or amount changes
+    // Derive Total from Amount only when user last edited Amount (so typing "200" in Total is not overwritten by "2.00")
     useEffect(() => {
+        if (lastEditedAmountOrTotalRef.current === "total") return;
         if (price && amount) {
-            const totalValue = parseFloat(price) * parseFloat(amount);
-            setTotal(totalValue.toFixed(2));
-            // Calculate fee (assuming 0.1% fee)
-            setFee(totalValue * 0.001);
+            const p = parseFloat(price);
+            const a = parseFloat(amount);
+            if (!Number.isNaN(p) && !Number.isNaN(a)) {
+                const totalValue = p * a;
+                setTotal(totalValue.toFixed(2));
+                setFee(totalValue * 0.001);
+            }
         } else {
             setTotal("");
             setFee(0);
         }
     }, [price, amount]);
 
-    // Calculate amount from total
+    // Derive Amount from Total when user last edited Total (so Amount updates when Total changes)
     useEffect(() => {
-        if (price && total && !amount) {
-            const amountValue = parseFloat(total) / parseFloat(price);
-            setAmount(amountValue.toFixed(6));
+        if (lastEditedAmountOrTotalRef.current === "amount") return;
+        if (!price) return;
+        const t = total.trim();
+        if (!t) {
+            setAmount("");
+            setFee(0);
+            return;
+        }
+        const p = parseFloat(price);
+        const totalNum = parseFloat(total);
+        if (!Number.isNaN(p) && p > 0 && !Number.isNaN(totalNum)) {
+            setAmount((totalNum / p).toFixed(6));
+            setFee(totalNum * 0.001);
         }
     }, [price, total]);
 
@@ -168,10 +187,8 @@ const OrderPanel = forwardRef<OrderPanelRef, OrderPanelProps>(function OrderPane
                 return;
             }
 
-            const apiUrl = getApiUrl();
-
             // Fetch balance from the selected account
-            const response = await fetch(`${apiUrl}/trading/balance/${selectedAccountId}`, {
+            const response = await fetch(`${getTradingApiBase()}/balance/${selectedAccountId}`, {
                 headers: { Authorization: `Bearer ${token}` },
             });
 
@@ -227,9 +244,9 @@ const OrderPanel = forwardRef<OrderPanelRef, OrderPanelProps>(function OrderPane
                 return;
             }
 
-            const apiUrl = getApiUrl();
+            const apiUrl = getApiV1Base();
 
-            const response = await fetch(`${apiUrl}/exchange/accounts/${selectedAccountId}/trading-permissions`, {
+            const response = await fetch(`${getExchangeApiBase()}/accounts/${selectedAccountId}/trading-permissions`, {
                 headers: { Authorization: `Bearer ${token}` },
             });
 
@@ -441,9 +458,7 @@ const OrderPanel = forwardRef<OrderPanelRef, OrderPanelProps>(function OrderPane
                 return;
             }
 
-            const apiUrl = getApiUrl();
-
-            const response = await fetch(`${apiUrl}/trading/orders/place`, {
+            const response = await fetch(`${getTradingApiBase()}/orders/place`, {
                 method: "POST",
                 headers: {
                     Authorization: `Bearer ${token}`,
@@ -793,7 +808,10 @@ const OrderPanel = forwardRef<OrderPanelRef, OrderPanelProps>(function OrderPane
                     <input
                         type="number"
                         value={amount}
-                        onChange={(e) => setAmount(e.target.value)}
+                        onChange={(e) => {
+                            lastEditedAmountOrTotalRef.current = "amount";
+                            setAmount(e.target.value);
+                        }}
                         placeholder="0.00"
                         style={{
                             flex: 1,
@@ -854,7 +872,10 @@ const OrderPanel = forwardRef<OrderPanelRef, OrderPanelProps>(function OrderPane
                     <input
                         type="number"
                         value={total}
-                        onChange={(e) => setTotal(e.target.value)}
+                        onChange={(e) => {
+                            lastEditedAmountOrTotalRef.current = "total";
+                            setTotal(e.target.value);
+                        }}
                         placeholder="0.00"
                         style={{
                             flex: 1,
